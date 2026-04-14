@@ -1,0 +1,1074 @@
+/* ============================================================
+   ZOHIR — Multi-Factory Management App  |  app.js
+   ============================================================ */
+'use strict';
+
+/* ===================== FIREBASE ===================== */
+const firebaseConfig = {
+  apiKey: "AIzaSyDYV6o5w35a4Cde4CVdgI8I-eeNr_yhI8U",
+  authDomain: "zohir-farm-app.firebaseapp.com",
+  projectId: "zohir-farm-app",
+  storageBucket: "zohir-farm-app.firebasestorage.app",
+  messagingSenderId: "904262267425",
+  appId: "1:904262267425:web:31bb8f15b9aa10fe712960"
+};
+firebase.initializeApp(firebaseConfig);
+const fs = firebase.firestore();
+
+/* ===================== FACTORY STATE ===================== */
+let CURRENT_FACTORY = null; // { id, name, icon, color }
+let FACTORY_SYNC_UNSUBS = [];
+let GLOBAL_SYNC_UNSUB = null;
+let IS_INITIAL_CLOUD_LOAD = true;
+
+const CARD_COLORS = ['gold','blue','green','purple','teal','orange','red','pink'];
+
+/* ===================== FACTORY DB ===================== */
+const FactoryDB = {
+  listKey: 'zohir_factories',
+
+  getFactories() {
+    try { return JSON.parse(localStorage.getItem(this.listKey)) || []; }
+    catch { return []; }
+  },
+
+  saveFactories(list) {
+    localStorage.setItem(this.listKey, JSON.stringify(list));
+    // Sync list to cloud
+    try {
+      fs.collection('app_data').doc('__factories__').set({
+        data: list, lastUpdated: new Date().toISOString()
+      });
+    } catch(e) { console.error('Cloud factory list sync error:', e); }
+  },
+
+  addFactory(name, icon, color) {
+    const list = this.getFactories();
+    const id = 'f_' + Date.now();
+    const factory = { id, name, icon, color, createdAt: new Date().toISOString() };
+    list.push(factory);
+    this.saveFactories(list);
+    return factory;
+  },
+
+  deleteFactory(id) {
+    let list = this.getFactories().filter(f => f.id !== id);
+    this.saveFactories(list);
+    // Clear local data for this factory
+    ['settings','workers','daily_logs','activities'].forEach(k => {
+      localStorage.removeItem(`zohir_${id}_${k}`);
+    });
+    // Remove from cloud
+    try {
+      ['settings','workers','daily_logs','activities'].forEach(k => {
+        fs.collection('app_data').doc(`${id}_${k}`).delete();
+      });
+    } catch(e) { console.error(e); }
+  }
+};
+
+/* ===================== PER-FACTORY DATA STORE ===================== */
+const DB = {
+  get(key) {
+    if (!CURRENT_FACTORY) return null;
+    try { return JSON.parse(localStorage.getItem(`zohir_${CURRENT_FACTORY.id}_${key}`)); }
+    catch { return null; }
+  },
+
+  set(key, val) {
+    if (!CURRENT_FACTORY) return;
+    localStorage.setItem(`zohir_${CURRENT_FACTORY.id}_${key}`, JSON.stringify(val));
+    // Sync to cloud — non-blocking
+    try {
+      fs.collection('app_data').doc(`${CURRENT_FACTORY.id}_${key}`).set({
+        data: val, lastUpdated: new Date().toISOString()
+      });
+    } catch(e) { console.error('Cloud Error:', e); }
+  }
+};
+
+/* ===================== CLOUD SYNC ===================== */
+function setSyncStatus(status) {
+  const dot = document.getElementById('sync-badge')?.querySelector('.sync-dot');
+  const txt = document.getElementById('sync-badge')?.querySelector('.sync-text');
+  if (!dot || !txt) return;
+  dot.className = 'sync-dot' + (status === 'syncing' ? ' syncing' : status === 'offline' ? ' offline' : '');
+  txt.textContent = status === 'syncing' ? 'جاري المزامنة...' : status === 'offline' ? 'غير متصل' : 'متزامن';
+}
+
+function stopFactorySync() {
+  FACTORY_SYNC_UNSUBS.forEach(unsub => { try { unsub(); } catch(e){} });
+  FACTORY_SYNC_UNSUBS = [];
+}
+
+function initCloudSync() {
+  if (!CURRENT_FACTORY) return;
+  stopFactorySync();
+  setSyncStatus('syncing');
+
+  const keys = ['settings','workers','daily_logs','activities'];
+  let syncedCount = 0;
+
+  keys.forEach(key => {
+    const docId = `${CURRENT_FACTORY.id}_${key}`;
+    const unsub = fs.collection('app_data').doc(docId).onSnapshot(doc => {
+      syncedCount++;
+      if (syncedCount >= keys.length) setSyncStatus('online');
+
+      if (doc.exists) {
+        const cloudData = doc.data().data;
+        const localData = DB.get(key);
+        if (JSON.stringify(localData) !== JSON.stringify(cloudData)) {
+          localStorage.setItem(`zohir_${CURRENT_FACTORY.id}_${key}`, JSON.stringify(cloudData));
+          renderCurrentPage();
+        }
+      } else {
+        // Cloud is empty — push local data if any exists
+        const localData = DB.get(key);
+        if (localData !== null) {
+          const isEmpty = Array.isArray(localData) ? localData.length === 0 : false;
+          if (!isEmpty) DB.set(key, localData);
+        }
+      }
+    }, err => {
+      console.error('Sync Error:', err);
+      setSyncStatus('offline');
+    });
+    FACTORY_SYNC_UNSUBS.push(unsub);
+  });
+
+  // Also sync factory list from cloud
+  const fUnsub = fs.collection('app_data').doc('__factories__').onSnapshot(doc => {
+    if (doc.exists) {
+      const cloudList = doc.data().data;
+      const localList = FactoryDB.getFactories();
+      if (cloudList && JSON.stringify(localList) !== JSON.stringify(cloudList)) {
+        localStorage.setItem(FactoryDB.listKey, JSON.stringify(cloudList));
+        if (!CURRENT_FACTORY) renderFactoryScreen();
+      }
+    }
+  }, () => {});
+  FACTORY_SYNC_UNSUBS.push(fUnsub);
+}
+
+/* ===================== GLOBAL CLOUD SYNC ===================== */
+function initGlobalSync() {
+  // Sync the factory list regardless of which factory is active
+  GLOBAL_SYNC_UNSUB = fs.collection('app_data').doc('__factories__').onSnapshot(doc => {
+    if (doc.exists) {
+      const cloudList = doc.data().data;
+      const localList = FactoryDB.getFactories();
+      if (cloudList && JSON.stringify(localList) !== JSON.stringify(cloudList)) {
+        localStorage.setItem(FactoryDB.listKey, JSON.stringify(cloudList));
+        if (!CURRENT_FACTORY) renderFactoryScreen();
+      }
+    }
+    IS_INITIAL_CLOUD_LOAD = false;
+    if (!CURRENT_FACTORY) renderFactoryScreen();
+  }, err => {
+    console.error('Global Sync Error:', err);
+    IS_INITIAL_CLOUD_LOAD = false;
+    if (!CURRENT_FACTORY) renderFactoryScreen();
+  });
+}
+
+/* ===================== FACTORY INIT DATA (safe — no cloud push) ===================== */
+function initFactoryData() {
+  const fid = CURRENT_FACTORY.id;
+  const keys = [
+    [`zohir_${fid}_settings`, JSON.stringify(defaultSettings())],
+    [`zohir_${fid}_workers`,    JSON.stringify([])],
+    [`zohir_${fid}_daily_logs`, JSON.stringify([])],
+    [`zohir_${fid}_activities`, JSON.stringify([])]
+  ];
+  keys.forEach(([k, v]) => {
+    if (localStorage.getItem(k) === null) localStorage.setItem(k, v);
+  });
+}
+
+function defaultSettings() {
+  return {
+    farmName: CURRENT_FACTORY?.name || 'مصنع زهير',
+    owner: '',
+    initialChickens: 0,
+    initialFeed: 0,
+    feedAlertThreshold: 100,
+    brokenAlertPct: 5
+  };
+}
+
+/* ===================== HELPERS ===================== */
+function fmt(num, suffix = '') {
+  if (num === null || num === undefined || isNaN(num)) return '—';
+  return Number(num).toLocaleString('ar-DZ') + (suffix ? ' ' + suffix : '');
+}
+function fmtDate(dateStr) {
+  if (!dateStr) return '—';
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('ar-DZ', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+function todayStr() {
+  return new Date().toISOString().split('T')[0];
+}
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => { t.className = 'toast'; }, 3000);
+}
+function addActivity(text, icon = '📌') {
+  const acts = DB.get('activities') || [];
+  acts.unshift({ icon, text, ts: new Date().toISOString() });
+  if (acts.length > 50) acts.length = 50;
+  DB.set('activities', acts);
+  renderActivities();
+}
+function getCurrentFeedBalance() {
+  const settings = DB.get('settings') || defaultSettings();
+  const logs = DB.get('daily_logs') || [];
+  let bal = Number(settings.initialFeed) || 0;
+  logs.forEach(log => {
+    bal += Number(log.feedIn) || 0;
+    bal -= Number(log.feedUsed) || 0;
+  });
+  return bal;
+}
+function getTotalDeadThisMonth() {
+  const logs = DB.get('daily_logs') || [];
+  const now = new Date();
+  return logs
+    .filter(l => { const d = new Date(l.date); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); })
+    .reduce((s, l) => s + (Number(l.dead) || 0), 0);
+}
+function getTotalBrokenLossThisMonth() {
+  const logs = DB.get('daily_logs') || [];
+  const now  = new Date();
+  return logs
+    .filter(l => { const d = new Date(l.date); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); })
+    .reduce((s, l) => s + ((Number(l.broken) || 0) * (Number(l.price) || 0)), 0);
+}
+function getTotalAdvances() {
+  const workers = DB.get('workers') || [];
+  let total = 0;
+  workers.forEach(w => { (w.advances || []).forEach(a => total += Number(a.amount) || 0); });
+  return total;
+}
+function renderCurrentPage() {
+  const activePage = document.querySelector('.page.active');
+  if (!activePage) return;
+  const pageId = activePage.id.replace('page-', '');
+  const refreshers = {
+    dashboard: renderDashboard,
+    sales:     renderSalesTable,
+    feed:      renderFeedPage,
+    workers:   renderWorkersPage,
+    reports:   renderReportsPage,
+    settings:  loadSettingsForm
+  };
+  if (refreshers[pageId]) refreshers[pageId]();
+}
+
+/* ===================== FACTORY SELECTION SCREEN ===================== */
+function renderFactoryScreen() {
+  const grid = document.getElementById('factory-cards-grid');
+  const factories = FactoryDB.getFactories();
+  grid.innerHTML = '';
+
+  if (!factories.length) {
+    if (IS_INITIAL_CLOUD_LOAD) {
+      grid.innerHTML = `
+        <div style="grid-column:1/-1;text-align:center;padding:100px 0;color:var(--text-muted)">
+          <div class="loader" style="margin: 0 auto 20px;"></div>
+          <p style="font-size:1rem; animation: pulse 1.5s infinite">جاري البحث عن مصانعك في السحابة...</p>
+        </div>`;
+    } else {
+      grid.innerHTML = `
+        <div style="grid-column:1/-1;text-align:center;padding:100px 0;color:var(--text-muted)">
+          <div style="font-size:3.5rem;margin-bottom:20px; filter: grayscale(1); opacity: 0.5;">🏭</div>
+          <p style="font-size:1.1rem; color: var(--text-primary)">لا توجد مصانع للآن</p>
+          <p style="font-size:0.9rem; margin-top:8px">ابدأ بإضافة مصنعك الأول لتنظيم أعمالك</p>
+        </div>`;
+    }
+    return;
+  }
+
+  factories.forEach((factory, idx) => {
+    // Get today's income from local data for quick stats
+    const logs = (() => {
+      try { return JSON.parse(localStorage.getItem(`zohir_${factory.id}_daily_logs`)) || []; }
+      catch { return []; }
+    })();
+    const today = todayStr();
+    const todayLog = logs.find(l => l.date === today);
+
+    const card = document.createElement('div');
+    card.className = 'factory-card';
+    card.setAttribute('data-color', factory.color || 'gold');
+    card.setAttribute('data-id', factory.id);
+    card.style.animationDelay = `${idx * 0.07}s`;
+
+    card.innerHTML = `
+      <button class="factory-card-delete" data-id="${factory.id}" title="حذف المصنع">✕</button>
+      <span class="factory-card-icon">${factory.icon || '🐔'}</span>
+      <div class="factory-card-name">${factory.name}</div>
+      <div class="factory-card-meta">منذ ${fmtDate(factory.createdAt?.split('T')[0] || today)}</div>
+      <div class="factory-card-stat">
+        <span class="label">اليوم</span>
+        <span class="value">${todayLog ? fmt(todayLog.income, 'دج') : '—'}</span>
+      </div>
+    `;
+
+    // Main card click → enter factory
+    card.addEventListener('click', (e) => {
+      if (e.target.classList.contains('factory-card-delete') || e.target.closest('.factory-card-delete')) return;
+      enterFactory(factory);
+    });
+
+    // Delete button
+    card.querySelector('.factory-card-delete').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!confirm(`هل تريد حذف مصنع "${factory.name}" وجميع بياناته؟`)) return;
+      FactoryDB.deleteFactory(factory.id);
+      renderFactoryScreen();
+      showToast('تم حذف المصنع', 'warning');
+    });
+
+    grid.appendChild(card);
+  });
+}
+
+function enterFactory(factory) {
+  CURRENT_FACTORY = factory;
+
+  // Update sidebar UI
+  document.getElementById('sidebar-factory-icon').textContent = factory.icon || '🐔';
+  document.getElementById('sidebar-factory-name').textContent = factory.name;
+  document.getElementById('sidebar-factory-sub').textContent = 'مصنع الدواجن';
+  document.getElementById('topbar-factory-name').textContent = `Zohir — ${factory.name}`;
+
+  // Init local data safely (no cloud push)
+  initFactoryData();
+
+  // Show app, hide selection screen
+  document.getElementById('factory-screen').style.display = 'none';
+  const appWrapper = document.getElementById('app-wrapper');
+  appWrapper.style.display = 'flex';
+
+  // Reset to dashboard
+  showPage('dashboard');
+  updateLiveDate();
+
+  // Start sync
+  initCloudSync();
+
+  // Populate worker selects
+  populateWorkerSelects();
+}
+
+function exitToFactoryScreen() {
+  stopFactorySync();
+  CURRENT_FACTORY = null;
+
+  document.getElementById('app-wrapper').style.display = 'none';
+  const screen = document.getElementById('factory-screen');
+  screen.style.display = 'flex';
+
+  // Refresh the screen to show latest stats
+  renderFactoryScreen();
+
+  // Close mobile sidebar if open
+  document.getElementById('sidebar')?.classList.remove('open');
+  document.getElementById('sidebar-overlay')?.classList.remove('open');
+}
+
+function initFactoryScreen() {
+  renderFactoryScreen();
+
+  // Add factory modal
+  document.getElementById('btn-add-factory').addEventListener('click', () => {
+    openAddFactoryModal();
+  });
+
+  document.getElementById('btn-confirm-add-factory').addEventListener('click', () => {
+    const name = document.getElementById('new-factory-name').value.trim();
+    if (!name) { showToast('يرجى إدخال اسم المصنع', 'error'); return; }
+    const selectedIcon = document.querySelector('.icon-opt.selected');
+    const icon = selectedIcon ? selectedIcon.dataset.icon : '🐔';
+    const usedColors = FactoryDB.getFactories().map(f => f.color);
+    const color = CARD_COLORS.find(c => !usedColors.includes(c)) || CARD_COLORS[FactoryDB.getFactories().length % CARD_COLORS.length];
+    const factory = FactoryDB.addFactory(name, icon, color);
+    closeAddFactoryModal();
+    document.getElementById('new-factory-name').value = '';
+    renderFactoryScreen();
+    showToast(`✅ تمت إضافة ${name}`);
+  });
+
+  document.getElementById('btn-cancel-add-factory').addEventListener('click', closeAddFactoryModal);
+  document.getElementById('modal-add-factory').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('modal-add-factory')) closeAddFactoryModal();
+  });
+
+  // Icon picker
+  document.querySelectorAll('.icon-opt').forEach(opt => {
+    opt.addEventListener('click', () => {
+      document.querySelectorAll('.icon-opt').forEach(o => o.classList.remove('selected'));
+      opt.classList.add('selected');
+    });
+  });
+
+  // Factory switcher buttons
+  document.getElementById('btn-switch-factory').addEventListener('click', exitToFactoryScreen);
+  document.getElementById('topbar-switch-btn').addEventListener('click', exitToFactoryScreen);
+}
+
+function openAddFactoryModal() {
+  document.getElementById('modal-add-factory').classList.add('open');
+  setTimeout(() => document.getElementById('new-factory-name').focus(), 300);
+}
+function closeAddFactoryModal() {
+  document.getElementById('modal-add-factory').classList.remove('open');
+}
+
+/* ===================== NAVIGATION ===================== */
+function showPage(pageId) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const page = document.getElementById('page-' + pageId);
+  const nav  = document.getElementById('nav-' + pageId);
+  if (page) page.classList.add('active');
+  if (nav)  nav.classList.add('active');
+  const refreshers = {
+    dashboard: renderDashboard,
+    sales:     renderSalesTable,
+    feed:      renderFeedPage,
+    workers:   renderWorkersPage,
+    reports:   renderReportsPage,
+    settings:  loadSettingsForm
+  };
+  if (refreshers[pageId]) refreshers[pageId]();
+  // Close mobile sidebar
+  document.getElementById('sidebar')?.classList.remove('open');
+  document.getElementById('sidebar-overlay')?.classList.remove('open');
+}
+
+/* ===================== LIVE DATE ===================== */
+function updateLiveDate() {
+  const el = document.getElementById('live-date');
+  if (!el) return;
+  const d = new Date();
+  el.textContent = d.toLocaleDateString('ar-DZ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+/* ===================== DASHBOARD ===================== */
+function renderDashboard() {
+  const logs    = DB.get('daily_logs') || [];
+  const settings = DB.get('settings') || defaultSettings();
+  const lastLog = logs.length ? logs[logs.length - 1] : null;
+
+  const feedBal    = getCurrentFeedBalance();
+  const deadMonth  = getTotalDeadThisMonth();
+  const brokenLoss = getTotalBrokenLossThisMonth();
+  const totalAdv   = getTotalAdvances();
+
+  document.getElementById('kpi-eggs').textContent    = lastLog ? fmt(lastLog.netEggs) : '0';
+  document.getElementById('kpi-income').textContent   = lastLog ? fmt(lastLog.income, 'دج') : '0 دج';
+  document.getElementById('kpi-feed').textContent     = fmt(feedBal, 'كغ');
+  document.getElementById('kpi-dead').textContent     = deadMonth;
+  document.getElementById('kpi-broken').textContent   = fmt(brokenLoss, 'دج');
+  document.getElementById('kpi-advances').textContent = fmt(totalAdv, 'دج');
+
+  const feedKpi = document.querySelector('.kpi-feed');
+  if (feedBal < (Number(settings.feedAlertThreshold) || 100)) {
+    feedKpi.style.borderColor = 'rgba(246,173,85,0.4)';
+  } else {
+    feedKpi.style.borderColor = '';
+  }
+
+  renderLastReport(lastLog);
+  renderActivities();
+}
+
+function renderLastReport(log) {
+  const el = document.getElementById('last-report-content');
+  if (!log) {
+    el.innerHTML = `<div class="empty-state">
+      <div class="empty-icon">🐣</div>
+      <p>المصنع جديد! لم يتم إدخال أي بيانات بعد.</p>
+      <button class="btn btn-primary" onclick="showPage('daily')">ابدأ بإدخال بيانات اليوم</button>
+    </div>`;
+    return;
+  }
+  const settings = DB.get('settings') || defaultSettings();
+  const brokenPct = log.produced > 0 ? ((log.broken / log.produced) * 100).toFixed(1) : '0.0';
+  const brokenWarn = Number(brokenPct) > (Number(settings.brokenAlertPct) || 5);
+
+  el.innerHTML = `
+    <div class="report-block">
+      <div class="report-block-title">📅 ${fmtDate(log.date)}</div>
+      <div class="report-row"><span>إجمالي البلاكات</span><strong>${fmt(log.produced)}</strong></div>
+      <div class="report-row"><span>المكسور</span><strong class="${log.broken > 0 ? 'negative' : ''}">${fmt(log.broken)}</strong></div>
+      <div class="report-row"><span>الصافي</span><strong class="positive">${fmt(log.netEggs)}</strong></div>
+      <div class="report-row"><span>الكرطونات</span><strong>${fmt(log.koliates)}</strong></div>
+      <div class="report-row"><span>الفردي المتبقي</span><strong>${fmt(log.singleLeft)}</strong></div>
+    </div>
+    <div class="report-block">
+      <div class="report-block-title">💰 المبيعات والمدخول</div>
+      <div class="report-row"><span>سعر البلاكة</span><strong>${fmt(log.price, 'دج')}</strong></div>
+      <div class="report-row"><span>الكرطونات المباعة</span><strong>${fmt(log.soldGroups)}</strong></div>
+      <div class="report-row"><span>الفردي المباع</span><strong>${fmt(log.soldSingle)}</strong></div>
+      <div class="report-row"><span>المدخول الإجمالي</span><strong class="positive">${fmt(log.income, 'دج')}</strong></div>
+    </div>
+    <div class="accountant-note">
+      <strong>💼 ملاحظة المحاسب:</strong>
+      ${generateAccountantNote(log, brokenPct, brokenWarn)}
+    </div>
+  `;
+}
+
+function generateAccountantNote(log, brokenPct, brokenWarn) {
+  const notes = [];
+  if (brokenWarn) notes.push(`⚠️ نسبة الكسر مرتفعة (${brokenPct}%) — تحتاج إلى مراجعة أسباب الكسر وتوعية العمال.`);
+  if (log.dead > 3) notes.push(`⚠️ وفاة ${log.dead} دجاجة في يوم واحد — تحقق من الصحة العامة للقطيع.`);
+  if (log.feedUsed > 0 && log.netEggs > 0) {
+    const ratio = (log.feedUsed / log.netEggs).toFixed(2);
+    if (ratio > 0.3) notes.push(`📊 نسبة العلف لكل بلاكة = ${ratio} كغ — اتجه نحو تحسين الكفاءة الغذائية.`);
+  }
+  if (log.income > 0) notes.push(`✅ مدخول اليوم ${fmt(log.income, 'دج')} — أداء مقبول.`);
+  if (notes.length === 0) notes.push('✅ كل شيء يسير بشكل طبيعي. استمر في المراقبة اليومية.');
+  return notes.join('<br>');
+}
+
+function renderActivities() {
+  const el = document.getElementById('activity-feed');
+  const acts = DB.get('activities') || [];
+  if (!acts.length) {
+    el.innerHTML = '<div class="empty-state"><p>لا توجد أنشطة مسجلة بعد.</p></div>';
+    return;
+  }
+  el.innerHTML = acts.slice(0, 10).map(a => `
+    <div class="report-row">
+      <span>${a.icon} ${a.text}</span>
+      <span style="font-size:0.75rem;color:var(--text-muted)">${fmtDate(a.ts.split('T')[0])}</span>
+    </div>`).join('');
+}
+
+/* ===================== DAILY INPUT ===================== */
+function initDailyForm() {
+  document.getElementById('inp-date').value = todayStr();
+
+  const calcFields = ['inp-produced','inp-broken','inp-price','inp-sold-total','inp-free-plates','inp-feed-in','inp-feed-price','inp-feed-used'];
+  calcFields.forEach(id => {
+    document.getElementById(id).addEventListener('input', updateDailyCalc);
+  });
+
+  document.getElementById('btn-save-day').addEventListener('click', saveDayData);
+  document.getElementById('btn-clear-form').addEventListener('click', clearDailyForm);
+  document.getElementById('add-advance-row').addEventListener('click', addAdvanceRow);
+}
+
+function updateDailyCalc() {
+  const produced   = Number(document.getElementById('inp-produced').value) || 0;
+  const broken     = Number(document.getElementById('inp-broken').value) || 0;
+  const price      = Number(document.getElementById('inp-price').value) || 0;
+  const soldTotal  = Number(document.getElementById('inp-sold-total').value) || 0;
+  const feedIn     = Number(document.getElementById('inp-feed-in').value) || 0;
+  const feedPrice  = Number(document.getElementById('inp-feed-price').value) || 0;
+  const feedUsed   = Number(document.getElementById('inp-feed-used').value) || 0;
+
+  const net        = produced - broken;
+  const koliates   = Math.floor(net / 12);
+  const singleLeft = net % 12;
+  const soldGroups = Math.floor(soldTotal / 12);
+  const soldSingle = soldTotal % 12;
+  const income     = soldTotal * price;
+  const feedBal    = getCurrentFeedBalance() + feedIn - feedUsed;
+  const feedCost   = feedIn * feedPrice;
+
+  document.getElementById('prev-net').textContent          = net >= 0 ? fmt(net) : '—';
+  document.getElementById('prev-koliates').textContent     = net >= 0 ? fmt(koliates) : '—';
+  document.getElementById('prev-single').textContent       = net >= 0 ? fmt(singleLeft) : '—';
+  document.getElementById('prev-sold-groups').textContent  = soldTotal > 0 ? fmt(soldGroups) + ' كرطون' : '—';
+  document.getElementById('prev-sold-single').textContent  = soldTotal > 0 ? fmt(soldSingle) + ' بلاكة' : '—';
+  document.getElementById('prev-income').textContent       = fmt(income, 'دج');
+  document.getElementById('prev-feed').textContent         = fmt(feedBal, 'كغ');
+  document.getElementById('prev-feed-cost').textContent    = feedPrice > 0 ? fmt(feedCost, 'دج') : '—';
+}
+
+function addAdvanceRow() {
+  const container = document.getElementById('advance-entries');
+  const div = document.createElement('div');
+  div.className = 'advance-row';
+  div.innerHTML = `
+    <select class="adv-worker-select">${workerOptions()}</select>
+    <input type="number" class="adv-amount" placeholder="المبلغ (دج)" min="0" />
+    <button class="btn-remove-adv" title="حذف">✕</button>
+  `;
+  div.querySelector('.btn-remove-adv').addEventListener('click', () => div.remove());
+  container.appendChild(div);
+}
+
+function workerOptions() {
+  const workers = DB.get('workers') || [];
+  let opts = '<option value="">— اختر عاملاً —</option>';
+  workers.forEach(w => { opts += `<option value="${w.id}">${w.name}</option>`; });
+  return opts;
+}
+
+function populateWorkerSelects() {
+  document.querySelectorAll('.adv-worker-select').forEach(sel => {
+    const cur = sel.value;
+    sel.innerHTML = workerOptions();
+    sel.value = cur;
+  });
+}
+
+function saveDayData() {
+  const date      = document.getElementById('inp-date').value;
+  const produced  = Number(document.getElementById('inp-produced').value) || 0;
+  const broken    = Number(document.getElementById('inp-broken').value) || 0;
+  const price     = Number(document.getElementById('inp-price').value) || 0;
+  const soldTotal = Number(document.getElementById('inp-sold-total').value) || 0;
+  const freePlates = Number(document.getElementById('inp-free-plates').value) || 0;
+  const feedIn    = Number(document.getElementById('inp-feed-in').value) || 0;
+  const feedPrice = Number(document.getElementById('inp-feed-price').value) || 0;
+  const feedUsed  = Number(document.getElementById('inp-feed-used').value) || 0;
+  const dead      = Number(document.getElementById('inp-dead').value) || 0;
+  const notes     = document.getElementById('inp-notes').value.trim();
+
+  if (!date) { showToast('يرجى تحديد التاريخ', 'error'); return; }
+
+  const net        = produced - broken;
+  const koliates   = Math.floor(net / 12);
+  const singleLeft = net % 12;
+  const soldGroups = Math.floor(soldTotal / 12);
+  const soldSingle = soldTotal % 12;
+  const income     = soldTotal * price;
+  const feedCost   = feedIn * feedPrice;
+
+  const log = {
+    id: Date.now(),
+    date, produced, broken, price,
+    netEggs: net, koliates, singleLeft,
+    soldTotal, soldGroups, soldSingle, freePlates, income,
+    feedIn, feedPrice, feedCost, feedUsed, dead, notes
+  };
+
+  // Collect advances
+  const advRows = document.querySelectorAll('.advance-row');
+  const advancesThisDay = [];
+  advRows.forEach(row => {
+    const workerId = row.querySelector('.adv-worker-select').value;
+    const amount   = Number(row.querySelector('.adv-amount').value) || 0;
+    if (workerId && amount > 0) advancesThisDay.push({ workerId, amount, date });
+  });
+
+  const logs = DB.get('daily_logs') || [];
+  const existingIdx = logs.findIndex(l => l.date === date);
+  if (existingIdx >= 0) {
+    if (!confirm(`يوجد سجل مسبق لتاريخ ${fmtDate(date)}. هل تريد استبداله؟`)) return;
+    logs[existingIdx] = log;
+  } else {
+    logs.push(log);
+  }
+  DB.set('daily_logs', logs);
+
+  if (advancesThisDay.length) {
+    const workers = DB.get('workers') || [];
+    advancesThisDay.forEach(adv => {
+      const w = workers.find(wk => String(wk.id) === String(adv.workerId));
+      if (w) {
+        if (!w.advances) w.advances = [];
+        w.advances.push({ amount: adv.amount, date: adv.date, id: Date.now() + Math.random() });
+      }
+    });
+    DB.set('workers', workers);
+  }
+
+  addActivity(`تم حفظ بيانات يوم ${fmtDate(date)} — مدخول: ${fmt(income, 'دج')}`, '📅');
+  showToast('✅ تم حفظ بيانات اليوم بنجاح!');
+  renderDailyReportOutput(log);
+  updateDailyCalc();
+}
+
+function renderDailyReportOutput(log) {
+  const container = document.getElementById('daily-report-output');
+  const content   = document.getElementById('daily-report-content');
+  const settings  = DB.get('settings') || defaultSettings();
+  const brokenPct  = log.produced > 0 ? ((log.broken / log.produced) * 100).toFixed(1) : '0.0';
+  const brokenWarn = Number(brokenPct) > (Number(settings.brokenAlertPct) || 5);
+  const feedBal    = getCurrentFeedBalance();
+  const feedWarn   = feedBal < (Number(settings.feedAlertThreshold) || 100);
+
+  content.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">
+      <div class="report-block">
+        <div class="report-block-title">🥚 جدول الإنتاج والمبيعات</div>
+        <div class="report-row"><span>إجمالي المنتج</span><strong>${fmt(log.produced)} بلاكة</strong></div>
+        <div class="report-row"><span>المكسور</span><strong class="negative">${fmt(log.broken)} بلاكة</strong></div>
+        <div class="report-row"><span>الصافي</span><strong class="positive">${fmt(log.netEggs)} بلاكة</strong></div>
+        <div class="report-row"><span>الكرطونات (12×)</span><strong>${fmt(log.koliates)} كرطون</strong></div>
+        <div class="report-row"><span>الفردي المتبقي</span><strong>${fmt(log.singleLeft)} بلاكة</strong></div>
+        <div class="report-row"><span>سعر البلاكة</span><strong>${fmt(log.price, 'دج')}</strong></div>
+        <div class="report-row"><span>الكرطونات المباعة</span><strong>${fmt(log.soldGroups)}</strong></div>
+        <div class="report-row"><span>الفردي المباع</span><strong>${fmt(log.soldSingle)}</strong></div>
+        <div class="report-row"><span>مجاني/استهلاك</span><strong>${fmt(log.freePlates || 0)} بلاكة</strong></div>
+        <div class="report-row" style="border-top:1px solid rgba(255,255,255,0.08);margin-top:6px;padding-top:8px">
+          <span>💵 المدخول الإجمالي</span>
+          <strong class="positive" style="font-size:1.1rem">${fmt(log.income, 'دج')}</strong>
+        </div>
+      </div>
+      <div class="report-block">
+        <div class="report-block-title">🌾 جدول المخزون</div>
+        <div class="report-row"><span>شعير داخل اليوم</span><strong>${fmt(log.feedIn, 'كغ')}</strong></div>
+        <div class="report-row"><span>سعر الشراء</span><strong>${log.feedPrice > 0 ? fmt(log.feedPrice, 'دج/كغ') : '—'}</strong></div>
+        <div class="report-row"><span>تكلفة الشراء</span><strong class="${log.feedCost > 0 ? 'negative' : ''}">${log.feedCost > 0 ? fmt(log.feedCost, 'دج') : '—'}</strong></div>
+        <div class="report-row"><span>شعير مستهلك</span><strong>${fmt(log.feedUsed, 'كغ')}</strong></div>
+        <div class="report-row">
+          <span>الرصيد الحالي</span>
+          <strong class="${feedWarn ? 'warn' : 'positive'}">${fmt(feedBal, 'كغ')} ${feedWarn ? '⚠️' : ''}</strong>
+        </div>
+        <div class="report-block-title" style="margin-top:14px">⚠️ مؤشرات الأداء</div>
+        <div class="report-row"><span>نسبة الكسر</span>
+          <strong class="${brokenWarn ? 'negative' : 'positive'}">${brokenPct}% ${brokenWarn ? '⚠️' : '✓'}</strong>
+        </div>
+        <div class="report-row"><span>قيمة الكسر الضائعة</span>
+          <strong class="negative">${fmt(log.broken * log.price, 'دج')}</strong>
+        </div>
+        <div class="report-row"><span>الدجاج النافق اليوم</span>
+          <strong class="${log.dead > 0 ? 'negative' : ''}">
+            ${log.dead > 0 ? '💀 ' : '✓ '}${fmt(log.dead)} دجاجة
+          </strong>
+        </div>
+      </div>
+    </div>
+    <div class="accountant-note">
+      <strong>💼 خلاصة المحاسب:</strong>
+      ${generateAccountantNote(log, brokenPct, brokenWarn)}
+    </div>
+    ${log.notes ? `<div class="report-block" style="margin-top:12px"><div class="report-block-title">📝 الملاحظات</div><p style="color:var(--text-secondary);font-size:0.88rem">${log.notes}</p></div>` : ''}
+  `;
+  container.style.display = 'block';
+  container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function clearDailyForm() {
+  ['inp-produced','inp-broken','inp-price','inp-sold-total','inp-free-plates',
+   'inp-feed-in','inp-feed-price','inp-feed-used','inp-dead','inp-notes'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('inp-date').value = todayStr();
+  document.getElementById('advance-entries').innerHTML = `
+    <div class="advance-row">
+      <select class="adv-worker-select">${workerOptions()}</select>
+      <input type="number" class="adv-amount" placeholder="المبلغ (دج)" min="0" />
+      <button class="btn-remove-adv" title="حذف">✕</button>
+    </div>`;
+  document.querySelector('.btn-remove-adv')?.addEventListener('click', (e) => e.target.closest('.advance-row')?.remove());
+  document.getElementById('daily-report-output').style.display = 'none';
+  updateDailyCalc();
+}
+
+/* ===================== SALES TABLE ===================== */
+function renderSalesTable() {
+  const logs = DB.get('daily_logs') || [];
+  const tbody = document.getElementById('sales-tbody');
+  let totalIncome = 0;
+  if (!logs.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">لا توجد مبيعات مسجلة</td></tr>';
+    document.getElementById('total-income-chip').textContent = '0 دج';
+    return;
+  }
+  tbody.innerHTML = '';
+  const sorted = [...logs].sort((a, b) => new Date(b.date) - new Date(a.date));
+  sorted.forEach(log => {
+    totalIncome += Number(log.income) || 0;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${fmtDate(log.date)}</td>
+      <td>${fmt(log.soldGroups)}</td>
+      <td>${fmt(log.soldSingle)}</td>
+      <td>${fmt(log.price, 'دج')}</td>
+      <td><strong style="color:var(--green)">${fmt(log.income, 'دج')}</strong></td>
+    `;
+    tbody.appendChild(tr);
+  });
+  document.getElementById('total-income-chip').textContent = fmt(totalIncome, 'دج');
+}
+
+/* ===================== FEED PAGE ===================== */
+function renderFeedPage() {
+  const logs = DB.get('daily_logs') || [];
+  const settings = DB.get('settings') || defaultSettings();
+  const tbody = document.getElementById('feed-tbody');
+  const threshold = Number(settings.feedAlertThreshold) || 100;
+
+  let runningBal = Number(settings.initialFeed) || 0;
+  let totalIn = 0, totalUsed = 0, totalCost = 0;
+
+  tbody.innerHTML = '';
+  const sorted = [...logs].sort((a, b) => new Date(a.date) - new Date(b.date));
+  if (!sorted.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-cell">لا توجد حركات مسجلة</td></tr>';
+  } else {
+    sorted.forEach(log => {
+      const feedIn    = Number(log.feedIn) || 0;
+      const feedUsed  = Number(log.feedUsed) || 0;
+      const feedPr    = Number(log.feedPrice) || 0;
+      const feedCstDay = Number(log.feedCost) || 0;
+      runningBal += feedIn - feedUsed;
+      totalIn    += feedIn;
+      totalUsed  += feedUsed;
+      totalCost  += feedCstDay;
+      const warn = runningBal < threshold;
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${fmtDate(log.date)}</td>
+        <td><span style="color:var(--green)">+${fmt(feedIn)}</span></td>
+        <td>${feedPr > 0 ? fmt(feedPr, 'دج') : '<span style="color:var(--text-muted)">—</span>'}</td>
+        <td>${feedCstDay > 0 ? '<span style="color:var(--orange)">' + fmt(feedCstDay, 'دج') + '</span>' : '<span style="color:var(--text-muted)">—</span>'}</td>
+        <td><span style="color:var(--red)">-${fmt(feedUsed)}</span></td>
+        <td><strong style="color:${warn ? 'var(--orange)' : 'var(--text-primary)'}">${fmt(runningBal)}</strong></td>
+        <td>${warn ? '<span class="badge badge-orange">⚠️ منخفض</span>' : '<span class="badge badge-green">✓ جيد</span>'}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  const finalBal = getCurrentFeedBalance();
+  document.getElementById('feed-balance-big').textContent  = fmt(finalBal, 'كغ');
+  document.getElementById('feed-total-in').textContent     = fmt(totalIn, 'كغ');
+  document.getElementById('feed-total-used').textContent   = fmt(totalUsed, 'كغ');
+  document.getElementById('feed-total-cost').textContent   = fmt(totalCost, 'دج');
+}
+
+/* ===================== WORKERS PAGE ===================== */
+function renderWorkersPage() {
+  const workers = DB.get('workers') || [];
+  const container = document.getElementById('workers-list-container');
+  if (!workers.length) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">👤</div><p>لم يتم إضافة أي عمال بعد.</p></div>`;
+    return;
+  }
+  container.innerHTML = `<div class="workers-grid" id="workers-grid"></div>`;
+  const grid = document.getElementById('workers-grid');
+  workers.forEach(w => {
+    const totalAdv = (w.advances || []).reduce((s, a) => s + (Number(a.amount) || 0), 0);
+    const netSalary = (Number(w.salary) || 0) - totalAdv;
+    const advHtml = (w.advances || []).slice(-5).reverse().map(a =>
+      `<div class="adv-entry"><span>${fmtDate(a.date)}</span><span class="amt">${fmt(a.amount, 'دج')}</span></div>`
+    ).join('') || '<div style="color:var(--text-muted);font-size:0.8rem;padding:6px 0">لا توجد سلفيات</div>';
+
+    const card = document.createElement('div');
+    card.className = 'worker-card';
+    card.innerHTML = `
+      <div class="worker-header">
+        <div style="display:flex;gap:12px;align-items:center">
+          <div class="worker-avatar">${w.name.charAt(0)}</div>
+          <div><div class="worker-name">${w.name}</div><div class="worker-id">#${w.id}</div></div>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="deleteWorker(${w.id})">حذف</button>
+      </div>
+      <div class="worker-stat"><span>الراتب الشهري</span><strong class="success">${fmt(w.salary, 'دج')}</strong></div>
+      <div class="worker-stat"><span>إجمالي السلف</span><strong class="danger">${fmt(totalAdv, 'دج')}</strong></div>
+      <div class="worker-stat"><span>الصافي المستحق</span><strong class="${netSalary < 0 ? 'danger' : 'success'}">${fmt(netSalary, 'دج')}</strong></div>
+      <div class="adv-history">${advHtml}</div>
+      <div class="worker-actions">
+        <button class="btn btn-outline btn-sm" onclick="resetWorkerAdvances(${w.id})">🔄 تصفية السلف</button>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+document.addEventListener('click', function(e) {
+  if (e.target.classList.contains('btn-remove-adv')) {
+    e.target.closest('.advance-row')?.remove();
+  }
+});
+
+function deleteWorker(id) {
+  if (!confirm('هل تريد حذف هذا العامل؟')) return;
+  let workers = DB.get('workers') || [];
+  workers = workers.filter(w => w.id !== id);
+  DB.set('workers', workers);
+  addActivity('تم حذف عامل', '🗑');
+  renderWorkersPage();
+  showToast('تم حذف العامل', 'warning');
+}
+
+function resetWorkerAdvances(id) {
+  if (!confirm('تصفية جميع السلفيات لهذا العامل؟ (بعد الخصم من الراتب)')) return;
+  const workers = DB.get('workers') || [];
+  const w = workers.find(wk => wk.id === id);
+  if (w) {
+    w.advances = [];
+    DB.set('workers', workers);
+    addActivity(`تم تصفية سلف العامل ${w.name}`, '✅');
+    renderWorkersPage();
+    showToast('تم تصفية السلفيات');
+  }
+}
+
+/* ===================== REPORTS PAGE ===================== */
+function renderReportsPage() {
+  const logs = DB.get('daily_logs') || [];
+  const now = new Date();
+  const monthLogs = logs.filter(l => {
+    const d = new Date(l.date);
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  });
+
+  const totalIncome   = monthLogs.reduce((s, l) => s + (Number(l.income) || 0), 0);
+  const totalProd     = monthLogs.reduce((s, l) => s + (Number(l.produced) || 0), 0);
+  const totalNet      = monthLogs.reduce((s, l) => s + (Number(l.netEggs) || 0), 0);
+  const totalBroken   = monthLogs.reduce((s, l) => s + (Number(l.broken) || 0), 0);
+  const totalDead     = monthLogs.reduce((s, l) => s + (Number(l.dead) || 0), 0);
+  const brokenLoss    = getTotalBrokenLossThisMonth();
+  const totalAdv      = getTotalAdvances();
+  const totalKartons  = monthLogs.reduce((s, l) => s + (Number(l.koliates) || 0), 0);
+  const totalFeedCost = logs.reduce((s, l) => s + (Number(l.feedCost) || 0), 0);
+
+  const summary = document.getElementById('monthly-summary');
+  summary.innerHTML = `
+    <div class="report-stat"><div class="rs-val">${fmt(totalIncome, 'دج')}</div><div class="rs-lbl">إجمالي المداخيل</div></div>
+    <div class="report-stat"><div class="rs-val">${fmt(totalProd)}</div><div class="rs-lbl">إجمالي المنتج (بلاكة)</div></div>
+    <div class="report-stat"><div class="rs-val">${fmt(totalNet)}</div><div class="rs-lbl">إجمالي الصافي</div></div>
+    <div class="report-stat"><div class="rs-val">${fmt(totalKartons)}</div><div class="rs-lbl">إجمالي الكرطونات</div></div>
+    <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(totalFeedCost, 'دج')}</div><div class="rs-lbl">تكلفة الشعير الكلية</div></div>
+    <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(totalBroken)}</div><div class="rs-lbl">إجمالي المكسور</div></div>
+    <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(brokenLoss, 'دج')}</div><div class="rs-lbl">خسارة الكسر</div></div>
+    <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(totalDead)}</div><div class="rs-lbl">إجمالي النفوق</div></div>
+    <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(totalAdv, 'دج')}</div><div class="rs-lbl">إجمالي السلف</div></div>
+  `;
+
+  const tbody = document.getElementById('prod-tbody');
+  const sorted = [...logs].sort((a, b) => new Date(b.date) - new Date(a.date));
+  if (!sorted.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-cell">لا توجد سجلات</td></tr>';
+    return;
+  }
+  tbody.innerHTML = '';
+  sorted.forEach(log => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${fmtDate(log.date)}</td>
+      <td>${fmt(log.produced)}</td>
+      <td><span style="color:var(--red)">${fmt(log.broken)}</span></td>
+      <td><strong style="color:var(--green)">${fmt(log.netEggs)}</strong></td>
+      <td>${fmt(log.koliates)}</td>
+      <td>${fmt(log.singleLeft)}</td>
+      <td>${log.dead > 0 ? `<span style="color:var(--red)">💀 ${log.dead}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
+      <td style="color:var(--text-secondary);font-size:0.8rem">${log.notes || '—'}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+/* ===================== SETTINGS ===================== */
+function loadSettingsForm() {
+  const s = DB.get('settings') || defaultSettings();
+  document.getElementById('farm-name').value            = s.farmName || '';
+  document.getElementById('farm-owner').value           = s.owner || '';
+  document.getElementById('farm-chickens').value        = s.initialChickens || '';
+  document.getElementById('farm-feed-init').value       = s.initialFeed || '';
+  document.getElementById('feed-alert-threshold').value = s.feedAlertThreshold || 100;
+  document.getElementById('broken-alert-pct').value     = s.brokenAlertPct || 5;
+}
+
+function saveSettings() {
+  const s = {
+    farmName: document.getElementById('farm-name').value || (CURRENT_FACTORY?.name || 'مصنع زهير'),
+    owner: document.getElementById('farm-owner').value || '',
+    initialChickens: Number(document.getElementById('farm-chickens').value) || 0,
+    initialFeed: Number(document.getElementById('farm-feed-init').value) || 0,
+    feedAlertThreshold: Number(document.getElementById('feed-alert-threshold').value) || 100,
+    brokenAlertPct: Number(document.getElementById('broken-alert-pct').value) || 5
+  };
+  DB.set('settings', s);
+  addActivity('تم تحديث إعدادات المصنع', '⚙️');
+  showToast('✅ تم حفظ الإعدادات');
+}
+
+/* ===================== ADD WORKER ===================== */
+function initWorkersPage() {
+  document.getElementById('btn-add-worker').addEventListener('click', () => {
+    const name   = document.getElementById('new-worker-name').value.trim();
+    const salary = Number(document.getElementById('new-worker-salary').value) || 0;
+    if (!name) { showToast('يرجى إدخال اسم العامل', 'error'); return; }
+    const workers = DB.get('workers') || [];
+    const newWorker = { id: Date.now(), name, salary, advances: [] };
+    workers.push(newWorker);
+    DB.set('workers', workers);
+    document.getElementById('new-worker-name').value = '';
+    document.getElementById('new-worker-salary').value = '';
+    addActivity(`تم إضافة العامل ${name}`, '👷');
+    renderWorkersPage();
+    populateWorkerSelects();
+    showToast(`✅ تمت إضافة ${name}`);
+  });
+}
+
+/* ===================== MOBILE SIDEBAR ===================== */
+function initMobileSidebar() {
+  const hamburger = document.getElementById('hamburger');
+  const sidebar   = document.getElementById('sidebar');
+  const overlay   = document.getElementById('sidebar-overlay');
+  hamburger.addEventListener('click', () => {
+    sidebar.classList.toggle('open');
+    overlay.classList.toggle('open');
+  });
+  overlay.addEventListener('click', () => {
+    sidebar.classList.remove('open');
+    overlay.classList.remove('open');
+  });
+}
+
+/* ===================== RESET ===================== */
+function resetAllData() {
+  if (!confirm('⚠️ هل أنت متأكد من مسح جميع بيانات هذا المصنع؟ لا يمكن التراجع!')) return;
+  if (!confirm('تأكيد أخير: سيتم حذف جميع البيانات نهائياً لهذا المصنع!')) return;
+  ['settings','workers','daily_logs','activities'].forEach(k => {
+    localStorage.removeItem(`zohir_${CURRENT_FACTORY.id}_${k}`);
+  });
+  initFactoryData();
+  showToast('تم مسح جميع البيانات', 'warning');
+  showPage('dashboard');
+}
+
+/* ===================== BOOTSTRAP ===================== */
+document.addEventListener('DOMContentLoaded', () => {
+  // Start global sync first
+  initGlobalSync();
+
+  // Initialize factory screen
+  initFactoryScreen();
+
+  // Setup live date refresh
+  updateLiveDate();
+  setInterval(updateLiveDate, 60000);
+
+  // Nav events (for app-wrapper)
+  document.querySelectorAll('.nav-item').forEach(btn => {
+    btn.addEventListener('click', () => showPage(btn.dataset.page));
+  });
+
+  // Initialize forms (these are inside the app-wrapper)
+  initDailyForm();
+  initWorkersPage();
+  initMobileSidebar();
+
+  // Settings save buttons
+  document.getElementById('btn-save-settings').addEventListener('click', saveSettings);
+  document.getElementById('btn-save-general-settings').addEventListener('click', saveSettings);
+  document.getElementById('btn-reset-all').addEventListener('click', resetAllData);
+
+  // Check if only one factory exists → auto-enter it
+  const factories = FactoryDB.getFactories();
+  if (factories.length === 1) {
+    enterFactory(factories[0]);
+  }
+  // If there are no factories, show add modal automatically after short delay
+  if (factories.length === 0) {
+    setTimeout(() => openAddFactoryModal(), 800);
+  }
+});
