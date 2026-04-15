@@ -76,6 +76,21 @@
   </div>
 </div>
 
+<!-- ===== DELETE PASSWORD MODAL ===== -->
+<div class="modal-overlay" id="modal-delete-password">
+  <div class="modal-box" style="max-width:360px">
+    <div class="modal-title">🔒 تأكيد الحذف</div>
+    <p style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:16px">أدخل كلمة السر لتأكيد عملية الحذف</p>
+    <div class="form-group">
+      <input type="password" id="delete-password-input" placeholder="كلمة السر" style="text-align:center;font-size:1.2rem;letter-spacing:4px" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="btn-confirm-delete-password">تأكيد الحذف</button>
+      <button class="btn btn-outline" id="btn-cancel-delete-password">إلغاء</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== MAIN APP WRAPPER ===== -->
 <div class="app-wrapper" id="app-wrapper" style="display:none">
 
@@ -373,6 +388,7 @@
               <th>الفردي</th>
               <th>السعر</th>
               <th>المدخول</th>
+              <th>حذف</th>
             </tr>
           </thead>
           <tbody id="sales-tbody">
@@ -492,6 +508,7 @@
               <th>الفردي</th>
               <th>النافق</th>
               <th>الملاحظات</th>
+              <th>حذف</th>
             </tr>
           </thead>
           <tbody id="prod-tbody">
@@ -550,6 +567,11 @@
         </div>
         <button class="btn btn-primary" id="btn-save-general-settings">💾 حفظ</button>
         <hr style="border-color:#ffffff1a; margin:1rem 0"/>
+        <div class="form-group">
+          <label>🔒 كلمة سر الحذف</label>
+          <input type="password" id="delete-password-setting" placeholder="كلمة السر الحالية: 1234" autocomplete="new-password" />
+          <div class="field-note">📌 تغيير كلمة السر المطلوبة لحذف السجلات والعمال — الكلمة الافتراضية: 1234</div>
+        </div>
         <button class="btn btn-danger" id="btn-reset-all">🗑 إعادة تعيين بيانات هذا المصنع</button>
       </div>
     </div>

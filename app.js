@@ -258,8 +258,44 @@ function defaultSettings() {
     chickenPrice: 0,
     feedPrice: 0,
     feedAlertThreshold: 100,
-    brokenAlertPct: 5
+    brokenAlertPct: 5,
+    deletePassword: '1234'
   };
+}
+
+/* ===================== PASSWORD MODAL ===================== */
+let _pendingDeleteCallback = null;
+
+function showPasswordModal(callback) {
+  _pendingDeleteCallback = callback;
+  const modal = document.getElementById('modal-delete-password');
+  const input = document.getElementById('delete-password-input');
+  if (!modal) return;
+  input.value = '';
+  modal.classList.add('open');
+  setTimeout(() => input.focus(), 300);
+}
+
+function closePasswordModal() {
+  const modal = document.getElementById('modal-delete-password');
+  if (modal) modal.classList.remove('open');
+  _pendingDeleteCallback = null;
+}
+
+function confirmDeletePassword() {
+  const input = document.getElementById('delete-password-input');
+  const enteredPass = input.value;
+  const settings = DB.get('settings') || defaultSettings();
+  const correctPass = settings.deletePassword || '1234';
+  if (enteredPass === correctPass) {
+    closePasswordModal();
+    if (_pendingDeleteCallback) _pendingDeleteCallback();
+  } else {
+    input.value = '';
+    input.classList.add('shake');
+    setTimeout(() => input.classList.remove('shake'), 500);
+    showToast('كلمة السر غير صحيحة', 'error');
+  }
 }
 
 /* ===================== HELPERS ===================== */
@@ -870,7 +906,7 @@ function renderSalesTable() {
   const tbody = document.getElementById('sales-tbody');
   let totalIncome = 0;
   if (!logs.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">لا توجد مبيعات مسجلة</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">لا توجد مبيعات مسجلة</td></tr>';
     document.getElementById('total-income-chip').textContent = '0 دج';
     return;
   }
@@ -885,10 +921,18 @@ function renderSalesTable() {
       <td>${fmt(log.soldSingle)}</td>
       <td>${fmt(log.price, 'دج')}</td>
       <td><strong style="color:var(--green)">${fmt(log.income, 'دج')}</strong></td>
+      <td><button class="btn btn-danger btn-sm btn-delete-log" data-id="${log.id}">🗑</button></td>
     `;
     tbody.appendChild(tr);
   });
   document.getElementById('total-income-chip').textContent = fmt(totalIncome, 'دج');
+  // Attach delete events
+  tbody.querySelectorAll('.btn-delete-log').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const logId = Number(btn.dataset.id);
+      showPasswordModal(() => deleteLogById(logId));
+    });
+  });
 }
 
 /* ===================== FEED PAGE ===================== */
@@ -982,14 +1026,27 @@ document.addEventListener('click', function (e) {
   }
 });
 
+function deleteLogById(logId) {
+  let logs = DB.get('daily_logs') || [];
+  logs = logs.filter(l => l.id !== logId);
+  DB.set('daily_logs', logs);
+  addActivity('تم حذف سجل يومي', '🗑');
+  renderSalesTable();
+  renderFeedPage();
+  renderReportsPage();
+  renderDashboard();
+  showToast('تم حذف السجل', 'warning');
+}
+
 function deleteWorker(id) {
-  if (!confirm('هل تريد حذف هذا العامل؟')) return;
-  let workers = DB.get('workers') || [];
-  workers = workers.filter(w => w.id !== id);
-  DB.set('workers', workers);
-  addActivity('تم حذف عامل', '🗑');
-  renderWorkersPage();
-  showToast('تم حذف العامل', 'warning');
+  showPasswordModal(() => {
+    let workers = DB.get('workers') || [];
+    workers = workers.filter(w => w.id !== id);
+    DB.set('workers', workers);
+    addActivity('تم حذف عامل', '🗑');
+    renderWorkersPage();
+    showToast('تم حذف العامل', 'warning');
+  });
 }
 
 function resetWorkerAdvances(id) {
@@ -1040,7 +1097,7 @@ function renderReportsPage() {
   const tbody = document.getElementById('prod-tbody');
   const sorted = [...logs].sort((a, b) => new Date(b.date) - new Date(a.date));
   if (!sorted.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-cell">لا توجد سجلات</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-cell">لا توجد سجلات</td></tr>';
     return;
   }
   tbody.innerHTML = '';
@@ -1055,8 +1112,16 @@ function renderReportsPage() {
       <td>${fmt(log.singleLeft)}</td>
       <td>${log.dead > 0 ? `<span style="color:var(--red)">💀 ${log.dead}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
       <td style="color:var(--text-secondary);font-size:0.8rem">${log.notes || '—'}</td>
+      <td><button class="btn btn-danger btn-sm btn-delete-log-rep" data-id="${log.id}">🗑</button></td>
     `;
     tbody.appendChild(tr);
+  });
+  // Attach delete events for reports table
+  tbody.querySelectorAll('.btn-delete-log-rep').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const logId = Number(btn.dataset.id);
+      showPasswordModal(() => deleteLogById(logId));
+    });
   });
 }
 
@@ -1071,9 +1136,11 @@ function loadSettingsForm() {
   document.getElementById('farm-feed-price').value = s.feedPrice || '';
   document.getElementById('feed-alert-threshold').value = s.feedAlertThreshold || 100;
   document.getElementById('broken-alert-pct').value = s.brokenAlertPct || 5;
+  document.getElementById('delete-password-setting').value = s.deletePassword || '1234';
 }
 
 function saveSettings() {
+  const newPass = document.getElementById('delete-password-setting').value.trim();
   const s = {
     farmName: document.getElementById('farm-name').value || (CURRENT_FACTORY?.name || 'مصنع زهير'),
     owner: document.getElementById('farm-owner').value || '',
@@ -1082,7 +1149,8 @@ function saveSettings() {
     chickenPrice: Number(document.getElementById('farm-chicken-price').value) || 0,
     feedPrice: Number(document.getElementById('farm-feed-price').value) || 0,
     feedAlertThreshold: Number(document.getElementById('feed-alert-threshold').value) || 100,
-    brokenAlertPct: Number(document.getElementById('broken-alert-pct').value) || 5
+    brokenAlertPct: Number(document.getElementById('broken-alert-pct').value) || 5,
+    deletePassword: newPass || '1234'
   };
   DB.set('settings', s);
   addActivity('تم تحديث إعدادات المصنع', '⚙️');
@@ -1137,6 +1205,16 @@ function resetAllData() {
 
 /* ===================== BOOTSTRAP ===================== */
 document.addEventListener('DOMContentLoaded', () => {
+  // Init password modal listeners
+  const passModal = document.getElementById('modal-delete-password');
+  if (passModal) {
+    document.getElementById('btn-confirm-delete-password').addEventListener('click', confirmDeletePassword);
+    document.getElementById('btn-cancel-delete-password').addEventListener('click', closePasswordModal);
+    passModal.addEventListener('click', (e) => { if (e.target === passModal) closePasswordModal(); });
+    document.getElementById('delete-password-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') confirmDeletePassword();
+    });
+  }
   // Show global loader until sync confirms if we have factories or not
   // initGlobalSync is called inside, which will eventually hide it
   updateLiveDate();
