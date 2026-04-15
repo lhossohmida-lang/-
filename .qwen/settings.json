@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(firebase *)"
+    ]
+  },
+  "$version": 3
+}

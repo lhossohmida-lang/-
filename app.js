@@ -15,13 +15,25 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const fs = firebase.firestore();
 
+// Enable offline persistence for better mobile sync
+fs.enablePersistence().catch(err => {
+  if (err.code == 'failed-precondition') {
+    // Multiple tabs open, persistence can only be enabled in one tab at a a time.
+    console.warn('Persistence failed: Multiple tabs');
+  } else if (err.code == 'unimplemented') {
+    // The current browser does not support all of the features required to enable persistence
+    console.warn('Persistence failed: Browser not supported');
+  }
+});
+
 /* ===================== FACTORY STATE ===================== */
 let CURRENT_FACTORY = null; // { id, name, icon, color }
 let FACTORY_SYNC_UNSUBS = [];
 let GLOBAL_SYNC_UNSUB = null;
 let IS_INITIAL_CLOUD_LOAD = true;
+let INITIAL_CLOUD_SYNC_DONE = false; // New: tracking for the first list load
 
-const CARD_COLORS = ['gold','blue','green','purple','teal','orange','red','pink'];
+const CARD_COLORS = ['gold', 'blue', 'green', 'purple', 'teal', 'orange', 'red', 'pink'];
 
 /* ===================== FACTORY DB ===================== */
 const FactoryDB = {
@@ -34,12 +46,12 @@ const FactoryDB = {
 
   saveFactories(list) {
     localStorage.setItem(this.listKey, JSON.stringify(list));
-    // Sync list to cloud
+    // Sync list to cloud — use safe document ID (no underscores prefix/suffix)
     try {
-      fs.collection('app_data').doc('__factories__').set({
+      fs.collection('app_data').doc('factories_list').set({
         data: list, lastUpdated: new Date().toISOString()
       });
-    } catch(e) { console.error('Cloud factory list sync error:', e); }
+    } catch (e) { console.error('Cloud factory list sync error:', e); }
   },
 
   addFactory(name, icon, color) {
@@ -55,15 +67,15 @@ const FactoryDB = {
     let list = this.getFactories().filter(f => f.id !== id);
     this.saveFactories(list);
     // Clear local data for this factory
-    ['settings','workers','daily_logs','activities'].forEach(k => {
+    ['settings', 'workers', 'daily_logs', 'activities'].forEach(k => {
       localStorage.removeItem(`zohir_${id}_${k}`);
     });
     // Remove from cloud
     try {
-      ['settings','workers','daily_logs','activities'].forEach(k => {
+      ['settings', 'workers', 'daily_logs', 'activities'].forEach(k => {
         fs.collection('app_data').doc(`${id}_${k}`).delete();
       });
-    } catch(e) { console.error(e); }
+    } catch (e) { console.error(e); }
   }
 };
 
@@ -83,7 +95,7 @@ const DB = {
       fs.collection('app_data').doc(`${CURRENT_FACTORY.id}_${key}`).set({
         data: val, lastUpdated: new Date().toISOString()
       });
-    } catch(e) { console.error('Cloud Error:', e); }
+    } catch (e) { console.error('Cloud Error:', e); }
   }
 };
 
@@ -97,7 +109,7 @@ function setSyncStatus(status) {
 }
 
 function stopFactorySync() {
-  FACTORY_SYNC_UNSUBS.forEach(unsub => { try { unsub(); } catch(e){} });
+  FACTORY_SYNC_UNSUBS.forEach(unsub => { try { unsub(); } catch (e) { } });
   FACTORY_SYNC_UNSUBS = [];
 }
 
@@ -106,28 +118,36 @@ function initCloudSync() {
   stopFactorySync();
   setSyncStatus('syncing');
 
-  const keys = ['settings','workers','daily_logs','activities'];
+  const keys = ['settings', 'workers', 'daily_logs', 'activities'];
   let syncedCount = 0;
 
   keys.forEach(key => {
     const docId = `${CURRENT_FACTORY.id}_${key}`;
     const unsub = fs.collection('app_data').doc(docId).onSnapshot(doc => {
       syncedCount++;
-      if (syncedCount >= keys.length) setSyncStatus('online');
+      if (syncedCount >= keys.length) {
+        setSyncStatus('online');
+        hideGlobalLoader(); // Hide loader when all initial keys are synced
+      }
 
-      if (doc.exists) {
+      if (!doc.metadata.hasPendingWrites && doc.exists) {
         const cloudData = doc.data().data;
         const localData = DB.get(key);
         if (JSON.stringify(localData) !== JSON.stringify(cloudData)) {
           localStorage.setItem(`zohir_${CURRENT_FACTORY.id}_${key}`, JSON.stringify(cloudData));
           renderCurrentPage();
         }
-      } else {
-        // Cloud is empty — push local data if any exists
+      } else if (!doc.exists) {
+        // Cloud is empty — push local data ONLY if it contains actual data (not just empty array or default settings)
         const localData = DB.get(key);
         if (localData !== null) {
-          const isEmpty = Array.isArray(localData) ? localData.length === 0 : false;
-          if (!isEmpty) DB.set(key, localData);
+          const isActuallyEmpty = Array.isArray(localData) ? localData.length === 0 : (key === 'settings' ? false : true); 
+          // Note: for settings, we usually want to push defaults if cloud is empty, 
+          // but we should proceed with caution.
+          if (!isActuallyEmpty) {
+            console.log(`Cloud missing ${key}, pushing local data...`);
+            DB.set(key, localData);
+          }
         }
       }
     }, err => {
@@ -138,7 +158,7 @@ function initCloudSync() {
   });
 
   // Also sync factory list from cloud
-  const fUnsub = fs.collection('app_data').doc('__factories__').onSnapshot(doc => {
+  const fUnsub = fs.collection('app_data').doc('factories_list').onSnapshot(doc => {
     if (doc.exists) {
       const cloudList = doc.data().data;
       const localList = FactoryDB.getFactories();
@@ -147,14 +167,17 @@ function initCloudSync() {
         if (!CURRENT_FACTORY) renderFactoryScreen();
       }
     }
-  }, () => {});
+  }, () => { });
   FACTORY_SYNC_UNSUBS.push(fUnsub);
+
+  // Failsafe: if sync takes too long, hide loader anyway
+  setTimeout(() => hideGlobalLoader(), 5000);
 }
 
 /* ===================== GLOBAL CLOUD SYNC ===================== */
 function initGlobalSync() {
   // Sync the factory list regardless of which factory is active
-  GLOBAL_SYNC_UNSUB = fs.collection('app_data').doc('__factories__').onSnapshot(doc => {
+  GLOBAL_SYNC_UNSUB = fs.collection('app_data').doc('factories_list').onSnapshot(doc => {
     if (doc.exists) {
       const cloudList = doc.data().data;
       const localList = FactoryDB.getFactories();
@@ -164,12 +187,52 @@ function initGlobalSync() {
       }
     }
     IS_INITIAL_CLOUD_LOAD = false;
-    if (!CURRENT_FACTORY) renderFactoryScreen();
+    INITIAL_CLOUD_SYNC_DONE = true;
+    hideGlobalLoader(); // NEW: hide loader when first sync is done
+    
+    // If we are on the factory screen and it's our first load, re-check auto-enter
+    if (!CURRENT_FACTORY) {
+      renderFactoryScreen();
+      checkAutoEnter();
+    }
   }, err => {
     console.error('Global Sync Error:', err);
     IS_INITIAL_CLOUD_LOAD = false;
+    INITIAL_CLOUD_SYNC_DONE = true;
+    hideGlobalLoader();
     if (!CURRENT_FACTORY) renderFactoryScreen();
   });
+}
+
+function hideGlobalLoader() {
+  const loader = document.getElementById('global-loader');
+  if (loader) {
+    loader.classList.add('hidden');
+    setTimeout(() => {
+      if (loader.classList.contains('hidden')) {
+        loader.style.display = 'none';
+      }
+    }, 600);
+  }
+}
+
+function showGlobalLoader(msg) {
+  const loader = document.getElementById('global-loader');
+  const status = document.getElementById('loader-status');
+  if (loader) {
+    if (status && msg) status.textContent = msg;
+    loader.style.display = 'flex';
+    loader.classList.remove('hidden');
+  }
+}
+
+function checkAutoEnter() {
+  const factories = FactoryDB.getFactories();
+  if (factories.length === 1 && !CURRENT_FACTORY) {
+    enterFactory(factories[0]);
+  } else if (factories.length === 0 && !CURRENT_FACTORY) {
+    setTimeout(() => openAddFactoryModal(), 500);
+  }
 }
 
 /* ===================== FACTORY INIT DATA (safe — no cloud push) ===================== */
@@ -177,7 +240,7 @@ function initFactoryData() {
   const fid = CURRENT_FACTORY.id;
   const keys = [
     [`zohir_${fid}_settings`, JSON.stringify(defaultSettings())],
-    [`zohir_${fid}_workers`,    JSON.stringify([])],
+    [`zohir_${fid}_workers`, JSON.stringify([])],
     [`zohir_${fid}_daily_logs`, JSON.stringify([])],
     [`zohir_${fid}_activities`, JSON.stringify([])]
   ];
@@ -192,6 +255,8 @@ function defaultSettings() {
     owner: '',
     initialChickens: 0,
     initialFeed: 0,
+    chickenPrice: 0,
+    feedPrice: 0,
     feedAlertThreshold: 100,
     brokenAlertPct: 5
   };
@@ -242,7 +307,7 @@ function getTotalDeadThisMonth() {
 }
 function getTotalBrokenLossThisMonth() {
   const logs = DB.get('daily_logs') || [];
-  const now  = new Date();
+  const now = new Date();
   return logs
     .filter(l => { const d = new Date(l.date); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); })
     .reduce((s, l) => s + ((Number(l.broken) || 0) * (Number(l.price) || 0)), 0);
@@ -259,11 +324,11 @@ function renderCurrentPage() {
   const pageId = activePage.id.replace('page-', '');
   const refreshers = {
     dashboard: renderDashboard,
-    sales:     renderSalesTable,
-    feed:      renderFeedPage,
-    workers:   renderWorkersPage,
-    reports:   renderReportsPage,
-    settings:  loadSettingsForm
+    sales: renderSalesTable,
+    feed: renderFeedPage,
+    workers: renderWorkersPage,
+    reports: renderReportsPage,
+    settings: loadSettingsForm
   };
   if (refreshers[pageId]) refreshers[pageId]();
 }
@@ -339,6 +404,9 @@ function renderFactoryScreen() {
 
 function enterFactory(factory) {
   CURRENT_FACTORY = factory;
+  
+  // Show loader while switching data
+  showGlobalLoader(`جاري تحميل بيانات "${factory.name}"...`);
 
   // Update sidebar UI
   document.getElementById('sidebar-factory-icon').textContent = factory.icon || '🐔';
@@ -433,17 +501,22 @@ function closeAddFactoryModal() {
 function showPage(pageId) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.bottom-nav-item').forEach(n => n.classList.remove('active'));
+
   const page = document.getElementById('page-' + pageId);
-  const nav  = document.getElementById('nav-' + pageId);
+  const nav = document.getElementById('nav-' + pageId);
+  const bn = document.querySelector(`.bottom-nav-item[data-page="${pageId}"]`);
+
   if (page) page.classList.add('active');
-  if (nav)  nav.classList.add('active');
+  if (nav) nav.classList.add('active');
+  if (bn) bn.classList.add('active');
   const refreshers = {
     dashboard: renderDashboard,
-    sales:     renderSalesTable,
-    feed:      renderFeedPage,
-    workers:   renderWorkersPage,
-    reports:   renderReportsPage,
-    settings:  loadSettingsForm
+    sales: renderSalesTable,
+    feed: renderFeedPage,
+    workers: renderWorkersPage,
+    reports: renderReportsPage,
+    settings: loadSettingsForm
   };
   if (refreshers[pageId]) refreshers[pageId]();
   // Close mobile sidebar
@@ -461,20 +534,42 @@ function updateLiveDate() {
 
 /* ===================== DASHBOARD ===================== */
 function renderDashboard() {
-  const logs    = DB.get('daily_logs') || [];
+  const logs = DB.get('daily_logs') || [];
   const settings = DB.get('settings') || defaultSettings();
-  const lastLog = logs.length ? logs[logs.length - 1] : null;
+  
+  const today = todayStr();
+  const todayLogs = logs.filter(l => l.date === today);
+  
+  // Aggregate today's data for combined KPIs
+  const todaySummary = todayLogs.reduce((acc, l) => {
+    acc.produced += Number(l.produced) || 0;
+    acc.broken += Number(l.broken) || 0;
+    acc.netEggs += Number(l.netEggs) || 0;
+    acc.income += Number(l.income) || 0;
+    acc.dead += Number(l.dead) || 0;
+    acc.feedIn += Number(l.feedIn) || 0;
+    acc.feedUsed += Number(l.feedUsed) || 0;
+    acc.koliates += Number(l.koliates) || 0;
+    acc.singleLeft += Number(l.singleLeft) || 0;
+    acc.soldGroups += Number(l.soldGroups) || 0;
+    acc.soldSingle += Number(l.soldSingle) || 0;
+    if (l.price > 0) acc.price = l.price; // Keep latest price
+    return acc;
+  }, { 
+    date: today, produced: 0, broken: 0, netEggs: 0, income: 0, dead: 0, 
+    feedIn: 0, feedUsed: 0, price: 0, koliates:0, singleLeft:0, soldGroups:0, soldSingle:0 
+  });
 
-  const feedBal    = getCurrentFeedBalance();
-  const deadMonth  = getTotalDeadThisMonth();
+  const feedBal = getCurrentFeedBalance();
+  const deadMonth = getTotalDeadThisMonth();
   const brokenLoss = getTotalBrokenLossThisMonth();
-  const totalAdv   = getTotalAdvances();
+  const totalAdv = getTotalAdvances();
 
-  document.getElementById('kpi-eggs').textContent    = lastLog ? fmt(lastLog.netEggs) : '0';
-  document.getElementById('kpi-income').textContent   = lastLog ? fmt(lastLog.income, 'دج') : '0 دج';
-  document.getElementById('kpi-feed').textContent     = fmt(feedBal, 'كغ');
-  document.getElementById('kpi-dead').textContent     = deadMonth;
-  document.getElementById('kpi-broken').textContent   = fmt(brokenLoss, 'دج');
+  document.getElementById('kpi-eggs').textContent = todayLogs.length ? fmt(todaySummary.netEggs) : '0';
+  document.getElementById('kpi-income').textContent = todayLogs.length ? fmt(todaySummary.income, 'دج') : '0 دج';
+  document.getElementById('kpi-feed').textContent = fmt(feedBal, 'كغ');
+  document.getElementById('kpi-dead').textContent = deadMonth;
+  document.getElementById('kpi-broken').textContent = fmt(brokenLoss, 'دج');
   document.getElementById('kpi-advances').textContent = fmt(totalAdv, 'دج');
 
   const feedKpi = document.querySelector('.kpi-feed');
@@ -484,11 +579,18 @@ function renderDashboard() {
     feedKpi.style.borderColor = '';
   }
 
-  renderLastReport(lastLog);
+  // Show summary of today if logs exist, otherwise show last record from history
+  if (todayLogs.length > 0) {
+    renderLastReport(todaySummary, `📊 ملخص اليوم (${todayLogs.length} سجلات)`);
+  } else {
+    const lastLog = logs.length ? logs[logs.length - 1] : null;
+    renderLastReport(lastLog);
+  }
+  
   renderActivities();
 }
 
-function renderLastReport(log) {
+function renderLastReport(log, customTitle = null) {
   const el = document.getElementById('last-report-content');
   if (!log) {
     el.innerHTML = `<div class="empty-state">
@@ -504,7 +606,7 @@ function renderLastReport(log) {
 
   el.innerHTML = `
     <div class="report-block">
-      <div class="report-block-title">📅 ${fmtDate(log.date)}</div>
+      <div class="report-block-title">${customTitle || '📅 ' + fmtDate(log.date)}</div>
       <div class="report-row"><span>إجمالي البلاكات</span><strong>${fmt(log.produced)}</strong></div>
       <div class="report-row"><span>المكسور</span><strong class="${log.broken > 0 ? 'negative' : ''}">${fmt(log.broken)}</strong></div>
       <div class="report-row"><span>الصافي</span><strong class="positive">${fmt(log.netEggs)}</strong></div>
@@ -556,7 +658,7 @@ function renderActivities() {
 function initDailyForm() {
   document.getElementById('inp-date').value = todayStr();
 
-  const calcFields = ['inp-produced','inp-broken','inp-price','inp-sold-total','inp-free-plates','inp-feed-in','inp-feed-price','inp-feed-used'];
+  const calcFields = ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates', 'inp-feed-in', 'inp-feed-price', 'inp-feed-used'];
   calcFields.forEach(id => {
     document.getElementById(id).addEventListener('input', updateDailyCalc);
   });
@@ -567,31 +669,31 @@ function initDailyForm() {
 }
 
 function updateDailyCalc() {
-  const produced   = Number(document.getElementById('inp-produced').value) || 0;
-  const broken     = Number(document.getElementById('inp-broken').value) || 0;
-  const price      = Number(document.getElementById('inp-price').value) || 0;
-  const soldTotal  = Number(document.getElementById('inp-sold-total').value) || 0;
-  const feedIn     = Number(document.getElementById('inp-feed-in').value) || 0;
-  const feedPrice  = Number(document.getElementById('inp-feed-price').value) || 0;
-  const feedUsed   = Number(document.getElementById('inp-feed-used').value) || 0;
+  const produced = Number(document.getElementById('inp-produced').value) || 0;
+  const broken = Number(document.getElementById('inp-broken').value) || 0;
+  const price = Number(document.getElementById('inp-price').value) || 0;
+  const soldTotal = Number(document.getElementById('inp-sold-total').value) || 0;
+  const feedIn = Number(document.getElementById('inp-feed-in').value) || 0;
+  const feedPrice = Number(document.getElementById('inp-feed-price').value) || 0;
+  const feedUsed = Number(document.getElementById('inp-feed-used').value) || 0;
 
-  const net        = produced - broken;
-  const koliates   = Math.floor(net / 12);
+  const net = produced - broken;
+  const koliates = Math.floor(net / 12);
   const singleLeft = net % 12;
   const soldGroups = Math.floor(soldTotal / 12);
   const soldSingle = soldTotal % 12;
-  const income     = soldTotal * price;
-  const feedBal    = getCurrentFeedBalance() + feedIn - feedUsed;
-  const feedCost   = feedIn * feedPrice;
+  const income = soldTotal * price;
+  const feedBal = getCurrentFeedBalance() + feedIn - feedUsed;
+  const feedCost = feedIn * feedPrice;
 
-  document.getElementById('prev-net').textContent          = net >= 0 ? fmt(net) : '—';
-  document.getElementById('prev-koliates').textContent     = net >= 0 ? fmt(koliates) : '—';
-  document.getElementById('prev-single').textContent       = net >= 0 ? fmt(singleLeft) : '—';
-  document.getElementById('prev-sold-groups').textContent  = soldTotal > 0 ? fmt(soldGroups) + ' كرطون' : '—';
-  document.getElementById('prev-sold-single').textContent  = soldTotal > 0 ? fmt(soldSingle) + ' بلاكة' : '—';
-  document.getElementById('prev-income').textContent       = fmt(income, 'دج');
-  document.getElementById('prev-feed').textContent         = fmt(feedBal, 'كغ');
-  document.getElementById('prev-feed-cost').textContent    = feedPrice > 0 ? fmt(feedCost, 'دج') : '—';
+  document.getElementById('prev-net').textContent = net >= 0 ? fmt(net) : '—';
+  document.getElementById('prev-koliates').textContent = net >= 0 ? fmt(koliates) : '—';
+  document.getElementById('prev-single').textContent = net >= 0 ? fmt(singleLeft) : '—';
+  document.getElementById('prev-sold-groups').textContent = soldTotal > 0 ? fmt(soldGroups) + ' كرطون' : '—';
+  document.getElementById('prev-sold-single').textContent = soldTotal > 0 ? fmt(soldSingle) + ' بلاكة' : '—';
+  document.getElementById('prev-income').textContent = fmt(income, 'دج');
+  document.getElementById('prev-feed').textContent = fmt(feedBal, 'كغ');
+  document.getElementById('prev-feed-cost').textContent = feedPrice > 0 ? fmt(feedCost, 'دج') : '—';
 }
 
 function addAdvanceRow() {
@@ -623,27 +725,27 @@ function populateWorkerSelects() {
 }
 
 function saveDayData() {
-  const date      = document.getElementById('inp-date').value;
-  const produced  = Number(document.getElementById('inp-produced').value) || 0;
-  const broken    = Number(document.getElementById('inp-broken').value) || 0;
-  const price     = Number(document.getElementById('inp-price').value) || 0;
+  const date = document.getElementById('inp-date').value;
+  const produced = Number(document.getElementById('inp-produced').value) || 0;
+  const broken = Number(document.getElementById('inp-broken').value) || 0;
+  const price = Number(document.getElementById('inp-price').value) || 0;
   const soldTotal = Number(document.getElementById('inp-sold-total').value) || 0;
   const freePlates = Number(document.getElementById('inp-free-plates').value) || 0;
-  const feedIn    = Number(document.getElementById('inp-feed-in').value) || 0;
+  const feedIn = Number(document.getElementById('inp-feed-in').value) || 0;
   const feedPrice = Number(document.getElementById('inp-feed-price').value) || 0;
-  const feedUsed  = Number(document.getElementById('inp-feed-used').value) || 0;
-  const dead      = Number(document.getElementById('inp-dead').value) || 0;
-  const notes     = document.getElementById('inp-notes').value.trim();
+  const feedUsed = Number(document.getElementById('inp-feed-used').value) || 0;
+  const dead = Number(document.getElementById('inp-dead').value) || 0;
+  const notes = document.getElementById('inp-notes').value.trim();
 
   if (!date) { showToast('يرجى تحديد التاريخ', 'error'); return; }
 
-  const net        = produced - broken;
-  const koliates   = Math.floor(net / 12);
+  const net = produced - broken;
+  const koliates = Math.floor(net / 12);
   const singleLeft = net % 12;
   const soldGroups = Math.floor(soldTotal / 12);
   const soldSingle = soldTotal % 12;
-  const income     = soldTotal * price;
-  const feedCost   = feedIn * feedPrice;
+  const income = soldTotal * price;
+  const feedCost = feedIn * feedPrice;
 
   const log = {
     id: Date.now(),
@@ -658,18 +760,12 @@ function saveDayData() {
   const advancesThisDay = [];
   advRows.forEach(row => {
     const workerId = row.querySelector('.adv-worker-select').value;
-    const amount   = Number(row.querySelector('.adv-amount').value) || 0;
+    const amount = Number(row.querySelector('.adv-amount').value) || 0;
     if (workerId && amount > 0) advancesThisDay.push({ workerId, amount, date });
   });
 
   const logs = DB.get('daily_logs') || [];
-  const existingIdx = logs.findIndex(l => l.date === date);
-  if (existingIdx >= 0) {
-    if (!confirm(`يوجد سجل مسبق لتاريخ ${fmtDate(date)}. هل تريد استبداله؟`)) return;
-    logs[existingIdx] = log;
-  } else {
-    logs.push(log);
-  }
+  logs.push(log);
   DB.set('daily_logs', logs);
 
   if (advancesThisDay.length) {
@@ -692,12 +788,12 @@ function saveDayData() {
 
 function renderDailyReportOutput(log) {
   const container = document.getElementById('daily-report-output');
-  const content   = document.getElementById('daily-report-content');
-  const settings  = DB.get('settings') || defaultSettings();
-  const brokenPct  = log.produced > 0 ? ((log.broken / log.produced) * 100).toFixed(1) : '0.0';
+  const content = document.getElementById('daily-report-content');
+  const settings = DB.get('settings') || defaultSettings();
+  const brokenPct = log.produced > 0 ? ((log.broken / log.produced) * 100).toFixed(1) : '0.0';
   const brokenWarn = Number(brokenPct) > (Number(settings.brokenAlertPct) || 5);
-  const feedBal    = getCurrentFeedBalance();
-  const feedWarn   = feedBal < (Number(settings.feedAlertThreshold) || 100);
+  const feedBal = getCurrentFeedBalance();
+  const feedWarn = feedBal < (Number(settings.feedAlertThreshold) || 100);
 
   content.innerHTML = `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">
@@ -752,10 +848,10 @@ function renderDailyReportOutput(log) {
 }
 
 function clearDailyForm() {
-  ['inp-produced','inp-broken','inp-price','inp-sold-total','inp-free-plates',
-   'inp-feed-in','inp-feed-price','inp-feed-used','inp-dead','inp-notes'].forEach(id => {
-    document.getElementById(id).value = '';
-  });
+  ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates',
+    'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-dead', 'inp-notes'].forEach(id => {
+      document.getElementById(id).value = '';
+    });
   document.getElementById('inp-date').value = todayStr();
   document.getElementById('advance-entries').innerHTML = `
     <div class="advance-row">
@@ -811,14 +907,14 @@ function renderFeedPage() {
     tbody.innerHTML = '<tr><td colspan="7" class="empty-cell">لا توجد حركات مسجلة</td></tr>';
   } else {
     sorted.forEach(log => {
-      const feedIn    = Number(log.feedIn) || 0;
-      const feedUsed  = Number(log.feedUsed) || 0;
-      const feedPr    = Number(log.feedPrice) || 0;
+      const feedIn = Number(log.feedIn) || 0;
+      const feedUsed = Number(log.feedUsed) || 0;
+      const feedPr = Number(log.feedPrice) || 0;
       const feedCstDay = Number(log.feedCost) || 0;
       runningBal += feedIn - feedUsed;
-      totalIn    += feedIn;
-      totalUsed  += feedUsed;
-      totalCost  += feedCstDay;
+      totalIn += feedIn;
+      totalUsed += feedUsed;
+      totalCost += feedCstDay;
       const warn = runningBal < threshold;
       const tr = document.createElement('tr');
       tr.innerHTML = `
@@ -835,10 +931,10 @@ function renderFeedPage() {
   }
 
   const finalBal = getCurrentFeedBalance();
-  document.getElementById('feed-balance-big').textContent  = fmt(finalBal, 'كغ');
-  document.getElementById('feed-total-in').textContent     = fmt(totalIn, 'كغ');
-  document.getElementById('feed-total-used').textContent   = fmt(totalUsed, 'كغ');
-  document.getElementById('feed-total-cost').textContent   = fmt(totalCost, 'دج');
+  document.getElementById('feed-balance-big').textContent = fmt(finalBal, 'كغ');
+  document.getElementById('feed-total-in').textContent = fmt(totalIn, 'كغ');
+  document.getElementById('feed-total-used').textContent = fmt(totalUsed, 'كغ');
+  document.getElementById('feed-total-cost').textContent = fmt(totalCost, 'دج');
 }
 
 /* ===================== WORKERS PAGE ===================== */
@@ -880,7 +976,7 @@ function renderWorkersPage() {
   });
 }
 
-document.addEventListener('click', function(e) {
+document.addEventListener('click', function (e) {
   if (e.target.classList.contains('btn-remove-adv')) {
     e.target.closest('.advance-row')?.remove();
   }
@@ -918,14 +1014,14 @@ function renderReportsPage() {
     return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
   });
 
-  const totalIncome   = monthLogs.reduce((s, l) => s + (Number(l.income) || 0), 0);
-  const totalProd     = monthLogs.reduce((s, l) => s + (Number(l.produced) || 0), 0);
-  const totalNet      = monthLogs.reduce((s, l) => s + (Number(l.netEggs) || 0), 0);
-  const totalBroken   = monthLogs.reduce((s, l) => s + (Number(l.broken) || 0), 0);
-  const totalDead     = monthLogs.reduce((s, l) => s + (Number(l.dead) || 0), 0);
-  const brokenLoss    = getTotalBrokenLossThisMonth();
-  const totalAdv      = getTotalAdvances();
-  const totalKartons  = monthLogs.reduce((s, l) => s + (Number(l.koliates) || 0), 0);
+  const totalIncome = monthLogs.reduce((s, l) => s + (Number(l.income) || 0), 0);
+  const totalProd = monthLogs.reduce((s, l) => s + (Number(l.produced) || 0), 0);
+  const totalNet = monthLogs.reduce((s, l) => s + (Number(l.netEggs) || 0), 0);
+  const totalBroken = monthLogs.reduce((s, l) => s + (Number(l.broken) || 0), 0);
+  const totalDead = monthLogs.reduce((s, l) => s + (Number(l.dead) || 0), 0);
+  const brokenLoss = getTotalBrokenLossThisMonth();
+  const totalAdv = getTotalAdvances();
+  const totalKartons = monthLogs.reduce((s, l) => s + (Number(l.koliates) || 0), 0);
   const totalFeedCost = logs.reduce((s, l) => s + (Number(l.feedCost) || 0), 0);
 
   const summary = document.getElementById('monthly-summary');
@@ -967,12 +1063,14 @@ function renderReportsPage() {
 /* ===================== SETTINGS ===================== */
 function loadSettingsForm() {
   const s = DB.get('settings') || defaultSettings();
-  document.getElementById('farm-name').value            = s.farmName || '';
-  document.getElementById('farm-owner').value           = s.owner || '';
-  document.getElementById('farm-chickens').value        = s.initialChickens || '';
-  document.getElementById('farm-feed-init').value       = s.initialFeed || '';
+  document.getElementById('farm-name').value = s.farmName || '';
+  document.getElementById('farm-owner').value = s.owner || '';
+  document.getElementById('farm-chickens').value = s.initialChickens || '';
+  document.getElementById('farm-feed-init').value = s.initialFeed || '';
+  document.getElementById('farm-chicken-price').value = s.chickenPrice || '';
+  document.getElementById('farm-feed-price').value = s.feedPrice || '';
   document.getElementById('feed-alert-threshold').value = s.feedAlertThreshold || 100;
-  document.getElementById('broken-alert-pct').value     = s.brokenAlertPct || 5;
+  document.getElementById('broken-alert-pct').value = s.brokenAlertPct || 5;
 }
 
 function saveSettings() {
@@ -981,6 +1079,8 @@ function saveSettings() {
     owner: document.getElementById('farm-owner').value || '',
     initialChickens: Number(document.getElementById('farm-chickens').value) || 0,
     initialFeed: Number(document.getElementById('farm-feed-init').value) || 0,
+    chickenPrice: Number(document.getElementById('farm-chicken-price').value) || 0,
+    feedPrice: Number(document.getElementById('farm-feed-price').value) || 0,
     feedAlertThreshold: Number(document.getElementById('feed-alert-threshold').value) || 100,
     brokenAlertPct: Number(document.getElementById('broken-alert-pct').value) || 5
   };
@@ -992,7 +1092,7 @@ function saveSettings() {
 /* ===================== ADD WORKER ===================== */
 function initWorkersPage() {
   document.getElementById('btn-add-worker').addEventListener('click', () => {
-    const name   = document.getElementById('new-worker-name').value.trim();
+    const name = document.getElementById('new-worker-name').value.trim();
     const salary = Number(document.getElementById('new-worker-salary').value) || 0;
     if (!name) { showToast('يرجى إدخال اسم العامل', 'error'); return; }
     const workers = DB.get('workers') || [];
@@ -1011,8 +1111,8 @@ function initWorkersPage() {
 /* ===================== MOBILE SIDEBAR ===================== */
 function initMobileSidebar() {
   const hamburger = document.getElementById('hamburger');
-  const sidebar   = document.getElementById('sidebar');
-  const overlay   = document.getElementById('sidebar-overlay');
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
   hamburger.addEventListener('click', () => {
     sidebar.classList.toggle('open');
     overlay.classList.toggle('open');
@@ -1027,7 +1127,7 @@ function initMobileSidebar() {
 function resetAllData() {
   if (!confirm('⚠️ هل أنت متأكد من مسح جميع بيانات هذا المصنع؟ لا يمكن التراجع!')) return;
   if (!confirm('تأكيد أخير: سيتم حذف جميع البيانات نهائياً لهذا المصنع!')) return;
-  ['settings','workers','daily_logs','activities'].forEach(k => {
+  ['settings', 'workers', 'daily_logs', 'activities'].forEach(k => {
     localStorage.removeItem(`zohir_${CURRENT_FACTORY.id}_${k}`);
   });
   initFactoryData();
@@ -1037,38 +1137,49 @@ function resetAllData() {
 
 /* ===================== BOOTSTRAP ===================== */
 document.addEventListener('DOMContentLoaded', () => {
-  // Start global sync first
-  initGlobalSync();
-
-  // Initialize factory screen
-  initFactoryScreen();
-
-  // Setup live date refresh
+  // Show global loader until sync confirms if we have factories or not
+  // initGlobalSync is called inside, which will eventually hide it
   updateLiveDate();
   setInterval(updateLiveDate, 60000);
 
-  // Nav events (for app-wrapper)
-  document.querySelectorAll('.nav-item').forEach(btn => {
-    btn.addEventListener('click', () => showPage(btn.dataset.page));
-  });
-
-  // Initialize forms (these are inside the app-wrapper)
+  // Initialize UI components but don't show factory screen logic yet
+  initFactoryScreen();
   initDailyForm();
   initWorkersPage();
   initMobileSidebar();
 
-  // Settings save buttons
+  document.querySelectorAll('.nav-item').forEach(btn => {
+    btn.addEventListener('click', () => showPage(btn.dataset.page));
+  });
+
+  document.querySelectorAll('.bottom-nav-item[data-page]').forEach(btn => {
+    btn.addEventListener('click', () => showPage(btn.dataset.page));
+  });
+
+  document.getElementById('bn-more')?.addEventListener('click', () => {
+    document.getElementById('sidebar')?.classList.toggle('open');
+    document.getElementById('sidebar-overlay')?.classList.toggle('open');
+  });
+
   document.getElementById('btn-save-settings').addEventListener('click', saveSettings);
   document.getElementById('btn-save-general-settings').addEventListener('click', saveSettings);
   document.getElementById('btn-reset-all').addEventListener('click', resetAllData);
+  
+  // Daily Form listeners - attached once
+  document.getElementById('btn-save-day').addEventListener('click', saveDayData);
+  document.getElementById('add-advance-row').addEventListener('click', addAdvanceRow);
+  
+  // Add direct refresh functionality to sync badge
+  const syncBadge = document.getElementById('sync-badge');
+  if (syncBadge) {
+    syncBadge.classList.add('clickable');
+    syncBadge.title = "اضغط للتحديث اليدوي من السحابة";
+    syncBadge.addEventListener('click', () => {
+      showToast('جاري تحديث البيانات...');
+      initCloudSync();
+    });
+  }
 
-  // Check if only one factory exists → auto-enter it
-  const factories = FactoryDB.getFactories();
-  if (factories.length === 1) {
-    enterFactory(factories[0]);
-  }
-  // If there are no factories, show add modal automatically after short delay
-  if (factories.length === 0) {
-    setTimeout(() => openAddFactoryModal(), 800);
-  }
+  // START SYNC
+  initGlobalSync();
 });
