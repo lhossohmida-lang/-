@@ -15,14 +15,15 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const fs = firebase.firestore();
 
-// Enable offline persistence for better mobile sync
-fs.enablePersistence().catch(err => {
-  if (err.code == 'failed-precondition') {
-    // Multiple tabs open, persistence can only be enabled in one tab at a a time.
-    console.warn('Persistence failed: Multiple tabs');
-  } else if (err.code == 'unimplemented') {
-    // The current browser does not support all of the features required to enable persistence
-    console.warn('Persistence failed: Browser not supported');
+// Configure Firestore for better real-time performance
+fs.settings({ cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED });
+
+// Enable multi-tab persistence — allows real-time sync across tabs/devices
+fs.enablePersistence({ synchronizeTabs: true }).catch(err => {
+  if (err.code === 'failed-precondition') {
+    console.warn('Persistence: multiple tabs detected, using memory cache');
+  } else if (err.code === 'unimplemented') {
+    console.warn('Persistence not supported on this browser');
   }
 });
 
@@ -89,13 +90,18 @@ const DB = {
 
   set(key, val) {
     if (!CURRENT_FACTORY) return;
+    // 1. Save locally for instant UI
     localStorage.setItem(`zohir_${CURRENT_FACTORY.id}_${key}`, JSON.stringify(val));
-    // Sync to cloud — non-blocking
-    try {
-      fs.collection('app_data').doc(`${CURRENT_FACTORY.id}_${key}`).set({
-        data: val, lastUpdated: new Date().toISOString()
+    // 2. Push to Firestore — track the promise for error handling
+    const docRef = fs.collection('app_data').doc(`${CURRENT_FACTORY.id}_${key}`);
+    docRef.set({ data: val, lastUpdated: new Date().toISOString() })
+      .then(() => {
+        setSyncStatus('online');
+      })
+      .catch(e => {
+        console.error('Cloud write error:', e);
+        setSyncStatus('offline');
       });
-    } catch (e) { console.error('Cloud Error:', e); }
   }
 };
 
@@ -119,46 +125,54 @@ function initCloudSync() {
   setSyncStatus('syncing');
 
   const keys = ['settings', 'workers', 'daily_logs', 'activities'];
-  let syncedCount = 0;
+  // Track initial load separately from ongoing updates
+  const initialLoaded = new Set();
 
   keys.forEach(key => {
     const docId = `${CURRENT_FACTORY.id}_${key}`;
-    const unsub = fs.collection('app_data').doc(docId).onSnapshot(doc => {
-      syncedCount++;
-      if (syncedCount >= keys.length) {
+    const docRef = fs.collection('app_data').doc(docId);
+
+    const unsub = docRef.onSnapshot({ includeMetadataChanges: false }, doc => {
+      // Mark this key as loaded
+      initialLoaded.add(key);
+      if (initialLoaded.size >= keys.length) {
         setSyncStatus('online');
-        hideGlobalLoader(); // Hide loader when all initial keys are synced
+        hideGlobalLoader();
       }
 
-      if (!doc.metadata.hasPendingWrites && doc.exists) {
+      if (doc.exists) {
         const cloudData = doc.data().data;
         const localData = DB.get(key);
+        // Only update if cloud data is different — prevents infinite loops
         if (JSON.stringify(localData) !== JSON.stringify(cloudData)) {
           localStorage.setItem(`zohir_${CURRENT_FACTORY.id}_${key}`, JSON.stringify(cloudData));
           renderCurrentPage();
         }
-      } else if (!doc.exists) {
-        // Cloud is empty — push local data ONLY if it contains actual data (not just empty array or default settings)
+      } else {
+        // Cloud doc doesn't exist — push local data if we have meaningful data
+        initialLoaded.add(key); // still count as loaded
         const localData = DB.get(key);
         if (localData !== null) {
-          const isActuallyEmpty = Array.isArray(localData) ? localData.length === 0 : (key === 'settings' ? false : true); 
-          // Note: for settings, we usually want to push defaults if cloud is empty, 
-          // but we should proceed with caution.
-          if (!isActuallyEmpty) {
-            console.log(`Cloud missing ${key}, pushing local data...`);
+          const isEmpty = Array.isArray(localData) ? localData.length === 0 : false;
+          if (!isEmpty) {
+            console.log(`Cloud missing ${key}, uploading local data...`);
             DB.set(key, localData);
           }
         }
       }
     }, err => {
-      console.error('Sync Error:', err);
-      setSyncStatus('offline');
+      console.error('Sync Error for', key, ':', err);
+      initialLoaded.add(key);
+      if (initialLoaded.size >= keys.length) {
+        setSyncStatus('offline');
+        hideGlobalLoader();
+      }
     });
     FACTORY_SYNC_UNSUBS.push(unsub);
   });
 
-  // Also sync factory list from cloud
-  const fUnsub = fs.collection('app_data').doc('factories_list').onSnapshot(doc => {
+  // Also listen to factory list updates from any device
+  const fUnsub = fs.collection('app_data').doc('factories_list').onSnapshot({ includeMetadataChanges: false }, doc => {
     if (doc.exists) {
       const cloudList = doc.data().data;
       const localList = FactoryDB.getFactories();
@@ -170,38 +184,39 @@ function initCloudSync() {
   }, () => { });
   FACTORY_SYNC_UNSUBS.push(fUnsub);
 
-  // Failsafe: if sync takes too long, hide loader anyway
-  setTimeout(() => hideGlobalLoader(), 5000);
+  // Failsafe: hide loader after 6 seconds max
+  setTimeout(() => hideGlobalLoader(), 6000);
 }
 
 /* ===================== GLOBAL CLOUD SYNC ===================== */
 function initGlobalSync() {
-  // Sync the factory list regardless of which factory is active
-  GLOBAL_SYNC_UNSUB = fs.collection('app_data').doc('factories_list').onSnapshot(doc => {
-    if (doc.exists) {
-      const cloudList = doc.data().data;
-      const localList = FactoryDB.getFactories();
-      if (cloudList && JSON.stringify(localList) !== JSON.stringify(cloudList)) {
-        localStorage.setItem(FactoryDB.listKey, JSON.stringify(cloudList));
-        if (!CURRENT_FACTORY) renderFactoryScreen();
+  // Sync the factory list from Firestore to ensure all devices see same factories
+  GLOBAL_SYNC_UNSUB = fs.collection('app_data').doc('factories_list')
+    .onSnapshot({ includeMetadataChanges: false }, doc => {
+      IS_INITIAL_CLOUD_LOAD = false;
+      INITIAL_CLOUD_SYNC_DONE = true;
+
+      if (doc.exists) {
+        const cloudList = doc.data().data;
+        const localList = FactoryDB.getFactories();
+        if (cloudList && Array.isArray(cloudList) && JSON.stringify(localList) !== JSON.stringify(cloudList)) {
+          localStorage.setItem(FactoryDB.listKey, JSON.stringify(cloudList));
+        }
       }
-    }
-    IS_INITIAL_CLOUD_LOAD = false;
-    INITIAL_CLOUD_SYNC_DONE = true;
-    hideGlobalLoader(); // NEW: hide loader when first sync is done
-    
-    // If we are on the factory screen and it's our first load, re-check auto-enter
-    if (!CURRENT_FACTORY) {
-      renderFactoryScreen();
-      checkAutoEnter();
-    }
-  }, err => {
-    console.error('Global Sync Error:', err);
-    IS_INITIAL_CLOUD_LOAD = false;
-    INITIAL_CLOUD_SYNC_DONE = true;
-    hideGlobalLoader();
-    if (!CURRENT_FACTORY) renderFactoryScreen();
-  });
+
+      hideGlobalLoader();
+
+      if (!CURRENT_FACTORY) {
+        renderFactoryScreen();
+        checkAutoEnter();
+      }
+    }, err => {
+      console.error('Global Sync Error:', err);
+      IS_INITIAL_CLOUD_LOAD = false;
+      INITIAL_CLOUD_SYNC_DONE = true;
+      hideGlobalLoader();
+      if (!CURRENT_FACTORY) renderFactoryScreen();
+    });
 }
 
 function hideGlobalLoader() {
