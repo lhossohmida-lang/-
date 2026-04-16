@@ -1243,9 +1243,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-save-general-settings').addEventListener('click', saveSettings);
   document.getElementById('btn-reset-all').addEventListener('click', resetAllData);
   
-  // Daily Form listeners - attached once
-  document.getElementById('btn-save-day').addEventListener('click', saveDayData);
-  document.getElementById('add-advance-row').addEventListener('click', addAdvanceRow);
+  // Daily Form listeners are already attached in initDailyForm()
   
   // Add direct refresh functionality to sync badge
   const syncBadge = document.getElementById('sync-badge');
