@@ -336,19 +336,24 @@ body {
   position: absolute;
   top: 12px;
   left: 12px;
-  width: 28px; height: 28px;
+  width: 32px; height: 32px;
   border-radius: 50%;
-  background: rgba(252,129,129,0.1);
-  border: 1px solid rgba(252,129,129,0.2);
+  background: rgba(252,129,129,0.15);
+  border: 1px solid rgba(252,129,129,0.3);
   color: var(--red);
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   opacity: 0;
   transition: var(--transition);
+  -webkit-tap-highlight-color: transparent;
 }
 .factory-card:hover .factory-card-delete { opacity: 1; }
 .factory-card-delete:hover { background: rgba(252,129,129,0.25); }
+/* Always show delete on touch devices */
+@media (hover: none) {
+  .factory-card-delete { opacity: 0.7; }
+}
 
 /* ======= ADD FACTORY BTN ======= */
 .btn-add-factory {
@@ -1065,7 +1070,7 @@ textarea::placeholder { color: var(--text-muted); }
 /* ======= TOAST ======= */
 .toast {
   position: fixed;
-  bottom: 28px;
+  bottom: calc(var(--bottom-nav-h) + 16px);
   left: 50%;
   transform: translateX(-50%) translateY(20px);
   background: var(--bg-card2);
@@ -1080,6 +1085,8 @@ textarea::placeholder { color: var(--text-muted); }
   transition: all 0.35s cubic-bezier(0.4,0,0.2,1);
   z-index: 9999;
   white-space: nowrap;
+  max-width: 90vw;
+  text-align: center;
   box-shadow: var(--shadow);
   backdrop-filter: blur(16px);
 }
@@ -1188,15 +1195,12 @@ textarea::placeholder { color: var(--text-muted); }
   .kpi-grid {
     gap: 10px;
   }
-  .factory-screen { padding: 80px 16px 40px; align-items: flex-start; }
-  .factory-screen-header { margin-bottom: 32px; }
+  .factory-screen { padding: 30px 16px calc(var(--bottom-nav-h) + 20px); align-items: flex-start; }
+  .factory-screen-header { margin-bottom: 28px; }
   .factory-logo-wrap { padding: 12px 20px; }
   .factory-logo-icon { font-size: 2.4rem; }
   .factory-logo-title { font-size: 1.7rem; }
   .factory-cards-grid { grid-template-columns: repeat(2, 1fr); gap: 14px; }
-  @media (max-width: 400px) {
-    .factory-cards-grid { grid-template-columns: 1fr; }
-  }
   .factory-card { padding: 22px 18px 18px; }
   .factory-card-icon { font-size: 2.8rem; }
   .factory-card-name { font-size: 1rem; }
@@ -1205,6 +1209,11 @@ textarea::placeholder { color: var(--text-muted); }
   .kpi-card { padding: 14px; }
   .kpi-value { font-size: 1.1rem; }
   .modal-box { padding: 24px; }
+}
+
+@media (max-width: 400px) {
+  .factory-cards-grid { grid-template-columns: 1fr; }
+  .factory-card { padding: 18px 16px 16px; }
 }
 
 @media (max-width: 480px) {
@@ -1217,7 +1226,14 @@ textarea::placeholder { color: var(--text-muted); }
   .page-header h1 { font-size: 1.3rem; }
   .btn-add-factory { padding: 14px; font-size: 0.9rem; }
   .factory-logo-wrap { gap: 10px; }
+  /* Fix toast on small mobile */
+  .toast {
+    bottom: calc(var(--bottom-nav-h) + env(safe-area-inset-bottom) + 12px);
+    font-size: 0.85rem;
+    padding: 11px 18px;
+  }
 }
+
 
 /* ======= UTILS / ANIMATIONS ======= */
 .loader {
