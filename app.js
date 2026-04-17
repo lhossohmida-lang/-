@@ -14,6 +14,7 @@ const firebaseConfig = {
 };
 firebase.initializeApp(firebaseConfig);
 const fs = firebase.firestore();
+const auth = firebase.auth();
 
 // Configure Firestore for better real-time performance
 fs.settings({ cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED });
@@ -26,6 +27,253 @@ fs.enablePersistence({ synchronizeTabs: true }).catch(err => {
     console.warn('Persistence not supported on this browser');
   }
 });
+
+/* ===================== AUTH STATE ===================== */
+let CURRENT_USER = null;  // Firebase user object
+let CURRENT_ROLE = null;  // 'owner' | 'worker'
+let CURRENT_USER_NAME = '';
+// Secret code that new owners must enter when registering
+const ADMIN_SECRET_CODE = 'ZOHIR2025';
+
+/* ---------- UI helpers ---------- */
+function showAuthScreen() {
+  document.getElementById('global-loader').style.display = 'none';
+  document.getElementById('auth-screen').style.display = 'flex';
+  document.getElementById('factory-screen').style.display = 'none';
+  document.getElementById('app-wrapper').style.display = 'none';
+}
+
+function hideAuthScreen() {
+  document.getElementById('auth-screen').style.display = 'none';
+}
+
+function switchAuthTab(tab) {
+  document.getElementById('form-login').style.display    = tab === 'login'    ? 'flex' : 'none';
+  document.getElementById('form-register').style.display = tab === 'register' ? 'flex' : 'none';
+  document.getElementById('tab-login').classList.toggle('active',    tab === 'login');
+  document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+  clearAuthErrors();
+}
+
+function clearAuthErrors() {
+  ['login-error','reg-error'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.classList.remove('visible'); el.textContent = ''; }
+  });
+}
+
+function showAuthError(id, msg) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+
+function togglePassVis(inputId, btn) {
+  const inp = document.getElementById(inputId);
+  if (!inp) return;
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+  btn.textContent = inp.type === 'password' ? '👁' : '🙈';
+}
+
+function setAuthBtnLoading(btnId, loading) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  btn.disabled = loading;
+  btn.textContent = loading ? '⏳ جاري المعالجة...' : (btnId === 'btn-login' ? '🔑 دخول' : '✅ إنشاء الحساب');
+}
+
+/* ---------- Register role chooser ---------- */
+function initRoleChooser() {
+  const roleSelect = document.getElementById('reg-role');
+  const adminCodeWrap = document.getElementById('reg-admin-code-wrap');
+  if (!roleSelect) return;
+  roleSelect.addEventListener('change', () => {
+    adminCodeWrap.style.display = roleSelect.value === 'owner' ? 'flex' : 'none';
+  });
+  adminCodeWrap.style.display = 'none'; // default: worker selected initially shows nothing
+  roleSelect.value = 'worker';          // default to worker for safety
+}
+
+/* ---------- REGISTER ---------- */
+async function doRegister() {
+  clearAuthErrors();
+  const name     = document.getElementById('reg-name').value.trim();
+  const email    = document.getElementById('reg-email').value.trim();
+  const password = document.getElementById('reg-password').value;
+  const role     = document.getElementById('reg-role').value;
+  const adminCode = document.getElementById('reg-admin-code').value.trim();
+
+  if (!name)     return showAuthError('reg-error', '⚠️ يرجى إدخال الاسم الكامل');
+  if (!email)    return showAuthError('reg-error', '⚠️ يرجى إدخال البريد الإلكتروني');
+  if (password.length < 6) return showAuthError('reg-error', '⚠️ كلمة المرور يجب أن تكون 6 أحرف على الأقل');
+  if (role === 'owner' && adminCode !== ADMIN_SECRET_CODE)
+    return showAuthError('reg-error', '❌ رمز الإدارة غير صحيح');
+
+  setAuthBtnLoading('btn-register', true);
+  try {
+    const cred = await auth.createUserWithEmailAndPassword(email, password);
+    await cred.user.updateProfile({ displayName: name });
+    // Save role + name in Firestore users collection
+    await fs.collection('users').doc(cred.user.uid).set({
+      name, email, role,
+      createdAt: new Date().toISOString()
+    });
+    showToast(`✅ تم إنشاء الحساب — مرحباً ${name}!`);
+    // onAuthStateChanged will fire and handle the rest
+  } catch (e) {
+    setAuthBtnLoading('btn-register', false);
+    showAuthError('reg-error', translateAuthError(e.code));
+  }
+}
+
+/* ---------- LOGIN ---------- */
+async function doLogin() {
+  clearAuthErrors();
+  const email    = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  if (!email)    return showAuthError('login-error', '⚠️ يرجى إدخال البريد الإلكتروني');
+  if (!password) return showAuthError('login-error', '⚠️ يرجى إدخال كلمة المرور');
+
+  setAuthBtnLoading('btn-login', true);
+  try {
+    await auth.signInWithEmailAndPassword(email, password);
+    // onAuthStateChanged handles what happens next
+  } catch (e) {
+    setAuthBtnLoading('btn-login', false);
+    showAuthError('login-error', translateAuthError(e.code));
+  }
+}
+
+/* ---------- LOGOUT ---------- */
+async function doLogout() {
+  if (!confirm('هل تريد تسجيل الخروج؟')) return;
+  stopFactorySync();
+  CURRENT_FACTORY = null;
+  CURRENT_USER = null;
+  CURRENT_ROLE = null;
+  document.body.className = '';
+  await auth.signOut();
+  // onAuthStateChanged will show login screen
+}
+
+/* ---------- Error translator ---------- */
+function translateAuthError(code) {
+  const map = {
+    'auth/email-already-in-use':    '❌ البريد الإلكتروني مستخدم بالفعل',
+    'auth/invalid-email':           '❌ البريد الإلكتروني غير صالح',
+    'auth/weak-password':           '❌ كلمة المرور ضعيفة جداً',
+    'auth/user-not-found':          '❌ لا يوجد حساب بهذا البريد',
+    'auth/wrong-password':          '❌ كلمة المرور غير صحيحة',
+    'auth/invalid-credential':      '❌ البريد أو كلمة المرور غير صحيحة',
+    'auth/too-many-requests':       '⚠️ محاولات كثيرة — حاول لاحقاً',
+    'auth/network-request-failed':  '⚠️ لا يوجد اتصال بالإنترنت',
+  };
+  return map[code] || `❌ خطأ: ${code}`;
+}
+
+/* ---------- Apply role to UI ---------- */
+function applyRoleToUI(role, name) {
+  document.body.classList.remove('role-owner', 'role-worker');
+  document.body.classList.add(role === 'owner' ? 'role-owner' : 'role-worker');
+
+  // Sidebar user info
+  const avatar = document.getElementById('sidebar-user-avatar');
+  const nameEl = document.getElementById('sidebar-user-name');
+  const roleEl = document.getElementById('sidebar-user-role');
+  if (avatar) avatar.textContent = (name || '?').charAt(0).toUpperCase();
+  if (nameEl) nameEl.textContent = name || 'مستخدم';
+  if (roleEl) roleEl.textContent = role === 'owner' ? '👔 صاحب العمل' : '👷 عامل';
+
+  // Worker banner in daily page
+  const banners = document.querySelectorAll('.worker-mode-banner');
+  banners.forEach(b => b.textContent = `👷 أنت مسجل دخول كعامل (${name}) — يمكنك إدخال بيانات اليوم فقط`);
+}
+
+/* ---------- Auth State Listener — the master switch ---------- */
+function initAuthListener() {
+  auth.onAuthStateChanged(async (user) => {
+    if (!user) {
+      // Not logged in → show login screen
+      showAuthScreen();
+      setAuthBtnLoading('btn-login', false);
+      setAuthBtnLoading('btn-register', false);
+      return;
+    }
+
+    // Logged in — fetch role from Firestore
+    CURRENT_USER = user;
+    try {
+      const doc = await fs.collection('users').doc(user.uid).get();
+      if (doc.exists) {
+        CURRENT_ROLE = doc.data().role || 'worker';
+        CURRENT_USER_NAME = doc.data().name || user.displayName || user.email;
+      } else {
+        // Fallback: treat as worker if no doc found
+        CURRENT_ROLE = 'worker';
+        CURRENT_USER_NAME = user.displayName || user.email;
+        await fs.collection('users').doc(user.uid).set({
+          name: CURRENT_USER_NAME, email: user.email,
+          role: 'worker', createdAt: new Date().toISOString()
+        });
+      }
+    } catch (e) {
+      CURRENT_ROLE = 'worker';
+      CURRENT_USER_NAME = user.displayName || user.email;
+    }
+
+    applyRoleToUI(CURRENT_ROLE, CURRENT_USER_NAME);
+    hideAuthScreen();
+    // Now proceed to factory selection / global sync
+    initGlobalSync();
+  });
+}
+
+/* ---------- Create worker account (called by admin from settings) ---------- */
+async function createWorkerAccount() {
+  const name     = document.getElementById('wa-name').value.trim();
+  const email    = document.getElementById('wa-email').value.trim();
+  const password = document.getElementById('wa-password').value;
+  const errEl    = document.getElementById('wa-error');
+  const okEl     = document.getElementById('wa-success');
+  errEl.classList.remove('visible'); errEl.textContent = '';
+  okEl.textContent = '';
+
+  if (!name)  return (errEl.textContent = '⚠️ أدخل اسم العامل', errEl.classList.add('visible'));
+  if (!email) return (errEl.textContent = '⚠️ أدخل البريد الإلكتروني', errEl.classList.add('visible'));
+  if (password.length < 6) return (errEl.textContent = '⚠️ كلمة المرور يجب 6 أحرف على الأقل', errEl.classList.add('visible'));
+
+  const btn = document.getElementById('btn-create-worker-account');
+  btn.disabled = true; btn.textContent = '⏳ جاري الإنشاء...';
+
+  try {
+    // Use a secondary Firebase App instance to avoid signing out current owner
+    let secondApp;
+    try {
+      secondApp = firebase.app('workerCreation');
+    } catch(_) {
+      secondApp = firebase.initializeApp(firebaseConfig, 'workerCreation');
+    }
+    const secondAuth = secondApp.auth();
+    const cred = await secondAuth.createUserWithEmailAndPassword(email, password);
+    await cred.user.updateProfile({ displayName: name });
+    await fs.collection('users').doc(cred.user.uid).set({
+      name, email, role: 'worker', createdAt: new Date().toISOString()
+    });
+    await secondAuth.signOut();
+
+    document.getElementById('wa-name').value = '';
+    document.getElementById('wa-email').value = '';
+    document.getElementById('wa-password').value = '';
+    okEl.textContent = `✅ تم إنشاء حساب العامل "${name}" بنجاح! يمكنه الآن تسجيل الدخول.`;
+    addActivity(`تم إنشاء حساب للعامل ${name}`, '👷');
+    showToast(`✅ حساب العامل ${name} جاهز`);
+  } catch(e) {
+    errEl.textContent = translateAuthError(e.code);
+    errEl.classList.add('visible');
+  }
+  btn.disabled = false; btn.textContent = '➕ إنشاء حساب';
+}
 
 /* ===================== FACTORY STATE ===================== */
 let CURRENT_FACTORY = null; // { id, name, icon, color }
@@ -119,54 +367,99 @@ function stopFactorySync() {
   FACTORY_SYNC_UNSUBS = [];
 }
 
+/* Force a direct server read (ignores cache) — called when app comes back to foreground */
+function forceRefreshFromCloud() {
+  if (!CURRENT_FACTORY) {
+    fs.collection('app_data').doc('factories_list').get({ source: 'server' })
+      .then(doc => {
+        if (doc.exists) {
+          const cloudList = doc.data().data;
+          if (cloudList && Array.isArray(cloudList)) {
+            localStorage.setItem(FactoryDB.listKey, JSON.stringify(cloudList));
+            renderFactoryScreen();
+          }
+        }
+      }).catch(() => { });
+    return;
+  }
+
+  setSyncStatus('syncing');
+  const keys = ['settings', 'workers', 'daily_logs', 'activities'];
+  let done = 0;
+
+  keys.forEach(key => {
+    fs.collection('app_data').doc(`${CURRENT_FACTORY.id}_${key}`).get({ source: 'server' })
+      .then(doc => {
+        done++;
+        if (doc.exists) {
+          const cloudData = doc.data().data;
+          localStorage.setItem(`zohir_${CURRENT_FACTORY.id}_${key}`, JSON.stringify(cloudData));
+          renderCurrentPage();
+        }
+        if (done >= keys.length) setSyncStatus('online');
+      })
+      .catch(() => {
+        done++;
+        if (done >= keys.length) setSyncStatus('offline');
+      });
+  });
+}
+
 function initCloudSync() {
   if (!CURRENT_FACTORY) return;
   stopFactorySync();
   setSyncStatus('syncing');
 
   const keys = ['settings', 'workers', 'daily_logs', 'activities'];
-  // Track initial load separately from ongoing updates
   const initialLoaded = new Set();
 
+  // 1. Force fetch from server FIRST to guarantee fresh data
+  let fetchDone = 0;
+  keys.forEach(key => {
+    fs.collection('app_data').doc(`${CURRENT_FACTORY.id}_${key}`).get({ source: 'server' })
+      .then(doc => {
+        fetchDone++;
+        if (doc.exists) {
+          const cloudData = doc.data().data;
+          localStorage.setItem(`zohir_${CURRENT_FACTORY.id}_${key}`, JSON.stringify(cloudData));
+        }
+        if (fetchDone >= keys.length) {
+          renderCurrentPage();
+          setSyncStatus('online');
+          hideGlobalLoader();
+        }
+      })
+      .catch((e) => {
+        console.warn('Initial server fetch failed for', key, e);
+        fetchDone++;
+        if (fetchDone >= keys.length) hideGlobalLoader();
+      });
+  });
+
+  // 2. Set up snapshot listeners for real-time changes
   keys.forEach(key => {
     const docId = `${CURRENT_FACTORY.id}_${key}`;
     const docRef = fs.collection('app_data').doc(docId);
 
-    const unsub = docRef.onSnapshot({ includeMetadataChanges: false }, doc => {
-      // Mark this key as loaded
-      initialLoaded.add(key);
-      if (initialLoaded.size >= keys.length) {
-        setSyncStatus('online');
-        hideGlobalLoader();
-      }
+    const unsub = docRef.onSnapshot({ includeMetadataChanges: true }, doc => {
+      // Ignore initial cache hits if we have pending writes or it's purely from cache
+      if (doc.metadata.fromCache) return;
 
       if (doc.exists) {
         const cloudData = doc.data().data;
         const localData = DB.get(key);
-        // Only update if cloud data is different — prevents infinite loops
         if (JSON.stringify(localData) !== JSON.stringify(cloudData)) {
           localStorage.setItem(`zohir_${CURRENT_FACTORY.id}_${key}`, JSON.stringify(cloudData));
           renderCurrentPage();
         }
       } else {
-        // Cloud doc doesn't exist — push local data if we have meaningful data
-        initialLoaded.add(key); // still count as loaded
         const localData = DB.get(key);
-        if (localData !== null) {
-          const isEmpty = Array.isArray(localData) ? localData.length === 0 : false;
-          if (!isEmpty) {
-            console.log(`Cloud missing ${key}, uploading local data...`);
-            DB.set(key, localData);
-          }
+        if (localData !== null && (!Array.isArray(localData) || localData.length > 0)) {
+          DB.set(key, localData);
         }
       }
     }, err => {
       console.error('Sync Error for', key, ':', err);
-      initialLoaded.add(key);
-      if (initialLoaded.size >= keys.length) {
-        setSyncStatus('offline');
-        hideGlobalLoader();
-      }
     });
     FACTORY_SYNC_UNSUBS.push(unsub);
   });
@@ -190,16 +483,16 @@ function initCloudSync() {
 
 /* ===================== GLOBAL CLOUD SYNC ===================== */
 function initGlobalSync() {
-  // Sync the factory list from Firestore to ensure all devices see same factories
-  GLOBAL_SYNC_UNSUB = fs.collection('app_data').doc('factories_list')
-    .onSnapshot({ includeMetadataChanges: false }, doc => {
+  // STEP 1: Fetch directly from server (bypasses cache) — guarantees fresh data on every device
+  fs.collection('app_data').doc('factories_list').get({ source: 'server' })
+    .then(doc => {
       IS_INITIAL_CLOUD_LOAD = false;
       INITIAL_CLOUD_SYNC_DONE = true;
 
       if (doc.exists) {
         const cloudList = doc.data().data;
-        const localList = FactoryDB.getFactories();
-        if (cloudList && Array.isArray(cloudList) && JSON.stringify(localList) !== JSON.stringify(cloudList)) {
+        if (cloudList && Array.isArray(cloudList)) {
+          // Always overwrite local with server data — server is the single source of truth
           localStorage.setItem(FactoryDB.listKey, JSON.stringify(cloudList));
         }
       }
@@ -210,13 +503,33 @@ function initGlobalSync() {
         renderFactoryScreen();
         checkAutoEnter();
       }
-    }, err => {
-      console.error('Global Sync Error:', err);
+    })
+    .catch(() => {
+      // Offline or network error — fall back to localStorage cache
+      console.warn('[Sync] Cannot reach server, using local cache');
       IS_INITIAL_CLOUD_LOAD = false;
       INITIAL_CLOUD_SYNC_DONE = true;
       hideGlobalLoader();
-      if (!CURRENT_FACTORY) renderFactoryScreen();
+      if (!CURRENT_FACTORY) {
+        renderFactoryScreen();
+        checkAutoEnter();
+      }
     });
+
+  // STEP 2: Set up real-time listener for ongoing changes from any device
+  GLOBAL_SYNC_UNSUB = fs.collection('app_data').doc('factories_list')
+    .onSnapshot({ includeMetadataChanges: false }, doc => {
+      if (doc.exists) {
+        const cloudList = doc.data().data;
+        const localList = FactoryDB.getFactories();
+        if (cloudList && Array.isArray(cloudList) && JSON.stringify(localList) !== JSON.stringify(cloudList)) {
+          localStorage.setItem(FactoryDB.listKey, JSON.stringify(cloudList));
+          if (!CURRENT_FACTORY) {
+            renderFactoryScreen();
+          }
+        }
+      }
+    }, () => { /* ignore errors — step 1 already handled initial load */ });
 }
 
 function hideGlobalLoader() {
@@ -455,7 +768,7 @@ function renderFactoryScreen() {
 
 function enterFactory(factory) {
   CURRENT_FACTORY = factory;
-  
+
   // Show loader while switching data
   showGlobalLoader(`جاري تحميل بيانات "${factory.name}"...`);
 
@@ -587,10 +900,10 @@ function updateLiveDate() {
 function renderDashboard() {
   const logs = DB.get('daily_logs') || [];
   const settings = DB.get('settings') || defaultSettings();
-  
+
   const today = todayStr();
   const todayLogs = logs.filter(l => l.date === today);
-  
+
   // Aggregate today's data for combined KPIs
   const todaySummary = todayLogs.reduce((acc, l) => {
     acc.produced += Number(l.produced) || 0;
@@ -606,9 +919,9 @@ function renderDashboard() {
     acc.soldSingle += Number(l.soldSingle) || 0;
     if (l.price > 0) acc.price = l.price; // Keep latest price
     return acc;
-  }, { 
-    date: today, produced: 0, broken: 0, netEggs: 0, income: 0, dead: 0, 
-    feedIn: 0, feedUsed: 0, price: 0, koliates:0, singleLeft:0, soldGroups:0, soldSingle:0 
+  }, {
+    date: today, produced: 0, broken: 0, netEggs: 0, income: 0, dead: 0,
+    feedIn: 0, feedUsed: 0, price: 0, koliates: 0, singleLeft: 0, soldGroups: 0, soldSingle: 0
   });
 
   const feedBal = getCurrentFeedBalance();
@@ -637,7 +950,7 @@ function renderDashboard() {
     const lastLog = logs.length ? logs[logs.length - 1] : null;
     renderLastReport(lastLog);
   }
-  
+
   renderActivities();
 }
 
@@ -803,7 +1116,9 @@ function saveDayData() {
     date, produced, broken, price,
     netEggs: net, koliates, singleLeft,
     soldTotal, soldGroups, soldSingle, freePlates, income,
-    feedIn, feedPrice, feedCost, feedUsed, dead, notes
+    feedIn, feedPrice, feedCost, feedUsed, dead, notes,
+    enteredBy: CURRENT_USER_NAME || '',
+    enteredByUid: CURRENT_USER ? CURRENT_USER.uid : ''
   };
 
   // Collect advances
@@ -1118,6 +1433,8 @@ function renderReportsPage() {
   tbody.innerHTML = '';
   sorted.forEach(log => {
     const tr = document.createElement('tr');
+    const enteredBadge = log.enteredBy
+      ? `<span class="entered-by-badge">👷 ${log.enteredBy}</span>` : '';
     tr.innerHTML = `
       <td>${fmtDate(log.date)}</td>
       <td>${fmt(log.produced)}</td>
@@ -1126,8 +1443,9 @@ function renderReportsPage() {
       <td>${fmt(log.koliates)}</td>
       <td>${fmt(log.singleLeft)}</td>
       <td>${log.dead > 0 ? `<span style="color:var(--red)">💀 ${log.dead}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
+      <td style="font-size:0.8rem">${enteredBadge}</td>
       <td style="color:var(--text-secondary);font-size:0.8rem">${log.notes || '—'}</td>
-      <td><button class="btn btn-danger btn-sm btn-delete-log-rep" data-id="${log.id}">🗑</button></td>
+      <td class="admin-only"><button class="btn btn-danger btn-sm btn-delete-log-rep" data-id="${log.id}">🗑</button></td>
     `;
     tbody.appendChild(tr);
   });
@@ -1257,9 +1575,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-save-settings').addEventListener('click', saveSettings);
   document.getElementById('btn-save-general-settings').addEventListener('click', saveSettings);
   document.getElementById('btn-reset-all').addEventListener('click', resetAllData);
-  
+
   // Daily Form listeners are already attached in initDailyForm()
-  
+
   // Add direct refresh functionality to sync badge
   const syncBadge = document.getElementById('sync-badge');
   if (syncBadge) {
@@ -1271,6 +1589,40 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // START SYNC
-  initGlobalSync();
+  // START AUTH — this is now the app entry point
+  initAuthListener();
+  initRoleChooser();
+
+  // ── Re-sync when app comes back from background (phone screen lock / tab switch)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      console.log('[Sync] App visible — forcing refresh from server...');
+      forceRefreshFromCloud();
+      // Also restart listeners in case they dropped
+      if (CURRENT_FACTORY) {
+        initCloudSync();
+      } else {
+        // Re-trigger global sync to pick up factory list changes
+        if (GLOBAL_SYNC_UNSUB) { try { GLOBAL_SYNC_UNSUB(); } catch (e) { } }
+        initGlobalSync();
+      }
+    }
+  });
+
+  // ── Re-sync when internet connection is restored
+  window.addEventListener('online', () => {
+    console.log('[Sync] Network restored — re-syncing...');
+    showToast('📶 تم استعادة الاتصال — جاري المزامنة...', 'success');
+    if (CURRENT_FACTORY) {
+      initCloudSync();
+    } else {
+      if (GLOBAL_SYNC_UNSUB) { try { GLOBAL_SYNC_UNSUB(); } catch (e) { } }
+      initGlobalSync();
+    }
+  });
+
+  window.addEventListener('offline', () => {
+    setSyncStatus('offline');
+    showToast('⚠️ انقطع الاتصال بالإنترنت', 'error');
+  });
 });

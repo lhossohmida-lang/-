@@ -22,6 +22,77 @@
   <div id="loader-status" class="loader-text">جاري الاتصال بالسحابة...</div>
 </div>
 
+<!-- ===== LOGIN SCREEN ===== -->
+<div class="auth-screen" id="auth-screen" style="display:none">
+  <div class="auth-bg"></div>
+  <div class="auth-card" id="auth-card">
+
+    <div class="auth-logo">
+      <span class="auth-logo-icon">🏭</span>
+      <div class="auth-logo-text">
+        <div class="auth-logo-title">Zohir</div>
+        <div class="auth-logo-sub">نظام إدارة المصانع</div>
+      </div>
+    </div>
+
+    <!-- TAB BUTTONS -->
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">تسجيل الدخول</button>
+      <button class="auth-tab" id="tab-register" onclick="switchAuthTab('register')">حساب جديد</button>
+    </div>
+
+    <!-- LOGIN FORM -->
+    <form class="auth-form" id="form-login" onsubmit="return false">
+      <div class="auth-form-group">
+        <label>البريد الإلكتروني</label>
+        <input type="email" id="login-email" placeholder="example@email.com" autocomplete="email" />
+      </div>
+      <div class="auth-form-group">
+        <label>كلمة المرور</label>
+        <div class="auth-pass-wrap">
+          <input type="password" id="login-password" placeholder="••••••••" autocomplete="current-password" />
+          <button type="button" class="auth-eye-btn" onclick="togglePassVis('login-password',this)">👁</button>
+        </div>
+      </div>
+      <div id="login-error" class="auth-error"></div>
+      <button class="btn auth-btn-submit" id="btn-login" onclick="doLogin()">🔑 دخول</button>
+    </form>
+
+    <!-- REGISTER FORM -->
+    <form class="auth-form" id="form-register" style="display:none" onsubmit="return false">
+      <div class="auth-form-group">
+        <label>الاسم الكامل</label>
+        <input type="text" id="reg-name" placeholder="اسم المستخدم" autocomplete="name" />
+      </div>
+      <div class="auth-form-group">
+        <label>البريد الإلكتروني</label>
+        <input type="email" id="reg-email" placeholder="example@email.com" autocomplete="email" />
+      </div>
+      <div class="auth-form-group">
+        <label>كلمة المرور</label>
+        <div class="auth-pass-wrap">
+          <input type="password" id="reg-password" placeholder="••••••••" autocomplete="new-password" />
+          <button type="button" class="auth-eye-btn" onclick="togglePassVis('reg-password',this)">👁</button>
+        </div>
+      </div>
+      <div class="auth-form-group">
+        <label>الدور</label>
+        <select id="reg-role">
+          <option value="owner">👔 صاحب عمل (Admin)</option>
+          <option value="worker">👷 عامل (Worker)</option>
+        </select>
+      </div>
+      <div id="reg-admin-code-wrap" class="auth-form-group" style="display:none">
+        <label>رمز الإدارة السري 🔐</label>
+        <input type="password" id="reg-admin-code" placeholder="أدخل الرمز السري للمسؤول" />
+        <div class="auth-field-note">📌 هذا الرمز يمنحك صلاحيات صاحب العمل — اطلبه من مسؤول النظام</div>
+      </div>
+      <div id="reg-error" class="auth-error"></div>
+      <button class="btn auth-btn-submit" id="btn-register" onclick="doRegister()">✅ إنشاء الحساب</button>
+    </form>
+  </div>
+</div>
+
 <!-- ===== FACTORY SELECTION SCREEN ===== -->
 <div class="factory-screen" id="factory-screen">
   <div class="factory-screen-bg"></div>
@@ -139,6 +210,14 @@
     <div class="sync-badge" id="sync-badge">
       <span class="sync-dot"></span>
       <span class="sync-text">متزامن</span>
+    </div>
+    <div class="sidebar-user-info" id="sidebar-user-info">
+      <span class="sidebar-user-avatar" id="sidebar-user-avatar">👤</span>
+      <div class="sidebar-user-details">
+        <span class="sidebar-user-name" id="sidebar-user-name">...</span>
+        <span class="sidebar-user-role" id="sidebar-user-role">...</span>
+      </div>
+      <button class="sidebar-logout-btn" id="btn-logout" title="تسجيل الخروج" onclick="doLogout()">⏻</button>
     </div>
   </div>
 </aside>
@@ -261,6 +340,7 @@
       <h1>📅 الإدخال اليومي</h1>
       <p>سجّل بيانات يوم العمل</p>
     </div>
+    <div class="worker-mode-banner"></div>
 
     <div class="form-grid">
       <div class="form-card">
@@ -507,8 +587,9 @@
               <th>الكرطونات</th>
               <th>الفردي</th>
               <th>النافق</th>
+              <th>المدخِل</th>
               <th>الملاحظات</th>
-              <th>حذف</th>
+              <th class="admin-only">حذف</th>
             </tr>
           </thead>
           <tbody id="prod-tbody">
@@ -555,6 +636,20 @@
         <button class="btn btn-primary" id="btn-save-settings">💾 حفظ الإعدادات</button>
       </div>
 
+      <!-- Worker Accounts Card — ADMIN ONLY -->
+      <div class="form-card admin-only-card" id="worker-accounts-card">
+        <div class="form-card-title">👥 إدارة حسابات العمال</div>
+        <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:14px">أنشئ حسابات دخول للعمال حتى يتمكنوا من تسجيل بيانات اليوم من هواتفهم.</p>
+        <div class="inline-form">
+          <input type="text" id="wa-name" placeholder="اسم العامل" />
+          <input type="email" id="wa-email" placeholder="البريد الإلكتروني" />
+          <input type="password" id="wa-password" placeholder="كلمة المرور (6+ أحرف)" />
+          <button class="btn btn-primary" id="btn-create-worker-account" onclick="createWorkerAccount()">➕ إنشاء حساب</button>
+        </div>
+        <div id="wa-error" class="auth-error" style="margin-top:8px"></div>
+        <div id="wa-success" style="margin-top:8px;color:var(--green);font-size:0.85rem"></div>
+      </div>
+
       <div class="form-card">
         <div class="form-card-title">🎨 الإعدادات العامة</div>
         <div class="form-group">
@@ -585,6 +680,7 @@
 
 <!-- Firebase SDKs -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
 <script src="app.js"></script>

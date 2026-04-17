@@ -1,5 +1,7 @@
 {
   "projects": {
     "default": "zohir-farm-app"
-  }
+  },
+  "targets": {},
+  "etags": {}
 }
