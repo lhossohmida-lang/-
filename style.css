@@ -1236,6 +1236,34 @@ textarea::placeholder { color: var(--text-muted); }
   }
 }
 
+/* ---- إصلاح الشبكة المولّدة بـ JS في تقرير اليوم ---- */
+@media (max-width: 768px) {
+  /* التقرير اليومي المحفوظ يستخدم inline grid — نتغلب عليه */
+  #daily-report-content > div[style*="grid"] {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 12px !important;
+  }
+
+  /* صفحة الإعدادات: حقل كلمة السر بنص متوسط */
+  #delete-password-input {
+    font-size: 1rem !important;
+    letter-spacing: 2px !important;
+  }
+
+  /* إخفاء overflow الأفقي للـ main content على الجوال */
+  .main-content {
+    overflow-x: hidden;
+  }
+
+  /* تحسين حجم الجدول في صفحة التقارير (كثير من الأعمدة) */
+  #prod-tbody tr td:nth-child(8),
+  #prod-tbody tr td:nth-child(9) {
+    max-width: 100px;
+    white-space: normal;
+    word-break: break-word;
+  }
+}
 
 /* ======= UTILS / ANIMATIONS ======= */
 .loader {
@@ -1605,5 +1633,273 @@ body.role-worker .worker-mode-banner { display: block; }
   padding: 1px 6px;
   margin-right: 4px;
   font-weight: 700;
+}
+
+/* =============================================
+   MOBILE COMPREHENSIVE FIXES
+   ============================================= */
+
+/* ---- جداول البيانات على الجوال ---- */
+@media (max-width: 768px) {
+
+  /* تحسين الجداول الكبيرة */
+  .table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    margin: 0 -2px;
+  }
+
+  .data-table {
+    font-size: 0.78rem;
+    min-width: 480px;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 9px 10px;
+    white-space: nowrap;
+  }
+
+  /* ---- صفحة الإدخال اليومي ---- */
+  .advance-row {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .advance-row select {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .advance-row input {
+    flex: 1 1 calc(100% - 52px);
+    min-width: 0;
+  }
+
+  .btn-remove-adv {
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ---- نموذج إضافة عامل وأزرار inline ---- */
+  .inline-form {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .inline-form input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .inline-form .btn,
+  .inline-form button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* ---- صفحة التقارير ---- */
+  .report-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+
+  .report-stat .rs-val {
+    font-size: 1.05rem;
+  }
+
+  .report-stat .rs-lbl {
+    font-size: 0.72rem;
+  }
+
+  /* ---- صفحة الإعدادات ---- */
+  .form-actions {
+    flex-direction: column;
+  }
+
+  .form-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* ---- بطاقات العمال ---- */
+  .workers-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .worker-actions {
+    flex-wrap: wrap;
+  }
+
+  .worker-actions .btn {
+    flex: 1;
+    min-width: 0;
+    justify-content: center;
+    font-size: 0.8rem;
+    padding: 8px 10px;
+  }
+
+  /* ---- عرض التقرير اليومي المحفوظ ---- */
+  .report-block {
+    padding: 12px;
+  }
+
+  .report-row {
+    flex-direction: row;
+    gap: 6px;
+    align-items: flex-start;
+    font-size: 0.8rem;
+  }
+
+  /* ---- عنوان الصفحة ---- */
+  .page-header h1 {
+    font-size: 1.25rem;
+  }
+
+  /* ---- chips و summary ---- */
+  .summary-chips {
+    gap: 6px;
+  }
+
+  .chip {
+    font-size: 0.75rem;
+    padding: 3px 10px;
+  }
+
+  /* ---- section-title-row ---- */
+  .section-title-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  /* ---- كرت بيانات الشعير KPIs ---- */
+  #page-feed .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* ---- أزرار الإعدادات ---- */
+  #btn-save-settings,
+  #btn-save-general-settings,
+  #btn-reset-all,
+  #btn-create-worker-account {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* ---- modal box ---- */
+  .modal-box {
+    padding: 20px 16px;
+    max-width: calc(100vw - 32px);
+    border-radius: var(--radius);
+  }
+
+  .modal-actions {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+
+  .modal-actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* ---- accountant note ---- */
+  .accountant-note {
+    font-size: 0.8rem;
+    padding: 10px 12px;
+    line-height: 1.6;
+  }
+
+  /* ---- حقل النص الطويل ---- */
+  .field-note {
+    font-size: 0.72rem;
+    line-height: 1.5;
+  }
+
+  /* ---- calc preview ---- */
+  .calc-preview {
+    padding: 10px 12px;
+  }
+
+  .calc-row {
+    font-size: 0.8rem;
+  }
+
+  .calc-row strong {
+    font-size: 0.9rem;
+  }
+
+  /* ---- أزرار الصفحة اليومية ---- */
+  #btn-save-day {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* ---- Badges جداول ---- */
+  .badge {
+    font-size: 0.65rem;
+    padding: 1px 7px;
+  }
+
+  /* ---- زر إضافة سلفية ---- */
+  #add-advance-row {
+    width: 100%;
+  }
+
+  /* ---- icon picker في modal ---- */
+  .icon-picker {
+    gap: 8px;
+  }
+
+  .icon-opt {
+    width: 42px;
+    height: 42px;
+    font-size: 1.4rem;
+  }
+
+}
+
+/* ---- صغير جداً: أقل من 400px ---- */
+@media (max-width: 400px) {
+
+  .report-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #page-feed .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .data-table {
+    font-size: 0.72rem;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 7px 8px;
+  }
+
+  .worker-actions .btn {
+    font-size: 0.75rem;
+    padding: 7px 8px;
+  }
+
+  .kpi-value {
+    font-size: 1rem;
+  }
+
+  .section-title {
+    font-size: 0.9rem;
+  }
+
 }
 
