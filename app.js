@@ -1626,3 +1626,34 @@ document.addEventListener('DOMContentLoaded', () => {
     showToast('⚠️ انقطع الاتصال بالإنترنت', 'error');
   });
 });
+
+
+// PWA Install Prompt Logic
+let deferredPrompt;
+const installBtn = document.getElementById('btn-install-app');
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  if (installBtn) {
+    installBtn.style.display = 'flex';
+    installBtn.style.alignItems = 'center';
+    installBtn.style.gap = '10px';
+  }
+});
+
+if (installBtn) {
+  installBtn.addEventListener('click', async () => {
+    if (deferredPrompt) {
+      installBtn.style.display = 'none';
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        console.log('User accepted the install prompt');
+      } else {
+        console.log('User dismissed the install prompt');
+      }
+      deferredPrompt = null;
+    }
+  });
+}
