@@ -1183,6 +1183,9 @@ textarea::placeholder { color: var(--text-muted); }
     padding: 74px 14px calc(var(--bottom-nav-h) + 20px);
   }
   .bottom-nav { display: flex; }
+
+  /* إخفاء "لوحة التحكم" من الشريط الجانبي على الجوال — موجود في Bottom Nav */
+  #nav-dashboard { display: none; }
   
   .section-card {
     padding: 16px;
