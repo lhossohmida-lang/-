@@ -197,7 +197,7 @@
     <button class="nav-item" data-page="feed" id="nav-feed">
       <span class="nav-icon">🌾</span><span>مخزون الشعير</span>
     </button>
-    <button class="nav-item" data-page="workers" id="nav-workers">
+    <button class="nav-item admin-only" data-page="workers" id="nav-workers">
       <span class="nav-icon">👷</span><span>العمال</span>
     </button>
     <button class="nav-item" data-page="reports" id="nav-reports">
@@ -395,6 +395,18 @@
         <div class="form-group">
           <label>الدجاج النافق اليوم</label>
           <input type="number" id="inp-dead" placeholder="0" min="0" />
+        </div>
+      </div>
+
+      <div class="form-card">
+        <div class="form-card-title">💧 الماء والغبار</div>
+        <div class="form-group">
+          <label>سعر الماء (دج)</label>
+          <input type="number" id="inp-water-cost" placeholder="0" min="0" />
+        </div>
+        <div class="form-group">
+          <label>سعر الغبار (دج)</label>
+          <input type="number" id="inp-manure-income" placeholder="0" min="0" />
         </div>
       </div>
 

@@ -1099,6 +1099,8 @@ function saveDayData() {
   const feedPrice = Number(document.getElementById('inp-feed-price').value) || 0;
   const feedUsed = Number(document.getElementById('inp-feed-used').value) || 0;
   const dead = Number(document.getElementById('inp-dead').value) || 0;
+  const waterCost = Number(document.getElementById('inp-water-cost').value) || 0;
+  const manureIncome = Number(document.getElementById('inp-manure-income').value) || 0;
   const notes = document.getElementById('inp-notes').value.trim();
 
   if (!date) { showToast('يرجى تحديد التاريخ', 'error'); return; }
@@ -1116,7 +1118,7 @@ function saveDayData() {
     date, produced, broken, price,
     netEggs: net, koliates, singleLeft,
     soldTotal, soldGroups, soldSingle, freePlates, income,
-    feedIn, feedPrice, feedCost, feedUsed, dead, notes,
+    feedIn, feedPrice, feedCost, feedUsed, dead, waterCost, manureIncome, notes,
     enteredBy: CURRENT_USER_NAME || '',
     enteredByUid: CURRENT_USER ? CURRENT_USER.uid : ''
   };
@@ -1174,6 +1176,8 @@ function renderDailyReportOutput(log) {
         <div class="report-row"><span>الكرطونات المباعة</span><strong>${fmt(log.soldGroups)}</strong></div>
         <div class="report-row"><span>الفردي المباع</span><strong>${fmt(log.soldSingle)}</strong></div>
         <div class="report-row"><span>مجاني/استهلاك</span><strong>${fmt(log.freePlates || 0)} بلاكة</strong></div>
+        <div class="report-row"><span>💧 سعر الماء</span><strong class="negative">${log.waterCost > 0 ? fmt(log.waterCost, 'دج') : '—'}</strong></div>
+        <div class="report-row"><span>💩 سعر الغبار</span><strong class="positive">${log.manureIncome > 0 ? fmt(log.manureIncome, 'دج') : '—'}</strong></div>
         <div class="report-row" style="border-top:1px solid rgba(255,255,255,0.08);margin-top:6px;padding-top:8px">
           <span>💵 المدخول الإجمالي</span>
           <strong class="positive" style="font-size:1.1rem">${fmt(log.income, 'دج')}</strong>
@@ -1215,7 +1219,7 @@ function renderDailyReportOutput(log) {
 
 function clearDailyForm() {
   ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates',
-    'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-dead', 'inp-notes'].forEach(id => {
+    'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-dead', 'inp-water-cost', 'inp-manure-income', 'inp-notes'].forEach(id => {
       document.getElementById(id).value = '';
     });
   document.getElementById('inp-date').value = todayStr();
