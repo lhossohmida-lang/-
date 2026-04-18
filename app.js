@@ -1264,7 +1264,7 @@ function renderSalesTable() {
   tbody.querySelectorAll('.btn-delete-log').forEach(btn => {
     btn.addEventListener('click', () => {
       const logId = Number(btn.dataset.id);
-      showPasswordModal(() => deleteLogById(logId));
+      deleteLogById(logId);
     });
   });
 }
@@ -1303,6 +1303,9 @@ function renderFeedPage() {
         <td><span style="color:var(--red)">-${fmt(feedUsed)}</span></td>
         <td><strong style="color:${warn ? 'var(--orange)' : 'var(--text-primary)'}">${fmt(runningBal)}</strong></td>
         <td>${warn ? '<span class="badge badge-orange">⚠️ منخفض</span>' : '<span class="badge badge-green">✓ جيد</span>'}</td>
+        <td class="admin-only">
+          <button class="btn-delete-log-feed" data-id="${log.id}" style="background:none; border:none; color:var(--red); cursor:pointer; font-size:1.1rem; padding:4px;">🗑️</button>
+        </td>
       `;
       tbody.appendChild(tr);
     });
@@ -1312,7 +1315,15 @@ function renderFeedPage() {
   document.getElementById('feed-balance-big').textContent = fmt(finalBal, 'كغ');
   document.getElementById('feed-total-in').textContent = fmt(totalIn, 'كغ');
   document.getElementById('feed-total-used').textContent = fmt(totalUsed, 'كغ');
-  document.getElementById('feed-total-cost').textContent = fmt(totalCost, 'دج');
+  document.getElementById("feed-total-cost").textContent = fmt(totalCost, "دج");
+
+    // Attach delete events for feed table
+    tbody.querySelectorAll(".btn-delete-log-feed").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const logId = Number(btn.dataset.id);
+        deleteLogById(logId);
+      });
+    });
 }
 
 /* ===================== WORKERS PAGE ===================== */
@@ -1361,6 +1372,7 @@ document.addEventListener('click', function (e) {
 });
 
 function deleteLogById(logId) {
+  if (!confirm('هل تريد حذف هذا السجل نهائياً؟ ستفقد كافة بيانات هذا اليوم.')) return;
   let logs = DB.get('daily_logs') || [];
   logs = logs.filter(l => l.id !== logId);
   DB.set('daily_logs', logs);
@@ -1456,7 +1468,7 @@ function renderReportsPage() {
   tbody.querySelectorAll('.btn-delete-log-rep').forEach(btn => {
     btn.addEventListener('click', () => {
       const logId = Number(btn.dataset.id);
-      showPasswordModal(() => deleteLogById(logId));
+      deleteLogById(logId);
     });
   });
 }
