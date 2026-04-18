@@ -1373,14 +1373,13 @@ function deleteLogById(logId) {
 }
 
 function deleteWorker(id) {
-  showPasswordModal(() => {
-    let workers = DB.get('workers') || [];
-    workers = workers.filter(w => w.id !== id);
-    DB.set('workers', workers);
-    addActivity('تم حذف عامل', '🗑');
-    renderWorkersPage();
-    showToast('تم حذف العامل', 'warning');
-  });
+  if (!confirm('هل تريد بالتأكيد حذف هذا العامل؟')) return;
+  let workers = DB.get('workers') || [];
+  workers = workers.filter(w => w.id !== id);
+  DB.set('workers', workers);
+  addActivity('تم حذف عامل', '🗑');
+  renderWorkersPage();
+  showToast('تم حذف العامل', 'warning');
 }
 
 function resetWorkerAdvances(id) {
