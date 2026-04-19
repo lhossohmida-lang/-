@@ -331,29 +331,26 @@ body {
 .factory-card-stat .label { color: var(--text-muted); }
 .factory-card-stat .value { color: var(--gold); font-weight: 700; }
 
-/* Delete button on factory card */
+/* Delete button on factory card — always visible */
 .factory-card-delete {
   position: absolute;
   top: 12px;
   left: 12px;
-  width: 32px; height: 32px;
+  width: 34px; height: 34px;
   border-radius: 50%;
-  background: rgba(252,129,129,0.15);
-  border: 1px solid rgba(252,129,129,0.3);
+  background: rgba(252,129,129,0.2);
+  border: 1px solid rgba(252,129,129,0.5);
   color: var(--red);
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  opacity: 0;
+  opacity: 1;
   transition: var(--transition);
   -webkit-tap-highlight-color: transparent;
+  z-index: 10;
 }
-.factory-card:hover .factory-card-delete { opacity: 1; }
-.factory-card-delete:hover { background: rgba(252,129,129,0.25); }
-/* Always show delete on touch devices */
-@media (hover: none) {
-  .factory-card-delete { opacity: 0.7; }
-}
+.factory-card-delete:hover { background: rgba(252,129,129,0.4); transform: scale(1.1); }
+.factory-card-delete:active { transform: scale(0.92); }
 
 /* ======= ADD FACTORY BTN ======= */
 .btn-add-factory {

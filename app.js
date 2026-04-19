@@ -319,11 +319,13 @@ const FactoryDB = {
     ['settings', 'workers', 'daily_logs', 'activities'].forEach(k => {
       localStorage.removeItem(`zohir_${id}_${k}`);
     });
-    // Remove from cloud
+    // Remove from cloud — batch delete
     try {
+      const bch = fs.batch();
       ['settings', 'workers', 'daily_logs', 'activities'].forEach(k => {
-        fs.collection('app_data').doc(`${id}_${k}`).delete();
+        bch.delete(fs.collection('app_data').doc(`${id}_${k}`));
       });
+      bch.commit().catch(e => console.error('Cloud delete error:', e));
     } catch (e) { console.error(e); }
   }
 };
@@ -756,10 +758,16 @@ function renderFactoryScreen() {
     // Delete button
     card.querySelector('.factory-card-delete').addEventListener('click', (e) => {
       e.stopPropagation();
-      if (!confirm(`هل تريد حذف مصنع "${factory.name}" وجميع بياناته؟`)) return;
+      const fname = factory.name;
+      if (!confirm('هل تريد حذف مصنع "' + fname + '"؟')) return;
+      if (!confirm('تأكيد نهائي: سيتم حذف جميع بيانات "' + fname + '" من السحابة بشكل دائم. متأكد؟')) return;
+      // Stop global listener first to prevent re-sync of deleted data
+      if (GLOBAL_SYNC_UNSUB) { try { GLOBAL_SYNC_UNSUB(); GLOBAL_SYNC_UNSUB = null; } catch(er) {} }
       FactoryDB.deleteFactory(factory.id);
       renderFactoryScreen();
-      showToast('تم حذف المصنع', 'warning');
+      showToast('✅ تم حذف المصنع نهائياً', 'warning');
+      // Restart global listener for remaining factories
+      setTimeout(() => initGlobalSync(), 800);
     });
 
     grid.appendChild(card);
@@ -1464,12 +1472,8 @@ function renderReportsPage() {
     `;
     tbody.appendChild(tr);
   });
-  // Attach delete events for reports table
   tbody.querySelectorAll('.btn-delete-log-rep').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const logId = Number(btn.dataset.id);
-      deleteLogById(logId);
-    });
+    btn.addEventListener('click', () => deleteLogById(Number(btn.dataset.id)));
   });
 }
 
@@ -1484,11 +1488,10 @@ function loadSettingsForm() {
   document.getElementById('farm-feed-price').value = s.feedPrice || '';
   document.getElementById('feed-alert-threshold').value = s.feedAlertThreshold || 100;
   document.getElementById('broken-alert-pct').value = s.brokenAlertPct || 5;
-  document.getElementById('delete-password-setting').value = s.deletePassword || '1234';
 }
 
 function saveSettings() {
-  const newPass = document.getElementById('delete-password-setting').value.trim();
+  const existing = DB.get('settings') || defaultSettings();
   const s = {
     farmName: document.getElementById('farm-name').value || (CURRENT_FACTORY?.name || 'مصنع زهير'),
     owner: document.getElementById('farm-owner').value || '',
@@ -1498,7 +1501,7 @@ function saveSettings() {
     feedPrice: Number(document.getElementById('farm-feed-price').value) || 0,
     feedAlertThreshold: Number(document.getElementById('feed-alert-threshold').value) || 100,
     brokenAlertPct: Number(document.getElementById('broken-alert-pct').value) || 5,
-    deletePassword: newPass || '1234'
+    deletePassword: existing.deletePassword || '1234'
   };
   DB.set('settings', s);
   addActivity('تم تحديث إعدادات المصنع', '⚙️');
@@ -1541,14 +1544,51 @@ function initMobileSidebar() {
 
 /* ===================== RESET ===================== */
 function resetAllData() {
-  if (!confirm('⚠️ هل أنت متأكد من مسح جميع بيانات هذا المصنع؟ لا يمكن التراجع!')) return;
-  if (!confirm('تأكيد أخير: سيتم حذف جميع البيانات نهائياً لهذا المصنع!')) return;
-  ['settings', 'workers', 'daily_logs', 'activities'].forEach(k => {
-    localStorage.removeItem(`zohir_${CURRENT_FACTORY.id}_${k}`);
-  });
+  if (!confirm(`⚠️ تحذير: سيتم حذف جميع سجلات مصنع "${CURRENT_FACTORY?.name}" بشكل نهائي لا يمكن التراجع عنه!\n\nهل تريد المتابعة؟`)) return;
+  if (!confirm(`⛔ تأكيد أخير: كل البيانات (الإنتاج، المبيعات، الشعير، العمال) ستُمسح من السحابة نهائياً.\n\nاضغط موافق للتأكيد.`)) return;
+
+  showGlobalLoader('جاري إعادة ضبط المصنع...');
+
+  const keys = ['settings', 'workers', 'daily_logs', 'activities'];
+  const emptyData = {
+    settings:   defaultSettings(),
+    workers:    [],
+    daily_logs: [],
+    activities: []
+  };
+
+  // 1. وقف مستمعات المزامنة أولاً لمنع استرجاع البيانات القديمة
+  stopFactorySync();
+
+  // 2. مسح localStorage
+  keys.forEach(k => localStorage.removeItem(`zohir_${CURRENT_FACTORY.id}_${k}`));
+
+  // 3. إعادة تهيئة البيانات المحلية بالقيم الافتراضية
   initFactoryData();
-  showToast('تم مسح جميع البيانات', 'warning');
-  showPage('dashboard');
+
+  // 4. الكتابة الفورية إلى Firestore حتى لا يستعيد المزامن البيانات القديمة
+  const batch = fs.batch();
+  keys.forEach(k => {
+    const ref = fs.collection('app_data').doc(`${CURRENT_FACTORY.id}_${k}`);
+    batch.set(ref, { data: emptyData[k], lastUpdated: new Date().toISOString() });
+  });
+
+  batch.commit()
+    .then(() => {
+      setSyncStatus('online');
+      // 5. إعادة تشغيل المزامنة مع البيانات الجديدة الفارغة
+      initCloudSync();
+      hideGlobalLoader();
+      showToast('✅ تم إعادة تعيين بيانات المصنع بالكامل', 'success');
+      showPage('dashboard');
+      renderCurrentPage();
+    })
+    .catch(e => {
+      console.error('Reset cloud error:', e);
+      hideGlobalLoader();
+      showToast('⚠️ تعذّر المسح من السحابة — تحقق من الاتصال', 'error');
+      initCloudSync();
+    });
 }
 
 /* ===================== BOOTSTRAP ===================== */
