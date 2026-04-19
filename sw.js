@@ -1,11 +1,12 @@
 // ===== Zohir PWA Service Worker =====
-const CACHE_NAME = 'zohir-v1';
+const CACHE_NAME = 'zohir-v2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
   '/style.css',
   '/app.js',
   '/manifest.json',
+  '/icons/logo.png',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   'https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap'
