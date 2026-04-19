@@ -19,7 +19,7 @@
 
 <!-- ===== GLOBAL LOADING OVERLAY ===== -->
 <div id="global-loader" class="global-loading">
-  <div class="loader-logo">🏭</div>
+  <img src="icons/logo.png" class="loader-logo-img" alt="Logo" style="width: 64px; height: 64px; border-radius: 12px; margin-bottom: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
   <div class="loader-spinner"></div>
   <div id="loader-status" class="loader-text">جاري الاتصال بالسحابة...</div>
 </div>
@@ -29,21 +29,15 @@
   <div class="auth-bg"></div>
   <div class="auth-card" id="auth-card">
 
-    <div class="auth-logo">
-      <span class="auth-logo-icon">🏭</span>
-      <div class="auth-logo-text">
+    <div class="auth-logo" style="flex-direction: column; gap: 16px; margin-bottom: 32px;">
+      <img src="icons/logo.png" alt="Logo" style="width: 100px; height: 100px; border-radius: 18px; box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.08); display: block;">
+      <div class="auth-logo-text" style="text-align: center;">
         <div class="auth-logo-title">Zohir</div>
         <div class="auth-logo-sub">نظام إدارة المصانع</div>
       </div>
     </div>
 
-    <!-- TAB BUTTONS -->
-    <div class="auth-tabs">
-      <button class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">تسجيل الدخول</button>
-      <button class="auth-tab" id="tab-register" onclick="switchAuthTab('register')">حساب جديد</button>
-    </div>
-
-    <!-- LOGIN FORM -->
+    <!-- LOGIN FORM ONLY -->
     <form class="auth-form" id="form-login" onsubmit="return false">
       <div class="auth-form-group">
         <label>البريد الإلكتروني</label>
@@ -59,38 +53,17 @@
       <div id="login-error" class="auth-error"></div>
       <button class="btn auth-btn-submit" id="btn-login" onclick="doLogin()">🔑 دخول</button>
     </form>
-
-    <!-- REGISTER FORM -->
+    <!-- Hidden register form (used by admin internally) -->
     <form class="auth-form" id="form-register" style="display:none" onsubmit="return false">
       <div class="auth-form-group">
-        <label>الاسم الكامل</label>
-        <input type="text" id="reg-name" placeholder="اسم المستخدم" autocomplete="name" />
-      </div>
-      <div class="auth-form-group">
-        <label>البريد الإلكتروني</label>
-        <input type="email" id="reg-email" placeholder="example@email.com" autocomplete="email" />
-      </div>
-      <div class="auth-form-group">
-        <label>كلمة المرور</label>
-        <div class="auth-pass-wrap">
-          <input type="password" id="reg-password" placeholder="••••••••" autocomplete="new-password" />
-          <button type="button" class="auth-eye-btn" onclick="togglePassVis('reg-password',this)">👁</button>
-        </div>
-      </div>
-      <div class="auth-form-group">
-        <label>الدور</label>
-        <select id="reg-role">
-          <option value="owner">👔 صاحب عمل (Admin)</option>
-          <option value="worker">👷 عامل (Worker)</option>
-        </select>
-      </div>
-      <div id="reg-admin-code-wrap" class="auth-form-group" style="display:none">
-        <label>رمز الإدارة السري 🔐</label>
-        <input type="password" id="reg-admin-code" placeholder="أدخل الرمز السري للمسؤول" />
-        <div class="auth-field-note">📌 هذا الرمز يمنحك صلاحيات صاحب العمل — اطلبه من مسؤول النظام</div>
+        <input type="text" id="reg-name" />
+        <input type="email" id="reg-email" />
+        <input type="password" id="reg-password" />
+        <select id="reg-role"><option value="worker">worker</option><option value="owner">owner</option></select>
+        <input type="password" id="reg-admin-code" />
       </div>
       <div id="reg-error" class="auth-error"></div>
-      <button class="btn auth-btn-submit" id="btn-register" onclick="doRegister()">✅ إنشاء الحساب</button>
+      <button id="btn-register" onclick="doRegister()"></button>
     </form>
   </div>
 </div>
@@ -101,7 +74,7 @@
   <div class="factory-screen-content">
     <div class="factory-screen-header">
       <div class="factory-logo-wrap">
-        <span class="factory-logo-icon">🏭</span>
+        <img src="icons/logo.png" class="factory-logo-img" alt="Logo" style="width: 70px; height: 70px; border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.08);">
         <div>
           <div class="factory-logo-title">Zohir</div>
           <div class="factory-logo-sub">نظام إدارة المصانع</div>
@@ -658,11 +631,6 @@
         </div>
         <button class="btn btn-primary" id="btn-save-general-settings">💾 حفظ</button>
         <hr style="border-color:#ffffff1a; margin:1rem 0"/>
-        <div class="form-group">
-          <label>🔒 كلمة سر الحذف</label>
-          <input type="password" id="delete-password-setting" placeholder="كلمة السر الحالية: 1234" autocomplete="new-password" />
-          <div class="field-note">📌 تغيير كلمة السر المطلوبة لحذف السجلات والعمال — الكلمة الافتراضية: 1234</div>
-        </div>
         <button class="btn btn-danger" id="btn-reset-all">🗑 إعادة تعيين بيانات هذا المصنع</button>
       </div>
     </div>
