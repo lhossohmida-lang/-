@@ -1030,9 +1030,15 @@ function renderActivities() {
 function initDailyForm() {
   document.getElementById('inp-date').value = todayStr();
 
-  const calcFields = ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates', 'inp-feed-in', 'inp-feed-price', 'inp-feed-used'];
+  const calcFields = ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates', 'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-expenses', 'inp-owner-advance'];
   calcFields.forEach(id => {
-    document.getElementById(id).addEventListener('input', updateDailyCalc);
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateDailyCalc);
+  });
+
+  document.getElementById('advance-entries').addEventListener('input', updateDailyCalc);
+  document.getElementById('advance-entries').addEventListener('click', (e) => {
+    if (e.target.classList.contains('btn-remove-adv')) setTimeout(updateDailyCalc, 50);
   });
 
   document.getElementById('btn-save-day').addEventListener('click', saveDayData);
@@ -1048,6 +1054,9 @@ function updateDailyCalc() {
   const feedIn = Number(document.getElementById('inp-feed-in').value) || 0;
   const feedPrice = Number(document.getElementById('inp-feed-price').value) || 0;
   const feedUsed = Number(document.getElementById('inp-feed-used').value) || 0;
+  const expenses = Number(document.getElementById('inp-expenses')?.value) || 0;
+  const manureIncome = Number(document.getElementById('inp-manure-income')?.value) || 0;
+  const waterCost = Number(document.getElementById('inp-water-cost')?.value) || 0;
 
   const net = produced - broken;
   const koliates = Math.floor(net / 12);
@@ -1058,6 +1067,16 @@ function updateDailyCalc() {
   const feedBal = getCurrentFeedBalance() + feedIn - feedUsed;
   const feedCost = feedIn * feedPrice;
 
+  const settings = DB.get('settings') || defaultSettings();
+  const baseFeedPrice = Number(settings.feedPrice) || 0;
+  const consumedFeedCost = feedUsed * (feedPrice > 0 ? feedPrice : baseFeedPrice);
+
+  let workerAdvancesTotal = 0;
+  document.querySelectorAll('.advance-row').forEach(row => {
+    workerAdvancesTotal += Number(row.querySelector('.adv-amount').value) || 0;
+  });
+  const profit = income + manureIncome - consumedFeedCost - expenses - waterCost - workerAdvancesTotal;
+
   document.getElementById('prev-net').textContent = net >= 0 ? fmt(net) : '—';
   document.getElementById('prev-koliates').textContent = net >= 0 ? fmt(koliates) : '—';
   document.getElementById('prev-single').textContent = net >= 0 ? fmt(singleLeft) : '—';
@@ -1066,6 +1085,12 @@ function updateDailyCalc() {
   document.getElementById('prev-income').textContent = fmt(income, 'دج');
   document.getElementById('prev-feed').textContent = fmt(feedBal, 'كغ');
   document.getElementById('prev-feed-cost').textContent = feedPrice > 0 ? fmt(feedCost, 'دج') : '—';
+
+  const profitEl = document.getElementById('prev-profit');
+  if (profitEl) {
+    profitEl.textContent = fmt(profit, 'دج');
+    profitEl.className = profit >= 0 ? 'positive' : 'negative';
+  }
 }
 
 function addAdvanceRow() {
@@ -1109,6 +1134,8 @@ function saveDayData() {
   const dead = Number(document.getElementById('inp-dead').value) || 0;
   const waterCost = Number(document.getElementById('inp-water-cost').value) || 0;
   const manureIncome = Number(document.getElementById('inp-manure-income').value) || 0;
+  const expenses = Number(document.getElementById('inp-expenses')?.value) || 0;
+  const ownerAdvance = Number(document.getElementById('inp-owner-advance')?.value) || 0;
   const notes = document.getElementById('inp-notes').value.trim();
 
   if (!date) { showToast('يرجى تحديد التاريخ', 'error'); return; }
@@ -1121,24 +1148,34 @@ function saveDayData() {
   const income = soldTotal * price;
   const feedCost = feedIn * feedPrice;
 
+  // Collect advances
+  const advRows = document.querySelectorAll('.advance-row');
+  const advancesThisDay = [];
+  let workerAdvancesTotal = 0;
+  advRows.forEach(row => {
+    const workerId = row.querySelector('.adv-worker-select').value;
+    const amount = Number(row.querySelector('.adv-amount').value) || 0;
+    if (workerId && amount > 0) {
+      advancesThisDay.push({ workerId, amount, date });
+      workerAdvancesTotal += amount;
+    }
+  });
+
+  const settings = DB.get('settings') || defaultSettings();
+  const baseFeedPrice = Number(settings.feedPrice) || 0;
+  const consumedFeedCost = feedUsed * (feedPrice > 0 ? feedPrice : baseFeedPrice);
+  const profit = income + manureIncome - consumedFeedCost - expenses - waterCost - workerAdvancesTotal;
+
   const log = {
     id: Date.now(),
     date, produced, broken, price,
     netEggs: net, koliates, singleLeft,
     soldTotal, soldGroups, soldSingle, freePlates, income,
     feedIn, feedPrice, feedCost, feedUsed, dead, waterCost, manureIncome, notes,
+    expenses, ownerAdvance, profit,
     enteredBy: CURRENT_USER_NAME || '',
     enteredByUid: CURRENT_USER ? CURRENT_USER.uid : ''
   };
-
-  // Collect advances
-  const advRows = document.querySelectorAll('.advance-row');
-  const advancesThisDay = [];
-  advRows.forEach(row => {
-    const workerId = row.querySelector('.adv-worker-select').value;
-    const amount = Number(row.querySelector('.adv-amount').value) || 0;
-    if (workerId && amount > 0) advancesThisDay.push({ workerId, amount, date });
-  });
 
   const logs = DB.get('daily_logs') || [];
   logs.push(log);
@@ -1186,9 +1223,15 @@ function renderDailyReportOutput(log) {
         <div class="report-row"><span>مجاني/استهلاك</span><strong>${fmt(log.freePlates || 0)} بلاكة</strong></div>
         <div class="report-row"><span>💧 سعر الماء</span><strong class="negative">${log.waterCost > 0 ? fmt(log.waterCost, 'دج') : '—'}</strong></div>
         <div class="report-row"><span>💩 سعر الغبار</span><strong class="positive">${log.manureIncome > 0 ? fmt(log.manureIncome, 'دج') : '—'}</strong></div>
+        <div class="report-row"><span>💸 المصاريف اليومية</span><strong class="negative">${log.expenses > 0 ? fmt(log.expenses, 'دج') : '—'}</strong></div>
+        <div class="report-row"><span>👔 سلفيات صاحب العمل</span><strong class="negative">${log.ownerAdvance > 0 ? fmt(log.ownerAdvance, 'دج') : '—'}</strong></div>
         <div class="report-row" style="border-top:1px solid rgba(255,255,255,0.08);margin-top:6px;padding-top:8px">
           <span>💵 المدخول الإجمالي</span>
           <strong class="positive" style="font-size:1.1rem">${fmt(log.income, 'دج')}</strong>
+        </div>
+        <div class="report-row">
+          <span>💰 الصافي (الفائدة)</span>
+          <strong class="${log.profit >= 0 ? 'positive' : 'negative'}" style="font-size:1.1rem">${fmt(log.profit, 'دج')}</strong>
         </div>
       </div>
       <div class="report-block">
@@ -1227,8 +1270,9 @@ function renderDailyReportOutput(log) {
 
 function clearDailyForm() {
   ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates',
-    'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-dead', 'inp-water-cost', 'inp-manure-income', 'inp-notes'].forEach(id => {
-      document.getElementById(id).value = '';
+    'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-dead', 'inp-water-cost', 'inp-manure-income', 'inp-expenses', 'inp-owner-advance', 'inp-notes'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
     });
   document.getElementById('inp-date').value = todayStr();
   document.getElementById('advance-entries').innerHTML = `
