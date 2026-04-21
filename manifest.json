@@ -1,7 +1,7 @@
 {
-  "name": "Zohir — نظام إدارة المصانع",
-  "short_name": "زهير",
-  "description": "نظام زهير لإدارة مصانع الدواجن — تتبع الإنتاج، المبيعات، العمال والمخزون",
+  "name": "deku — نظام إدارة المصانع",
+  "short_name": "deku",
+  "description": "نظام deku لإدارة مصانع الدواجن — تتبع الإنتاج، المبيعات، العمال والمخزون",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0d14",

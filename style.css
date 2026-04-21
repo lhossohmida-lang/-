@@ -1658,21 +1658,27 @@ input.shake {
   transform: scale(1.1);
 }
 
+/* Field note — small helper text under form inputs */
+.field-note {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  padding-right: 2px;
+  line-height: 1.4;
+}
+
+/* Net profit KPI value */
+#kpi-net-profit {
+  transition: color 0.3s ease;
+  font-weight: 700;
+}
+
 /* =============================================
    ROLE-BASED VISIBILITY
    ============================================= */
-/* admin-only elements hidden for workers */
-body.role-worker .admin-only,
-body.role-worker .admin-only-card,
-body.role-worker #btn-reset-all,
-body.role-worker .btn-delete-log,
-body.role-worker .btn-delete-log-rep,
-body.role-worker #btn-add-factory,
-body.role-worker .factory-card-delete,
-body.role-worker #nav-reports,
-body.role-worker #nav-settings {
-  display: none !important;
-}
+/* factory-card-delete hidden only for owner and partner, workers can delete */
+
+
 
 /* Worker banner */
 .worker-mode-banner {
@@ -1965,5 +1971,1241 @@ body.role-worker .worker-mode-banner { display: block; }
     font-size: 0.9rem;
   }
 
+}
+
+/* =============================================
+   PAGE TABS (Sales / Feed / Credits)
+   ============================================= */
+.page-tabs {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-dark);
+  border-radius: var(--radius-sm);
+  padding: 5px;
+  margin-bottom: 20px;
+  border: 1px solid var(--border);
+}
+
+.page-tab {
+  flex: 1;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 700;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: var(--transition);
+  -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
+}
+
+.page-tab.active {
+  background: linear-gradient(135deg, rgba(245,197,24,0.18), rgba(246,173,85,0.12));
+  color: var(--gold);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  border: 1px solid rgba(245,197,24,0.2);
+}
+
+.page-tab:not(.active):hover {
+  color: var(--text-secondary);
+  background: rgba(255,255,255,0.04);
+}
+
+.tab-panel {
+  display: none;
+}
+.tab-panel.active {
+  display: block;
+  animation: fadeIn 0.25s ease;
+}
+
+@media (max-width: 768px) {
+  .page-tabs { gap: 3px; padding: 4px; }
+  .page-tab { font-size: 0.75rem; padding: 8px 6px; }
+}
+
+/* =============================================
+   CREDITS TABLE
+   ============================================= */
+.credits-add-form {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-bottom: 16px;
+  padding: 16px;
+  background: var(--bg-dark);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.credits-add-form input,
+.credits-add-form select {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  color: var(--text-primary);
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.88rem;
+  flex: 1;
+  min-width: 120px;
+  direction: rtl;
+}
+
+.credits-add-form input:focus {
+  outline: none;
+  border-color: var(--red);
+  box-shadow: 0 0 0 2px rgba(252,129,129,0.15);
+}
+
+.chip-red {
+  background: rgba(252,129,129,0.12);
+  border: 1px solid rgba(252,129,129,0.3);
+  color: var(--red);
+}
+
+.chip-red strong { color: var(--red); }
+
+/* =============================================
+   PARTNERS SETTINGS
+   ============================================= */
+.partner-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px;
+  background: var(--bg-dark);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.partner-row-name {
+  flex: 2;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.partner-row-share {
+  flex: 1;
+  color: var(--gold);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.partner-add-form {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-top: 12px;
+}
+
+.partner-add-form input {
+  flex: 1;
+  min-width: 120px;
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  color: var(--text-primary);
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.88rem;
+  direction: rtl;
+}
+
+.partner-add-form input:focus {
+  outline: none;
+  border-color: var(--gold);
+  box-shadow: 0 0 0 2px rgba(245,197,24,0.12);
+}
+
+/* Partner expense row inside daily form */
+.partner-expense-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.partner-expense-row label {
+  flex: 1;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.partner-expense-row input {
+  flex: 1;
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  color: var(--text-primary);
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.88rem;
+  direction: rtl;
+}
+
+.partner-expense-row input:focus {
+  outline: none;
+  border-color: var(--gold);
+}
+
+/* Partner share preview block */
+.partner-share-preview {
+  background: linear-gradient(135deg, rgba(245,197,24,0.07), rgba(246,173,85,0.05));
+  border: 1px solid rgba(245,197,24,0.15);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  margin-top: 12px;
+}
+
+.partner-share-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  font-size: 0.85rem;
+}
+
+.partner-share-item:last-child { border-bottom: none; }
+.partner-share-item span { color: var(--text-secondary); }
+.partner-share-item strong { color: var(--gold); }
+
+/* =============================================
+   PARTNER ROLE VISIBILITY
+   ============================================= */
+body.role-partner input,
+body.role-partner select,
+body.role-partner textarea {
+  pointer-events: none;
+  background-color: transparent !important;
+  border-color: rgba(255,255,255,0.1) !important;
+  opacity: 0.8;
+}
+
+body.role-partner .btn-primary,
+body.role-partner .btn-danger,
+body.role-partner .btn-delete-log,
+body.role-partner .btn-delete-log-rep,
+body.role-partner .btn-delete-log-feed,
+body.role-partner .btn-remove-adv,
+body.role-partner #btn-add-worker,
+body.role-partner .worker-actions,
+body.role-partner .admin-only,
+body.role-partner #btn-reset-all,
+body.role-partner #btn-add-factory,
+body.role-partner .factory-card-delete,
+body.role-partner #btn-save-day,
+body.role-partner #btn-clear-form,
+body.role-partner #add-advance-row,
+body.role-partner .credits-add-form,
+body.role-partner #partner-expenses-card,
+body.role-partner #btn-add-partner,
+body.role-partner .partner-row .btn {
+  display: none !important;
+}
+
+body.role-partner #btn-switch-factory {
+  display: flex !important;
+}
+
+/* Partner role — banner color (تيل / أخضر مزرق) */
+.role-partner .sidebar-user-role { color: var(--teal, #81e6d9); }
+
+/* =============================================
+   ADMIN-ONLY VISIBILITY
+   ============================================= */
+/* .admin-only = inline delete buttons in tables.
+   Hidden for OWNER only — workers CAN delete records */
+body.role-owner .admin-only,
+body.role-owner #btn-add-factory,
+body.role-partner .admin-only {
+  display: none !important;
+}
+
+/* Factory-level management hidden for owner and partner only */
+body.role-owner #btn-add-factory,
+body.role-owner .factory-card-delete,
+body.role-partner #btn-add-factory,
+body.role-partner .factory-card-delete {
+  display: none !important;
+}
+
+/* Owner role: fully read-only — hide all edit controls */
+body.role-owner #btn-save-day,
+body.role-owner #btn-clear-form,
+body.role-owner #add-advance-row,
+body.role-owner #btn-add-worker,
+body.role-owner .btn-delete-log,
+body.role-owner .btn-delete-log-rep,
+body.role-owner .btn-delete-log-feed,
+body.role-owner .btn-remove-adv,
+body.role-owner .btn-delete-credit,
+body.role-owner .worker-actions,
+body.role-owner .restricted-edit,
+body.role-owner .admin-only-card {
+  display: none !important;
+}
+/* Disable daily form inputs for owner */
+body.role-owner #page-daily input,
+body.role-owner #page-daily textarea,
+body.role-owner #page-daily select {
+  pointer-events: none;
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Partner: same as owner (read-only) */
+body.role-partner .admin-only-card,
+body.role-partner .restricted-edit {
+  display: none !important;
+}
+
+/* =============================================
+   WORKER MODE BANNER
+   ============================================= */
+.worker-mode-banner {
+  display: none;
+  background: linear-gradient(135deg, rgba(99,179,237,0.12), rgba(66,153,225,0.08));
+  border: 1px solid rgba(99,179,237,0.25);
+  border-radius: var(--radius-sm);
+  padding: 12px 18px;
+  margin-bottom: 20px;
+  font-size: 0.88rem;
+  color: var(--blue);
+  font-weight: 600;
+  text-align: center;
+}
+
+body.role-worker .worker-mode-banner {
+  display: block;
+}
+
+/* =============================================
+   WORKER READ-ONLY CARD STYLING
+   ============================================= */
+/* Workers have FULL access to admin-only cards — no read-only overlay */
+body.role-worker .admin-only-card {
+  border-color: rgba(72,199,142,0.25) !important;
+}
+/* Owner/Partner see admin-only-card as read-only (actually hidden above, this is fallback) */
+body.role-owner .admin-only-card input,
+body.role-partner .admin-only-card input {
+  cursor: not-allowed !important;
+  opacity: 0.5 !important;
+}
+
+/* =============================================
+   PAGE TABS (Sales+Feed+Credits page)
+   ============================================= */
+.page-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 20px;
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 6px;
+  border: 1px solid var(--border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.page-tab {
+  flex: 1;
+  min-width: 100px;
+  padding: 10px 16px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.88rem;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition);
+  white-space: nowrap;
+  text-align: center;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.page-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.page-tab.active {
+  background: linear-gradient(135deg, rgba(245,197,24,0.2), rgba(246,173,85,0.12));
+  color: var(--gold);
+  box-shadow: 0 2px 8px rgba(245,197,24,0.15);
+}
+
+.page-tab:active {
+  transform: scale(0.97);
+}
+
+/* Tab Panel visibility */
+.tab-panel {
+  display: none;
+  animation: fadeIn 0.3s ease;
+}
+
+.tab-panel.active {
+  display: block;
+}
+
+/* =============================================
+   PARTNER MANAGEMENT STYLES (Settings)
+   ============================================= */
+.partner-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  transition: var(--transition);
+}
+
+.partner-row:hover {
+  border-color: rgba(245,197,24,0.2);
+  background: rgba(245,197,24,0.03);
+}
+
+.partner-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.partner-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--teal), var(--blue));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 1rem;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.partner-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+.partner-share-badge {
+  background: linear-gradient(135deg, rgba(245,197,24,0.15), rgba(246,173,85,0.1));
+  border: 1px solid rgba(245,197,24,0.25);
+  color: var(--gold);
+  font-weight: 800;
+  font-size: 0.82rem;
+  padding: 3px 12px;
+  border-radius: 99px;
+}
+
+/* =============================================
+   SECTION DIVIDER
+   ============================================= */
+.section-divider {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding-bottom: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* =============================================
+   CREDITS ADD FORM
+   ============================================= */
+.credits-add-form {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 14px;
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.credits-add-form input {
+  flex: 1;
+  min-width: 120px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 9px 12px;
+  color: var(--text-primary);
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.88rem;
+}
+
+.credits-add-form input:focus {
+  outline: none;
+  border-color: var(--gold);
+}
+
+/* =============================================
+   CHIP VARIANTS
+   ============================================= */
+.chip-red {
+  border-color: rgba(252,129,129,0.3) !important;
+  background: rgba(252,129,129,0.08) !important;
+}
+.chip-red strong { color: var(--red) !important; }
+
+/* =============================================
+   ENTERED-BY BADGE (Reports table)
+   ============================================= */
+.entered-by-badge {
+  display: inline-block;
+  background: rgba(99,179,237,0.1);
+  border: 1px solid rgba(99,179,237,0.2);
+  color: var(--blue);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 99px;
+  white-space: nowrap;
+}
+
+/* =============================================
+   SIDEBAR USER INFO
+   ============================================= */
+.sidebar-user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0 0;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-user-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--gold), var(--orange));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  font-size: 0.9rem;
+  color: #111;
+  flex-shrink: 0;
+}
+
+.sidebar-user-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sidebar-user-name {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-user-role {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.sidebar-logout-btn {
+  background: rgba(252,129,129,0.1);
+  border: 1px solid rgba(252,129,129,0.2);
+  color: var(--red);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: var(--transition);
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.sidebar-logout-btn:hover {
+  background: rgba(252,129,129,0.2);
+  transform: scale(1.1);
+}
+
+.sidebar-logout-btn:active {
+  transform: scale(0.92);
+}
+
+/* Role-specific sidebar role color */
+.role-owner .sidebar-user-role { color: var(--gold); }
+.role-worker .sidebar-user-role { color: var(--blue); }
+
+/* =============================================
+   AUTH SCREEN STYLES
+   ============================================= */
+.auth-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 9500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.auth-bg {
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 30% 30%, rgba(245,197,24,0.1) 0%, transparent 55%),
+    radial-gradient(ellipse at 70% 70%, rgba(99,179,237,0.08) 0%, transparent 55%),
+    var(--bg-darkest);
+}
+
+.auth-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-card);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: var(--radius-xl);
+  padding: 40px 32px;
+  box-shadow: 0 40px 80px rgba(0,0,0,0.6);
+  animation: screenFadeIn 0.5s ease both;
+}
+
+.auth-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+.auth-logo-title {
+  font-size: 2rem;
+  font-weight: 900;
+  background: linear-gradient(135deg, var(--gold), var(--orange));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.auth-logo-sub {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+}
+
+/* Auth tabs */
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 24px;
+  background: var(--bg-dark);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+}
+
+.auth-tab {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.9rem;
+  font-weight: 700;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.auth-tab.active {
+  background: linear-gradient(135deg, rgba(245,197,24,0.15), rgba(246,173,85,0.1));
+  color: var(--gold);
+}
+
+/* Auth form */
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auth-form-group label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.auth-form-group input,
+.auth-form-group select {
+  background: var(--bg-dark);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  color: var(--text-primary);
+  font-family: 'Cairo', sans-serif;
+  font-size: 0.92rem;
+  transition: var(--transition);
+}
+
+.auth-form-group input:focus,
+.auth-form-group select:focus {
+  outline: none;
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(245,197,24,0.1);
+}
+
+.auth-pass-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.auth-pass-wrap input {
+  width: 100%;
+  padding-left: 44px;
+}
+
+.auth-eye-btn {
+  position: absolute;
+  left: 10px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1.1rem;
+  padding: 4px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.auth-error {
+  font-size: 0.82rem;
+  color: var(--red);
+  min-height: 0;
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+  padding: 0;
+}
+
+.auth-error.visible {
+  max-height: 60px;
+  padding: 8px 0;
+}
+
+.auth-btn-submit {
+  margin-top: 8px;
+  padding: 14px;
+  font-size: 1rem;
+  font-weight: 800;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+/* =============================================
+   PARTNER ADD FORM BUTTON (in settings)
+   ============================================= */
+.partner-add-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  align-items: center;
+}
+
+/* =============================================
+   ROLE-BASED VISIBILITY
+   ============================================= */
+
+/* Hide admin-only columns/cells for owner and partner (read-only roles) */
+body.role-owner .admin-only,
+body.role-partner .admin-only {
+  display: none !important;
+}
+
+/* Hide daily form save button for owner/partner */
+body.role-owner #btn-save-day,
+body.role-partner #btn-save-day {
+  display: none !important;
+}
+
+/* Make daily form inputs non-interactive for owner/partner */
+body.role-owner #page-daily .form-group input,
+body.role-owner #page-daily .form-group select,
+body.role-owner #page-daily .form-group textarea,
+body.role-partner #page-daily .form-group input,
+body.role-partner #page-daily .form-group select,
+body.role-partner #page-daily .form-group textarea {
+  pointer-events: none;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Owner/Partner read-only notice in daily entry page */
+.owner-entry-notice {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  background: rgba(246,173,85,0.1);
+  border: 1px solid rgba(246,173,85,0.3);
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  margin-bottom: 14px;
+  color: var(--orange);
+  font-size: 0.88rem;
+  font-weight: 600;
+  animation: fadeIn 0.3s ease;
+}
+
+/* =============================================
+   WORKER MODE BANNER
+   ============================================= */
+.worker-mode-banner {
+  display: none;
+  background: linear-gradient(135deg, rgba(72,187,120,0.12), rgba(56,161,105,0.06));
+  border: 1px solid rgba(72,187,120,0.3);
+  border-radius: var(--radius-sm);
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  color: var(--green);
+  font-size: 0.88rem;
+  font-weight: 600;
+  line-height: 1.5;
+  animation: fadeIn 0.4s ease;
+}
+
+/* =============================================
+   CHIP VARIANTS
+   ============================================= */
+.chip-red {
+  border-color: rgba(252,129,129,0.3);
+  background: rgba(252,129,129,0.08);
+}
+.chip-red strong {
+  color: var(--red);
+}
+
+.chip-green {
+  border-color: rgba(72,187,120,0.3);
+  background: rgba(72,187,120,0.08);
+}
+.chip-green strong {
+  color: var(--green);
+}
+
+/* =============================================
+   ENTERED-BY BADGE (in reports table)
+   ============================================= */
+.entered-by-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(99,179,237,0.1);
+  border: 1px solid rgba(99,179,237,0.2);
+  border-radius: 99px;
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  color: var(--blue);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* =============================================
+   SECTION DIVIDER (partner expenses form)
+   ============================================= */
+.section-divider {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 6px 0 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+/* =============================================
+   SIDEBAR USER INFO
+   ============================================= */
+.sidebar-user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0 0;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-user-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--gold), var(--orange));
+  color: #111;
+  font-size: 0.95rem;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.sidebar-user-details {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-user-name {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-user-role {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.sidebar-logout-btn {
+  background: rgba(252,129,129,0.1);
+  border: 1px solid rgba(252,129,129,0.2);
+  border-radius: 6px;
+  color: var(--red);
+  font-size: 1rem;
+  padding: 5px 8px;
+  cursor: pointer;
+  transition: var(--transition);
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.sidebar-logout-btn:hover {
+  background: rgba(252,129,129,0.2);
+  transform: scale(1.08);
+}
+
+/* =============================================
+   ADMIN-ONLY CARD VISIBILITY (role-based)
+   ============================================= */
+
+/* Workers see full admin cards */
+body.role-worker .admin-only-card {
+  display: block;
+}
+
+/* Owner/Partner see a greyed-out version */
+body.role-owner .admin-only-card,
+body.role-partner .admin-only-card {
+  display: block;
+  filter: none;
+}
+
+/* =============================================
+   PARTNER ROW (settings page)
+   ============================================= */
+.partner-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--bg-dark);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  margin-bottom: 8px;
+  gap: 10px;
+}
+
+.partner-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.partner-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--blue), var(--purple));
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.partner-name {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.partner-share-badge {
+  background: rgba(99,179,237,0.12);
+  border: 1px solid rgba(99,179,237,0.25);
+  color: var(--blue);
+  border-radius: 99px;
+  padding: 2px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+/* =============================================
+   SETTINGS PAGE – OWNERS-PARTNERS NOTICE
+   ============================================= */
+#settings-readonly-notice {
+  animation: fadeIn 0.3s ease;
+}
+
+/* =============================================
+   WORKERS GRID & CARDS
+   ============================================= */
+.workers-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.worker-card {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  border-top: 3px solid var(--gold);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: var(--transition);
+  animation: fadeIn 0.3s ease;
+}
+
+.worker-card:hover {
+  border-color: rgba(245,197,24,0.35);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.worker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.worker-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--gold), var(--orange));
+  color: #111;
+  font-size: 1.1rem;
+  font-weight: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 2px 10px rgba(245,197,24,0.3);
+}
+
+/* Partner avatar override */
+.worker-card .worker-avatar[style*="blue"] {
+  box-shadow: 0 2px 10px rgba(99,179,237,0.3);
+}
+
+.worker-name {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.worker-id {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.worker-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.worker-stat:last-of-type {
+  border-bottom: none;
+}
+
+.worker-stat span:first-child {
+  color: var(--text-secondary);
+}
+
+.worker-stat .success {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.worker-stat .danger {
+  color: var(--red);
+  font-weight: 700;
+}
+
+.worker-stat strong {
+  font-weight: 700;
+}
+
+.adv-history {
+  background: var(--bg-dark);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: 0.8rem;
+  border: 1px solid var(--border);
+}
+
+.adv-entry {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  color: var(--text-secondary);
+}
+
+.adv-entry:last-child {
+  border-bottom: none;
+}
+
+.adv-entry .amt {
+  color: var(--orange);
+  font-weight: 700;
+}
+
+.worker-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+/* =============================================
+   CSS VARIABLE: --blue-gradient (used in partner avatar)
+   ============================================= */
+:root {
+  --blue-gradient: linear-gradient(135deg, #63b3ed, #b794f4);
+}
+
+/* =============================================
+   ADVANCE ROW (daily form)
+   ============================================= */
+.advance-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.advance-row select,
+.advance-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.btn-remove-adv {
+  background: rgba(252,129,129,0.15);
+  border: 1px solid rgba(252,129,129,0.3);
+  border-radius: 6px;
+  color: var(--red);
+  font-size: 0.9rem;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: var(--transition);
+  flex-shrink: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-remove-adv:hover {
+  background: rgba(252,129,129,0.3);
+}
+
+/* =============================================
+   FACTORY SCREEN: Add factory button for read-only roles
+   ============================================= */
+body.role-owner .btn-add-factory,
+body.role-partner .btn-add-factory {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-color: rgba(255,255,255,0.08);
+}
+
+body.role-owner .btn-add-factory:hover,
+body.role-partner .btn-add-factory:hover {
+  background: rgba(255,255,255,0.03);
+  border-color: rgba(255,255,255,0.08);
+  color: var(--text-secondary);
+  transform: none;
+}
+
+/* =============================================
+   INLINE FORM (add worker / partner)
+   ============================================= */
+.inline-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.inline-form input,
+.inline-form select {
+  flex: 1;
+  min-width: 140px;
+}
+
+.inline-form .btn {
+  flex-shrink: 0;
 }
 

@@ -1,5 +1,5 @@
 /* ============================================================
-   ZOHIR — Multi-Factory Management App  |  app.js
+   deku — Multi-Factory Management App  |  app.js
    ============================================================ */
 'use strict';
 
@@ -30,10 +30,14 @@ fs.enablePersistence({ synchronizeTabs: true }).catch(err => {
 
 /* ===================== AUTH STATE ===================== */
 let CURRENT_USER = null;  // Firebase user object
-let CURRENT_ROLE = null;  // 'owner' | 'worker'
+let CURRENT_ROLE = null;  // 'owner' | 'worker' | 'partner'
 let CURRENT_USER_NAME = '';
 // Secret code that new owners must enter when registering
 const ADMIN_SECRET_CODE = 'ZOHIR2025';
+// Developer secret — required to register a partner account
+const DEV_SECRET_CODE = 'dekudeku1123';
+// Tracks whether dev password was verified for the current partner account creation attempt
+let _devPasswordVerified = false;
 
 /* ---------- UI helpers ---------- */
 function showAuthScreen() {
@@ -85,30 +89,37 @@ function setAuthBtnLoading(btnId, loading) {
 
 /* ---------- Register role chooser ---------- */
 function initRoleChooser() {
-  const roleSelect = document.getElementById('reg-role');
+  const roleSelect   = document.getElementById('reg-role');
   const adminCodeWrap = document.getElementById('reg-admin-code-wrap');
+  const devCodeWrap   = document.getElementById('reg-dev-code-wrap');
   if (!roleSelect) return;
   roleSelect.addEventListener('change', () => {
-    adminCodeWrap.style.display = roleSelect.value === 'owner' ? 'flex' : 'none';
+    const r = roleSelect.value;
+    if (adminCodeWrap) adminCodeWrap.style.display = r === 'owner' ? 'flex' : 'none';
+    if (devCodeWrap)   devCodeWrap.style.display   = r === 'partner' ? 'flex' : 'none';
   });
-  adminCodeWrap.style.display = 'none'; // default: worker selected initially shows nothing
-  roleSelect.value = 'worker';          // default to worker for safety
+  if (adminCodeWrap) adminCodeWrap.style.display = 'none';
+  if (devCodeWrap)   devCodeWrap.style.display   = 'none';
+  roleSelect.value = 'worker';
 }
 
 /* ---------- REGISTER ---------- */
 async function doRegister() {
   clearAuthErrors();
-  const name     = document.getElementById('reg-name').value.trim();
-  const email    = document.getElementById('reg-email').value.trim();
-  const password = document.getElementById('reg-password').value;
-  const role     = document.getElementById('reg-role').value;
+  const name      = document.getElementById('reg-name').value.trim();
+  const email     = document.getElementById('reg-email').value.trim();
+  const password  = document.getElementById('reg-password').value;
+  const role      = document.getElementById('reg-role').value;
   const adminCode = document.getElementById('reg-admin-code').value.trim();
+  const devCode   = document.getElementById('reg-dev-code')?.value.trim() || '';
 
   if (!name)     return showAuthError('reg-error', '⚠️ يرجى إدخال الاسم الكامل');
   if (!email)    return showAuthError('reg-error', '⚠️ يرجى إدخال البريد الإلكتروني');
   if (password.length < 6) return showAuthError('reg-error', '⚠️ كلمة المرور يجب أن تكون 6 أحرف على الأقل');
   if (role === 'owner' && adminCode !== ADMIN_SECRET_CODE)
     return showAuthError('reg-error', '❌ رمز الإدارة غير صحيح');
+  if (role === 'partner' && devCode !== DEV_SECRET_CODE)
+    return showAuthError('reg-error', '❌ رمز المطور غير صحيح');
 
   setAuthBtnLoading('btn-register', true);
   try {
@@ -174,8 +185,10 @@ function translateAuthError(code) {
 
 /* ---------- Apply role to UI ---------- */
 function applyRoleToUI(role, name) {
-  document.body.classList.remove('role-owner', 'role-worker');
-  document.body.classList.add(role === 'owner' ? 'role-owner' : 'role-worker');
+  document.body.classList.remove('role-owner', 'role-worker', 'role-partner');
+  if (role === 'owner') document.body.classList.add('role-owner');
+  else if (role === 'partner') document.body.classList.add('role-partner');
+  else document.body.classList.add('role-worker');
 
   // Sidebar user info
   const avatar = document.getElementById('sidebar-user-avatar');
@@ -183,11 +196,42 @@ function applyRoleToUI(role, name) {
   const roleEl = document.getElementById('sidebar-user-role');
   if (avatar) avatar.textContent = (name || '?').charAt(0).toUpperCase();
   if (nameEl) nameEl.textContent = name || 'مستخدم';
-  if (roleEl) roleEl.textContent = role === 'owner' ? '👔 صاحب العمل' : '👷 عامل';
+  if (roleEl) {
+    if (role === 'owner')   roleEl.textContent = '👔 صاحب العمل';
+    else if (role === 'partner') roleEl.textContent = '🤝 شريك';
+    else                    roleEl.textContent = '👷 عامل';
+  }
 
-  // Worker banner in daily page
+  // Worker banner in daily page (green — full access)
   const banners = document.querySelectorAll('.worker-mode-banner');
-  banners.forEach(b => b.textContent = `👷 أنت مسجل دخول كعامل (${name}) — يمكنك إدخال بيانات اليوم فقط`);
+  banners.forEach(b => {
+    if (role === 'worker') {
+      b.textContent = `👷 أنت مسجل دخول كعامل (${name}) — يمكنك إدخال بيانات اليوم`;
+      b.style.display = 'block';
+    } else {
+      b.style.display = 'none';
+    }
+  });
+
+  // Owner / Partner notice in daily page (orange — read-only)
+  const isReadOnly = (role === 'owner' || role === 'partner');
+  let ownerNotice = document.getElementById('entry-readonly-notice');
+  if (isReadOnly) {
+    if (!ownerNotice) {
+      ownerNotice = document.createElement('div');
+      ownerNotice.id = 'entry-readonly-notice';
+      ownerNotice.className = 'owner-entry-notice';
+      ownerNotice.innerHTML = '🔒 <span>وضع المشاهدة فقط — لا يمكنك إدخال بيانات اليوم</span>';
+      const entryPage = document.getElementById('page-daily');
+      if (entryPage) {
+        const firstCard = entryPage.querySelector('.section-card, .form-grid, .worker-mode-banner');
+        if (firstCard) firstCard.before(ownerNotice);
+      }
+    }
+    ownerNotice.style.display = 'flex';
+  } else if (ownerNotice) {
+    ownerNotice.style.display = 'none';
+  }
 }
 
 /* ---------- Auth State Listener — the master switch ---------- */
@@ -255,18 +299,32 @@ async function createWorkerAccount() {
       secondApp = firebase.initializeApp(firebaseConfig, 'workerCreation');
     }
     const secondAuth = secondApp.auth();
-    const cred = await secondAuth.createUserWithEmailAndPassword(email, password);
+  const waRole = document.getElementById('wa-role')?.value || 'worker';
+
+  // --- Safety gate: partner accounts require prior dev-password verification ---
+  if (waRole === 'partner' && !_devPasswordVerified) {
+    errEl.textContent = '⛔ يجب التحقق بكلمة مرور المطور أولاً — اختر دور "شريك" مجدداً';
+    errEl.classList.add('visible');
+    btn.disabled = false; btn.textContent = '➕ إنشاء حساب';
+    showDevPasswordModal();
+    return;
+  }
+
+  const cred = await secondAuth.createUserWithEmailAndPassword(email, password);
     await cred.user.updateProfile({ displayName: name });
     await fs.collection('users').doc(cred.user.uid).set({
-      name, email, role: 'worker', createdAt: new Date().toISOString()
+      name, email, role: waRole, createdAt: new Date().toISOString()
     });
     await secondAuth.signOut();
 
     document.getElementById('wa-name').value = '';
     document.getElementById('wa-email').value = '';
     document.getElementById('wa-password').value = '';
-    okEl.textContent = `✅ تم إنشاء حساب العامل "${name}" بنجاح! يمكنه الآن تسجيل الدخول.`;
-    addActivity(`تم إنشاء حساب للعامل ${name}`, '👷');
+    if (document.getElementById('wa-role')) document.getElementById('wa-role').value = 'worker';
+    _devPasswordVerified = false; // reset after each successful creation
+    const roleLabel = waRole === 'partner' ? 'الشريك' : 'العامل';
+    okEl.textContent = `✅ تم إنشاء حساب ${roleLabel} "${name}" بنجاح! يمكنه الآن تسجيل الدخول.`;
+    addActivity(`تم إنشاء حساب للـ${roleLabel} ${name}`, waRole === 'partner' ? '🤝' : '👷');
     showToast(`✅ حساب العامل ${name} جاهز`);
   } catch(e) {
     errEl.textContent = translateAuthError(e.code);
@@ -386,7 +444,7 @@ function forceRefreshFromCloud() {
   }
 
   setSyncStatus('syncing');
-  const keys = ['settings', 'workers', 'daily_logs', 'activities'];
+  const keys = ['settings', 'workers', 'daily_logs', 'activities', 'credits'];
   let done = 0;
 
   keys.forEach(key => {
@@ -412,7 +470,7 @@ function initCloudSync() {
   stopFactorySync();
   setSyncStatus('syncing');
 
-  const keys = ['settings', 'workers', 'daily_logs', 'activities'];
+  const keys = ['settings', 'workers', 'daily_logs', 'activities', 'credits'];
   const initialLoaded = new Set();
 
   // 1. Force fetch from server FIRST to guarantee fresh data
@@ -572,7 +630,8 @@ function initFactoryData() {
     [`zohir_${fid}_settings`, JSON.stringify(defaultSettings())],
     [`zohir_${fid}_workers`, JSON.stringify([])],
     [`zohir_${fid}_daily_logs`, JSON.stringify([])],
-    [`zohir_${fid}_activities`, JSON.stringify([])]
+    [`zohir_${fid}_activities`, JSON.stringify([])],
+    [`zohir_${fid}_credits`, JSON.stringify([])]
   ];
   keys.forEach(([k, v]) => {
     if (localStorage.getItem(k) === null) localStorage.setItem(k, v);
@@ -581,7 +640,7 @@ function initFactoryData() {
 
 function defaultSettings() {
   return {
-    farmName: CURRENT_FACTORY?.name || 'مصنع زهير',
+    farmName: CURRENT_FACTORY?.name || 'deku',
     owner: '',
     initialChickens: 0,
     initialFeed: 0,
@@ -589,7 +648,12 @@ function defaultSettings() {
     feedPrice: 0,
     feedAlertThreshold: 100,
     brokenAlertPct: 5,
-    deletePassword: '1234'
+    deletePassword: '1234',
+    loyer: 0,
+    electricity: 0,
+    repairLoyer: 0,
+    repairTotal: 0,
+    partners: []  // [{id, name, sharePercent}]
   };
 }
 
@@ -626,6 +690,61 @@ function confirmDeletePassword() {
     setTimeout(() => input.classList.remove('shake'), 500);
     showToast('كلمة السر غير صحيحة', 'error');
   }
+}
+
+/* ===================== DEV PASSWORD MODAL (Partner Gate) ===================== */
+
+/** Called when the wa-role select changes in the account creation form */
+function onWaRoleChange() {
+  const select = document.getElementById('wa-role');
+  if (!select) return;
+  if (select.value === 'partner') {
+    // Must verify dev password each time partner is selected
+    _devPasswordVerified = false;
+    showDevPasswordModal();
+  } else {
+    _devPasswordVerified = false;
+  }
+}
+
+function showDevPasswordModal() {
+  const modal  = document.getElementById('modal-dev-password');
+  const input  = document.getElementById('dev-password-input');
+  const errEl  = document.getElementById('dev-password-error');
+  if (!modal) return;
+  if (input)  input.value = '';
+  if (errEl)  { errEl.classList.remove('visible'); errEl.textContent = ''; }
+  modal.classList.add('open');
+  setTimeout(() => { if (input) input.focus(); }, 300);
+}
+
+function confirmDevPassword() {
+  const input = document.getElementById('dev-password-input');
+  const errEl = document.getElementById('dev-password-error');
+  if (!input) return;
+
+  if (input.value === DEV_SECRET_CODE) {
+    _devPasswordVerified = true;
+    const modal = document.getElementById('modal-dev-password');
+    if (modal) modal.classList.remove('open');
+    showToast('✅ تم التحقق — يمكنك الآن إنشاء حساب شريك', 'success');
+  } else {
+    input.value = '';
+    input.classList.add('shake');
+    setTimeout(() => input.classList.remove('shake'), 500);
+    if (errEl) {
+      errEl.textContent = '❌ كلمة المرور غير صحيحة';
+      errEl.classList.add('visible');
+    }
+  }
+}
+
+function cancelDevPassword() {
+  const modal  = document.getElementById('modal-dev-password');
+  const select = document.getElementById('wa-role');
+  if (modal)  modal.classList.remove('open');
+  if (select) select.value = 'worker';   // revert selection
+  _devPasswordVerified = false;
 }
 
 /* ===================== HELPERS ===================== */
@@ -684,14 +803,56 @@ function getTotalAdvances() {
   workers.forEach(w => { (w.advances || []).forEach(a => total += Number(a.amount) || 0); });
   return total;
 }
+function getTotalNetProfit() {
+  const logs = DB.get('daily_logs') || [];
+  const settings = DB.get('settings') || defaultSettings();
+
+  // Sum all daily BASE profits (before partner expenses)
+  const totalDailyProfit = logs.reduce((s, l) => s + (Number(l.baseProfit ?? l.profit) || 0), 0);
+
+  // One-time initial costs
+  const chickensCost = (Number(settings.initialChickens) || 0) * (Number(settings.chickenPrice) || 0);
+  const feedCost     = (Number(settings.initialFeed)     || 0) * (Number(settings.feedPrice)     || 0);
+  const loyer        = Number(settings.loyer)        || 0;
+  const repairLoyer  = Number(settings.repairLoyer)  || 0;
+  const repairTotal  = Number(settings.repairTotal)  || 0;
+  const effectiveLoyer = Math.max(0, loyer - repairLoyer);
+
+  // Monthly electricity
+  const electricity = Number(settings.electricity) || 0;
+  let monthsDiff = 1;
+  if (logs.length > 0) {
+    const sorted = [...logs].sort((a, b) => a.date.localeCompare(b.date));
+    const firstDate = new Date(sorted[0].date);
+    const now = new Date();
+    monthsDiff = Math.max(1, (now.getFullYear() - firstDate.getFullYear()) * 12 + (now.getMonth() - firstDate.getMonth()) + 1);
+  }
+  const totalElectricity = electricity * monthsDiff;
+
+  // Total partner expenses across all logs
+  const totalPartnerExp = logs.reduce((s, l) => {
+    if (!l.partnerExpenses) return s;
+    return s + l.partnerExpenses.reduce((ps, pe) => ps + (Number(pe.amount) || 0), 0);
+  }, 0);
+
+  // Credits (debts) reduce profit
+  const credits = DB.get('credits') || [];
+  const totalCredits = credits.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+
+  return totalDailyProfit - chickensCost - feedCost - effectiveLoyer - totalElectricity - repairTotal - totalPartnerExp - totalCredits;
+}
+
+function getTotalCredits() {
+  const credits = DB.get('credits') || [];
+  return credits.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+}
 function renderCurrentPage() {
   const activePage = document.querySelector('.page.active');
   if (!activePage) return;
   const pageId = activePage.id.replace('page-', '');
   const refreshers = {
     dashboard: renderDashboard,
-    sales: renderSalesTable,
-    feed: renderFeedPage,
+    sales: renderSalesFeedPage,
     workers: renderWorkersPage,
     reports: renderReportsPage,
     settings: loadSettingsForm
@@ -738,8 +899,10 @@ function renderFactoryScreen() {
     card.setAttribute('data-id', factory.id);
     card.style.animationDelay = `${idx * 0.07}s`;
 
+    // Only workers can delete factories
+    const canDelete = (CURRENT_ROLE !== 'owner' && CURRENT_ROLE !== 'partner');
     card.innerHTML = `
-      <button class="factory-card-delete" data-id="${factory.id}" title="حذف المصنع">✕</button>
+      ${canDelete ? `<button class="factory-card-delete" data-id="${factory.id}" title="حذف المصنع">✕</button>` : ''}
       <span class="factory-card-icon">${factory.icon || '🐔'}</span>
       <div class="factory-card-name">${factory.name}</div>
       <div class="factory-card-meta">منذ ${fmtDate(factory.createdAt?.split('T')[0] || today)}</div>
@@ -755,20 +918,23 @@ function renderFactoryScreen() {
       enterFactory(factory);
     });
 
-    // Delete button
-    card.querySelector('.factory-card-delete').addEventListener('click', (e) => {
-      e.stopPropagation();
-      const fname = factory.name;
-      if (!confirm('هل تريد حذف مصنع "' + fname + '"؟')) return;
-      if (!confirm('تأكيد نهائي: سيتم حذف جميع بيانات "' + fname + '" من السحابة بشكل دائم. متأكد؟')) return;
-      // Stop global listener first to prevent re-sync of deleted data
-      if (GLOBAL_SYNC_UNSUB) { try { GLOBAL_SYNC_UNSUB(); GLOBAL_SYNC_UNSUB = null; } catch(er) {} }
-      FactoryDB.deleteFactory(factory.id);
-      renderFactoryScreen();
-      showToast('✅ تم حذف المصنع نهائياً', 'warning');
-      // Restart global listener for remaining factories
-      setTimeout(() => initGlobalSync(), 800);
-    });
+    // Delete button (only rendered for workers)
+    const delBtn = card.querySelector('.factory-card-delete');
+    if (delBtn) {
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const fname = factory.name;
+        if (!confirm('هل تريد حذف مصنع "' + fname + '"؟')) return;
+        if (!confirm('تأكيد نهائي: سيتم حذف جميع بيانات "' + fname + '" من السحابة بشكل دائم. متأكد؟')) return;
+        // Stop global listener first to prevent re-sync of deleted data
+        if (GLOBAL_SYNC_UNSUB) { try { GLOBAL_SYNC_UNSUB(); GLOBAL_SYNC_UNSUB = null; } catch(er) {} }
+        FactoryDB.deleteFactory(factory.id);
+        renderFactoryScreen();
+        showToast('✅ تم حذف المصنع نهائياً', 'warning');
+        // Restart global listener for remaining factories
+        setTimeout(() => initGlobalSync(), 800);
+      });
+    }
 
     grid.appendChild(card);
   });
@@ -784,10 +950,13 @@ function enterFactory(factory) {
   document.getElementById('sidebar-factory-icon').textContent = factory.icon || '🐔';
   document.getElementById('sidebar-factory-name').textContent = factory.name;
   document.getElementById('sidebar-factory-sub').textContent = 'مصنع الدواجن';
-  document.getElementById('topbar-factory-name').textContent = `Zohir — ${factory.name}`;
+  document.getElementById('topbar-factory-name').textContent = `deku — ${factory.name}`;
 
   // Init local data safely (no cloud push)
   initFactoryData();
+
+  // Render partner expense fields in daily form
+  renderPartnerExpensesInForm();
 
   // Show app, hide selection screen
   document.getElementById('factory-screen').style.display = 'none';
@@ -824,8 +993,12 @@ function exitToFactoryScreen() {
 function initFactoryScreen() {
   renderFactoryScreen();
 
-  // Add factory modal
+  // Add factory modal — only workers can add factories
   document.getElementById('btn-add-factory').addEventListener('click', () => {
+    if (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner') {
+      showToast('🔒 وضع المشاهدة فقط — لا يمكنك إضافة مصنع', 'error');
+      return;
+    }
     openAddFactoryModal();
   });
 
@@ -884,8 +1057,7 @@ function showPage(pageId) {
   if (bn) bn.classList.add('active');
   const refreshers = {
     dashboard: renderDashboard,
-    sales: renderSalesTable,
-    feed: renderFeedPage,
+    sales: renderSalesFeedPage,
     workers: renderWorkersPage,
     reports: renderReportsPage,
     settings: loadSettingsForm
@@ -943,6 +1115,14 @@ function renderDashboard() {
   document.getElementById('kpi-dead').textContent = deadMonth;
   document.getElementById('kpi-broken').textContent = fmt(brokenLoss, 'دج');
   document.getElementById('kpi-advances').textContent = fmt(totalAdv, 'دج');
+
+  // Total net profit KPI
+  const netProfit = getTotalNetProfit();
+  const netProfitEl = document.getElementById('kpi-net-profit');
+  if (netProfitEl) {
+    netProfitEl.textContent = fmt(netProfit, 'دج');
+    netProfitEl.style.color = netProfit >= 0 ? 'var(--green)' : 'var(--red)';
+  }
 
   const feedKpi = document.querySelector('.kpi-feed');
   if (feedBal < (Number(settings.feedAlertThreshold) || 100)) {
@@ -1030,7 +1210,7 @@ function renderActivities() {
 function initDailyForm() {
   document.getElementById('inp-date').value = todayStr();
 
-  const calcFields = ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates', 'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-expenses', 'inp-owner-advance'];
+  const calcFields = ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates', 'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-expenses', 'inp-owner-advance', 'inp-water-cost', 'inp-manure-income', 'inp-special-plates', 'inp-special-singles', 'inp-special-price'];
   calcFields.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', updateDailyCalc);
@@ -1057,6 +1237,9 @@ function updateDailyCalc() {
   const expenses = Number(document.getElementById('inp-expenses')?.value) || 0;
   const manureIncome = Number(document.getElementById('inp-manure-income')?.value) || 0;
   const waterCost = Number(document.getElementById('inp-water-cost')?.value) || 0;
+  const specialPlates = Number(document.getElementById('inp-special-plates')?.value) || 0;
+  const specialSingles = Number(document.getElementById('inp-special-singles')?.value) || 0;
+  const specialPrice = Number(document.getElementById('inp-special-price')?.value) || 0;
 
   const net = produced - broken;
   const koliates = Math.floor(net / 12);
@@ -1066,6 +1249,7 @@ function updateDailyCalc() {
   const income = soldTotal * price;
   const feedBal = getCurrentFeedBalance() + feedIn - feedUsed;
   const feedCost = feedIn * feedPrice;
+  const specialIncome = specialPlates * specialPrice + specialSingles * (specialPrice / 12);
 
   const settings = DB.get('settings') || defaultSettings();
   const baseFeedPrice = Number(settings.feedPrice) || 0;
@@ -1075,7 +1259,20 @@ function updateDailyCalc() {
   document.querySelectorAll('.advance-row').forEach(row => {
     workerAdvancesTotal += Number(row.querySelector('.adv-amount').value) || 0;
   });
-  const profit = income + manureIncome - consumedFeedCost - expenses - waterCost - workerAdvancesTotal;
+
+  const ownerAdvance = Number(document.getElementById('inp-owner-advance')?.value) || 0;
+
+  // Base profit before partner expenses and owner advance
+  const baseProfit = income + manureIncome + specialIncome - consumedFeedCost - waterCost - workerAdvancesTotal;
+
+  // Collect partner expenses
+  const partners = settings.partners || [];
+  let totalPartnerExpenses = 0;
+  partners.forEach(p => {
+    totalPartnerExpenses += Number(document.getElementById(`inp-pexp-${p.id}`)?.value) || 0;
+  });
+
+  const profit = baseProfit - totalPartnerExpenses - ownerAdvance;
 
   document.getElementById('prev-net').textContent = net >= 0 ? fmt(net) : '—';
   document.getElementById('prev-koliates').textContent = net >= 0 ? fmt(koliates) : '—';
@@ -1086,10 +1283,44 @@ function updateDailyCalc() {
   document.getElementById('prev-feed').textContent = fmt(feedBal, 'كغ');
   document.getElementById('prev-feed-cost').textContent = feedPrice > 0 ? fmt(feedCost, 'دج') : '—';
 
+  const specialIncomeEl = document.getElementById('prev-special-income');
+  if (specialIncomeEl) specialIncomeEl.textContent = (specialPlates > 0 || specialSingles > 0) ? fmt(specialIncome, 'دج') : '—';
+
+  // Base profit preview
+  const baseProfitEl = document.getElementById('prev-base-profit');
+  if (baseProfitEl) {
+    baseProfitEl.textContent = fmt(baseProfit, 'دج');
+    baseProfitEl.style.color = baseProfit >= 0 ? 'var(--blue)' : 'var(--red)';
+  }
+
+  // Partner shares preview
+  const sharesEl = document.getElementById('prev-partner-shares');
+  if (sharesEl && partners.length > 0) {
+    let html = '';
+    partners.forEach(p => {
+      const partnerExp = Number(document.getElementById(`inp-pexp-${p.id}`)?.value) || 0;
+      const partnerShare = (baseProfit * (Number(p.sharePercent) || 0) / 100) - partnerExp;
+      html += `<div class="calc-row" style="font-size:0.85rem;padding:3px 0">
+        <span>🤝 ${p.name} (${p.sharePercent}%)</span>
+        <strong style="color:${partnerShare >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(partnerShare, 'دج')}</strong>
+      </div>`;
+    });
+    if (ownerAdvance > 0) {
+      html += `<div class="calc-row" style="font-size:0.85rem;padding:3px 0">
+        <span>👔 سلفيات صاحب العمل</span>
+        <strong style="color:var(--orange)">-${fmt(ownerAdvance, 'دج')}</strong>
+      </div>`;
+    }
+    sharesEl.innerHTML = html;
+  } else if (sharesEl) {
+    sharesEl.innerHTML = '';
+  }
+
+  // Final profit preview
   const profitEl = document.getElementById('prev-profit');
   if (profitEl) {
     profitEl.textContent = fmt(profit, 'دج');
-    profitEl.className = profit >= 0 ? 'positive' : 'negative';
+    profitEl.style.color = profit >= 0 ? 'var(--green)' : 'var(--red)';
   }
 }
 
@@ -1122,6 +1353,10 @@ function populateWorkerSelects() {
 }
 
 function saveDayData() {
+  if (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner') {
+    showToast('صلاحية محظورة: المشاهدة فقط', 'error');
+    return;
+  }
   const date = document.getElementById('inp-date').value;
   const produced = Number(document.getElementById('inp-produced').value) || 0;
   const broken = Number(document.getElementById('inp-broken').value) || 0;
@@ -1134,9 +1369,13 @@ function saveDayData() {
   const dead = Number(document.getElementById('inp-dead').value) || 0;
   const waterCost = Number(document.getElementById('inp-water-cost').value) || 0;
   const manureIncome = Number(document.getElementById('inp-manure-income').value) || 0;
-  const expenses = Number(document.getElementById('inp-expenses')?.value) || 0;
+  const expenses = 0; // ملغى — أصبحت مصاريف منفصلة لكل شريك
   const ownerAdvance = Number(document.getElementById('inp-owner-advance')?.value) || 0;
   const notes = document.getElementById('inp-notes').value.trim();
+  const specialPlates = Number(document.getElementById('inp-special-plates')?.value) || 0;
+  const specialSingles = Number(document.getElementById('inp-special-singles')?.value) || 0;
+  const specialPrice = Number(document.getElementById('inp-special-price')?.value) || 0;
+  const specialIncome = specialPlates * specialPrice + specialSingles * (specialPrice / 12);
 
   if (!date) { showToast('يرجى تحديد التاريخ', 'error'); return; }
 
@@ -1164,7 +1403,23 @@ function saveDayData() {
   const settings = DB.get('settings') || defaultSettings();
   const baseFeedPrice = Number(settings.feedPrice) || 0;
   const consumedFeedCost = feedUsed * (feedPrice > 0 ? feedPrice : baseFeedPrice);
-  const profit = income + manureIncome - consumedFeedCost - expenses - waterCost - workerAdvancesTotal;
+
+  // Collect partner expenses
+  const partners = settings.partners || [];
+  const partnerExpenses = [];
+  let totalPartnerExpenses = 0;
+  partners.forEach(p => {
+    const val = Number(document.getElementById(`inp-pexp-${p.id}`)?.value) || 0;
+    partnerExpenses.push({ partnerId: p.id, name: p.name, amount: val });
+    totalPartnerExpenses += val;
+  });
+
+  // Base profit = income before any partner/owner personal expenses
+  const baseProfit = income + manureIncome + specialIncome - consumedFeedCost - waterCost - workerAdvancesTotal;
+
+  // Each partner net = baseProfit * sharePercent% - their own expenses
+  // (stored; not deducted globally here)
+  const profit = baseProfit - totalPartnerExpenses - ownerAdvance;
 
   const log = {
     id: Date.now(),
@@ -1172,7 +1427,8 @@ function saveDayData() {
     netEggs: net, koliates, singleLeft,
     soldTotal, soldGroups, soldSingle, freePlates, income,
     feedIn, feedPrice, feedCost, feedUsed, dead, waterCost, manureIncome, notes,
-    expenses, ownerAdvance, profit,
+    expenses: 0, ownerAdvance, baseProfit, profit, partnerExpenses,
+    specialPlates, specialSingles, specialPrice, specialIncome,
     enteredBy: CURRENT_USER_NAME || '',
     enteredByUid: CURRENT_USER ? CURRENT_USER.uid : ''
   };
@@ -1193,7 +1449,8 @@ function saveDayData() {
     DB.set('workers', workers);
   }
 
-  addActivity(`تم حفظ بيانات يوم ${fmtDate(date)} — مدخول: ${fmt(income, 'دج')}`, '📅');
+  const totalDayIncome = income + specialIncome;
+  addActivity(`تم حفظ بيانات يوم ${fmtDate(date)} — مدخول: ${fmt(income, 'دج')}${specialIncome > 0 ? ' + خاص: '+fmt(specialIncome, 'دج') : ''} — فائدة: ${fmt(log.profit, 'دج')}`, '📅');
   showToast('✅ تم حفظ بيانات اليوم بنجاح!');
   renderDailyReportOutput(log);
   updateDailyCalc();
@@ -1229,6 +1486,19 @@ function renderDailyReportOutput(log) {
           <span>💵 المدخول الإجمالي</span>
           <strong class="positive" style="font-size:1.1rem">${fmt(log.income, 'دج')}</strong>
         </div>
+        <div class="report-row">
+          <span>📊 الربح الأساسي</span>
+          <strong style="color:var(--blue);font-size:1.05rem">${fmt(log.baseProfit, 'دج')}</strong>
+        </div>
+        ${(log.partnerExpenses && log.partnerExpenses.length > 0) ? log.partnerExpenses.map(pe => {
+          const pSettings = (settings.partners || []).find(pp => pp.id === pe.partnerId);
+          const share = pSettings ? (Number(log.baseProfit) || 0) * (Number(pSettings.sharePercent) || 0) / 100 : 0;
+          const net = share - (Number(pe.amount) || 0);
+          return `<div class="report-row" style="font-size:0.88rem">
+            <span>🤝 ${pe.name} (${pSettings ? pSettings.sharePercent + '%' : '—'})</span>
+            <strong style="color:${net >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(net, 'دج')}${pe.amount > 0 ? ' <small style="color:var(--orange)">(مصاريف: '+fmt(pe.amount,'دج')+')</small>' : ''}</strong>
+          </div>`;
+        }).join('') : ''}
         <div class="report-row">
           <span>💰 الصافي (الفائدة)</span>
           <strong class="${log.profit >= 0 ? 'positive' : 'negative'}" style="font-size:1.1rem">${fmt(log.profit, 'دج')}</strong>
@@ -1268,12 +1538,107 @@ function renderDailyReportOutput(log) {
   container.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
+function showDailyLogDetails(id) {
+  const logs = DB.get('daily_logs') || [];
+  const log = logs.find(l => l.id === id);
+  if (!log) return;
+  const modal = document.getElementById('daily-details-modal');
+  const modalBody = document.getElementById('details-modal-body');
+  document.getElementById('details-modal-title').textContent = `تفاصيل يوم ${fmtDate(log.date)}`;
+  const settings = DB.get('settings') || defaultSettings();
+  const brokenPct = log.produced > 0 ? ((log.broken / log.produced) * 100).toFixed(1) : '0.0';
+  const brokenWarn = Number(brokenPct) > (Number(settings.brokenAlertPct) || 5);
+  const feedBal = getCurrentFeedBalance();
+  const feedWarn = feedBal < (Number(settings.feedAlertThreshold) || 100);
+  modalBody.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px">
+      <div class="report-block">
+        <div class="report-block-title">🥚 جدول الإنتاج والمبيعات</div>
+        <div class="report-row"><span>إجمالي المنتج</span><strong>${fmt(log.produced)} بلاكة</strong></div>
+        <div class="report-row"><span>المكسور</span><strong class="negative">${fmt(log.broken)} بلاكة</strong></div>
+        <div class="report-row"><span>الصافي</span><strong class="positive">${fmt(log.netEggs)} بلاكة</strong></div>
+        <div class="report-row"><span>الكرطونات (12×)</span><strong>${fmt(log.koliates)} كرطون</strong></div>
+        <div class="report-row"><span>الفردي المتبقي</span><strong>${fmt(log.singleLeft)} بلاكة</strong></div>
+        <div class="report-row"><span>سعر البلاكة</span><strong>${fmt(log.price, 'دج')}</strong></div>
+        <div class="report-row"><span>الكرطونات المباعة</span><strong>${fmt(log.soldGroups)}</strong></div>
+        <div class="report-row"><span>الفردي المباع</span><strong>${fmt(log.soldSingle)}</strong></div>
+        <div class="report-row"><span>مجاني/استهلاك</span><strong>${fmt(log.freePlates || 0)} بلاكة</strong></div>
+        <div class="report-row"><span>💧 سعر الماء</span><strong class="negative">${log.waterCost > 0 ? fmt(log.waterCost, 'دج') : '—'}</strong></div>
+        <div class="report-row"><span>💩 سعر الغبار</span><strong class="positive">${log.manureIncome > 0 ? fmt(log.manureIncome, 'دج') : '—'}</strong></div>
+        <div class="report-row"><span>💸 المصاريف اليومية</span><strong class="negative">${log.expenses > 0 ? fmt(log.expenses, 'دج') : '—'}</strong></div>
+        <div class="report-row"><span>👔 سلفيات صاحب العمل</span><strong class="negative">${log.ownerAdvance > 0 ? fmt(log.ownerAdvance, 'دج') : '—'}</strong></div>
+        <div class="report-row" style="border-top:1px solid rgba(255,255,255,0.08);margin-top:6px;padding-top:8px">
+          <span>💵 المدخول الإجمالي</span>
+          <strong class="positive" style="font-size:1.1rem">${fmt(log.income, 'دج')}</strong>
+        </div>
+        <div class="report-row">
+          <span>📊 الربح الأساسي</span>
+          <strong style="color:var(--blue);font-size:1.05rem">${fmt(log.baseProfit, 'دج')}</strong>
+        </div>
+        ${(log.partnerExpenses && log.partnerExpenses.length > 0) ? log.partnerExpenses.map(pe => {
+          const pSettings = (settings.partners || []).find(pp => pp.id === pe.partnerId);
+          const share = pSettings ? (Number(log.baseProfit) || 0) * (Number(pSettings.sharePercent) || 0) / 100 : 0;
+          const net = share - (Number(pe.amount) || 0);
+          return `<div class="report-row" style="font-size:0.88rem">
+            <span>🤝 ${pe.name} (${pSettings ? pSettings.sharePercent + '%' : '—'})</span>
+            <strong style="color:${net >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(net, 'دج')}${pe.amount > 0 ? ' <small style="color:var(--orange)">(مصاريف: '+fmt(pe.amount,'دج')+')</small>' : ''}</strong>
+          </div>`;
+        }).join('') : ''}
+        <div class="report-row">
+          <span>💰 الصافي (الفائدة)</span>
+          <strong class="${log.profit >= 0 ? 'positive' : 'negative'}" style="font-size:1.1rem">${fmt(log.profit, 'دج')}</strong>
+        </div>
+      </div>
+      <div class="report-block">
+        <div class="report-block-title">🌾 جدول المخزون</div>
+        <div class="report-row"><span>شعير داخل اليوم</span><strong>${fmt(log.feedIn, 'كغ')}</strong></div>
+        <div class="report-row"><span>سعر الشراء</span><strong>${log.feedPrice > 0 ? fmt(log.feedPrice, 'دج/كغ') : '—'}</strong></div>
+        <div class="report-row"><span>تكلفة الشراء</span><strong class="${log.feedCost > 0 ? 'negative' : ''}">${log.feedCost > 0 ? fmt(log.feedCost, 'دج') : '—'}</strong></div>
+        <div class="report-row"><span>شعير مستهلك</span><strong>${fmt(log.feedUsed, 'كغ')}</strong></div>
+        <div class="report-row">
+          <span>الرصيد الحالي</span>
+          <strong class="${feedWarn ? 'warn' : 'positive'}">${fmt(feedBal, 'كغ')} ${feedWarn ? '⚠️' : ''}</strong>
+        </div>
+        <div class="report-block-title" style="margin-top:14px">⚠️ مؤشرات الأداء</div>
+        <div class="report-row"><span>نسبة الكسر</span>
+          <strong class="${brokenWarn ? 'negative' : 'positive'}">${brokenPct}% ${brokenWarn ? '⚠️' : '✓'}</strong>
+        </div>
+        <div class="report-row"><span>قيمة الكسر الضائعة</span>
+          <strong class="negative">${fmt(log.broken * log.price, 'دج')}</strong>
+        </div>
+        <div class="report-row"><span>الدجاج النافق اليوم</span>
+          <strong class="${log.dead > 0 ? 'negative' : ''}">
+            ${log.dead > 0 ? '💀 ' : '✓ '}${fmt(log.dead)} دجاجة
+          </strong>
+        </div>
+      </div>
+    </div>
+    <div class="accountant-note">
+      <strong>💼 خلاصة المحاسب:</strong>
+      ${generateAccountantNote(log, brokenPct, brokenWarn)}
+    </div>
+    ${log.notes ? `<div class="report-block" style="margin-top:12px"><div class="report-block-title">📝 الملاحظات</div><p style="color:var(--text-secondary);font-size:0.88rem">${log.notes}</p></div>` : ''}
+  `;
+  modal.style.display = 'flex';
+}
+
+document.getElementById('btn-close-details')?.addEventListener('click', () => {
+  document.getElementById('daily-details-modal').style.display = 'none';
+});
+window.addEventListener('click', (e) => {
+  const modal = document.getElementById('daily-details-modal');
+  if (e.target === modal) modal.style.display = 'none';
+});
+
 function clearDailyForm() {
   ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates',
-    'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-dead', 'inp-water-cost', 'inp-manure-income', 'inp-expenses', 'inp-owner-advance', 'inp-notes'].forEach(id => {
+    'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-dead', 'inp-water-cost', 'inp-manure-income',
+    'inp-owner-advance', 'inp-notes', 'inp-special-plates', 'inp-special-singles', 'inp-special-price'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
+  // clear partner expense fields
+  document.querySelectorAll('[id^="inp-pexp-"]').forEach(el => el.value = '');
   document.getElementById('inp-date').value = todayStr();
   document.getElementById('advance-entries').innerHTML = `
     <div class="advance-row">
@@ -1286,20 +1651,50 @@ function clearDailyForm() {
   updateDailyCalc();
 }
 
+/* ===================== SALES + FEED + CREDITS PAGE ===================== */
+function switchSalesTab(tabId, btn) {
+  document.querySelectorAll('#sales-page-tabs .page-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('#page-sales .tab-panel').forEach(p => p.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  const panel = document.getElementById(tabId);
+  if (panel) panel.classList.add('active');
+  // Re-render the active tab's content
+  if (tabId === 'tab-feed') renderFeedPage();
+  else if (tabId === 'tab-credits') renderCreditsTable();
+  else renderSalesTable();
+}
+
+function renderSalesFeedPage() {
+  renderSalesTable();
+  renderFeedPage();
+  renderCreditsTable();
+}
+
 /* ===================== SALES TABLE ===================== */
 function renderSalesTable() {
   const logs = DB.get('daily_logs') || [];
   const tbody = document.getElementById('sales-tbody');
   let totalIncome = 0;
+  let totalSpecialIncome = 0;
+  let totalProfit = 0;
   if (!logs.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">لا توجد مبيعات مسجلة</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-cell">لا توجد مبيعات مسجلة</td></tr>';
     document.getElementById('total-income-chip').textContent = '0 دج';
+    const profitChip = document.getElementById('total-profit-chip');
+    if (profitChip) profitChip.textContent = '0 دج';
     return;
   }
   tbody.innerHTML = '';
   const sorted = [...logs].sort((a, b) => new Date(b.date) - new Date(a.date));
   sorted.forEach(log => {
     totalIncome += Number(log.income) || 0;
+    totalSpecialIncome += Number(log.specialIncome) || 0;
+    totalProfit += Number(log.profit) || 0;
+    const sp = (log.specialPlates > 0 || log.specialSingles > 0)
+      ? `<span style="color:var(--gold);font-size:0.8rem">★${log.specialPlates > 0 ? fmt(log.specialPlates)+'بلاكة' : ''} ${log.specialSingles > 0 ? '+'+log.specialSingles+'بيضة' : ''}<br>${fmt(log.specialIncome, 'دج')}</span>`
+      : '<span style="color:var(--text-muted)">—</span>';
+    const profit = Number(log.profit) || 0;
+    const profitColor = profit >= 0 ? 'var(--green)' : 'var(--red)';
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${fmtDate(log.date)}</td>
@@ -1307,18 +1702,200 @@ function renderSalesTable() {
       <td>${fmt(log.soldSingle)}</td>
       <td>${fmt(log.price, 'دج')}</td>
       <td><strong style="color:var(--green)">${fmt(log.income, 'دج')}</strong></td>
-      <td><button class="btn btn-danger btn-sm btn-delete-log" data-id="${log.id}">🗑</button></td>
+      <td>${sp}</td>
+      <td><strong style="color:var(--blue)">${fmt((Number(log.income)||0)+(Number(log.specialIncome)||0), 'دج')}</strong></td>
+      <td><strong style="color:${profitColor};font-size:1rem">${fmt(profit, 'دج')}</strong></td>
+      <td>
+        <button class="btn btn-outline btn-sm btn-view-log" data-id="${log.id}" style="margin-left:4px">👁تفصيل</button>
+        <button class="btn btn-danger btn-sm btn-delete-log" data-id="${log.id}">🗑</button>
+      </td>
     `;
     tbody.appendChild(tr);
   });
-  document.getElementById('total-income-chip').textContent = fmt(totalIncome, 'دج');
-  // Attach delete events
+  document.getElementById('total-income-chip').textContent = fmt(totalIncome + totalSpecialIncome, 'دج');
+  const profitChip = document.getElementById('total-profit-chip');
+  if (profitChip) {
+    profitChip.textContent = fmt(totalProfit, 'دج');
+    profitChip.style.color = totalProfit >= 0 ? 'var(--green)' : 'var(--red)';
+  }
+  // Update credits chip
+  const totalCred = getTotalCredits();
+  const credChip = document.getElementById('total-credits-chip');
+  if (credChip) { credChip.textContent = fmt(totalCred, 'دج'); credChip.style.color = totalCred > 0 ? 'var(--red)' : ''; }
+  // Attach events
+  tbody.querySelectorAll('.btn-view-log').forEach(btn => {
+    btn.addEventListener('click', () => {
+      showDailyLogDetails(Number(btn.dataset.id));
+    });
+  });
   tbody.querySelectorAll('.btn-delete-log').forEach(btn => {
     btn.addEventListener('click', () => {
       const logId = Number(btn.dataset.id);
       deleteLogById(logId);
     });
   });
+}
+
+/* ===================== CREDITS (DEBTS) ===================== */
+function renderCreditsTable() {
+  const credits = DB.get('credits') || [];
+  const tbody = document.getElementById('credits-tbody');
+  if (!tbody) return;
+  if (!credits.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">لا توجد كريديتات مسجلة</td></tr>';
+    document.getElementById('total-credits-chip')?.parentElement && (document.getElementById('total-credits-chip').textContent = '0 دج');
+    return;
+  }
+  tbody.innerHTML = '';
+  let total = 0;
+  const sorted = [...credits].sort((a, b) => new Date(b.date) - new Date(a.date));
+  sorted.forEach(c => {
+    total += Number(c.amount) || 0;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${fmtDate(c.date)}</td>
+      <td><strong>${c.clientName || '—'}</strong></td>
+      <td>${c.description || '—'}</td>
+      <td><strong style="color:var(--red)">${fmt(c.amount, 'دج')}</strong></td>
+      <td>
+        <button class="btn btn-danger btn-sm btn-delete-credit" data-id="${c.id}">🗑</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+  const credChip = document.getElementById('total-credits-chip');
+  if (credChip) { credChip.textContent = fmt(total, 'دج'); credChip.style.color = total > 0 ? 'var(--red)' : ''; }
+
+  tbody.querySelectorAll('.btn-delete-credit').forEach(btn => {
+    btn.addEventListener('click', () => deleteCredit(Number(btn.dataset.id)));
+  });
+}
+
+function addCredit() {
+  if (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner') {
+    showToast('صلاحية محظورة: المشاهدة فقط (الراية)', 'error'); return;
+  }
+  const date   = document.getElementById('inp-credit-date')?.value || todayStr();
+  const client = document.getElementById('inp-credit-client')?.value.trim() || '';
+  const desc   = document.getElementById('inp-credit-desc')?.value.trim() || '';
+  const amount = Number(document.getElementById('inp-credit-amount')?.value) || 0;
+  if (!client) { showToast('يرجى إدخال اسم العميل', 'error'); return; }
+  if (!amount) { showToast('يرجى إدخال المبلغ', 'error'); return; }
+  const credits = DB.get('credits') || [];
+  credits.push({ id: Date.now(), date, clientName: client, description: desc, amount });
+  DB.set('credits', credits);
+  document.getElementById('inp-credit-client').value = '';
+  document.getElementById('inp-credit-desc').value = '';
+  document.getElementById('inp-credit-amount').value = '';
+  document.getElementById('inp-credit-date').value = todayStr();
+  addActivity(`تم تسجيل كريديت لـ ${client}: ${fmt(amount, 'دج')}`, '💳');
+  renderCreditsTable();
+  showToast('✅ تم تسجيل الكريديت');
+}
+
+function deleteCredit(id) {
+  if (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner') {
+    showToast('صلاحية محظورة: المشاهدة فقط (الراية)', 'error'); return;
+  }
+  if (!confirm('حذف هذا الكريديت نهائياً؟')) return;
+  let credits = DB.get('credits') || [];
+  credits = credits.filter(c => c.id !== id);
+  DB.set('credits', credits);
+  renderCreditsTable();
+  showToast('تم حذف الكريديت', 'warning');
+}
+
+/* ===================== PARTNERS MANAGEMENT ===================== */
+function renderPartnersSettings() {
+  const settings = DB.get('settings') || defaultSettings();
+  const partners = settings.partners || [];
+  const container = document.getElementById('partners-list');
+  if (!container) return;
+  if (!partners.length) {
+    container.innerHTML = '<div class="empty-state" style="padding:20px 0"><p>لا يوجد شركاء بعد.</p></div>';
+    return;
+  }
+  container.innerHTML = '';
+  partners.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'partner-row';
+    div.innerHTML = `
+      <div class="partner-info">
+        <span class="partner-avatar">${p.name.charAt(0)}</span>
+        <span class="partner-name">${p.name}</span>
+        <span class="partner-share-badge">${p.sharePercent}%</span>
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="deletePartner(${p.id})">&#x2715; حذف</button>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function addPartner() {
+  if (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner') {
+    showToast('صلاحية محظورة: المشاهدة فقط', 'error'); return;
+  }
+  // This can be called from Settings or the new Team page
+  const nameFromSettings = document.getElementById('new-partner-name')?.value.trim();
+  const shareFromSettings = Number(document.getElementById('new-partner-share')?.value) || 0;
+  const nameFromTeam = document.getElementById('new-team-partner-name')?.value.trim();
+  const shareFromTeam = Number(document.getElementById('new-team-partner-share')?.value) || 0;
+
+  const name = nameFromSettings || nameFromTeam;
+  const share = shareFromSettings || shareFromTeam;
+
+  if (!name) { showToast('يرجى إدخال اسم الشريك', 'error'); return; }
+  if (share <= 0 || share > 100) { showToast('نسبة غير صحيحة (1-100)', 'error'); return; }
+  
+  const settings = DB.get('settings') || defaultSettings();
+  const partners = settings.partners || [];
+  partners.push({ id: Date.now(), name, sharePercent: share });
+  settings.partners = partners;
+  DB.set('settings', settings);
+  
+  if (document.getElementById('new-partner-name')) document.getElementById('new-partner-name').value = '';
+  if (document.getElementById('new-partner-share')) document.getElementById('new-partner-share').value = '';
+  if (document.getElementById('new-team-partner-name')) document.getElementById('new-team-partner-name').value = '';
+  if (document.getElementById('new-team-partner-share')) document.getElementById('new-team-partner-share').value = '';
+
+  renderPartnersSettings();
+  renderWorkersPage(); // Refresh team page too
+  renderPartnerExpensesInForm();
+  addActivity(`تم إضافة الشريك ${name} (حصة ${share}%)`, '🤝');
+  showToast(`✅ تمت إضافة ${name}`);
+}
+
+function deletePartner(id) {
+  if (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner') {
+    showToast('صلاحية محظورة: المشاهدة فقط', 'error'); return;
+  }
+  if (!confirm('هل تريد حذف هذا الشريك؟')) return;
+  const settings = DB.get('settings') || defaultSettings();
+  const partners = (settings.partners || []).filter(p => p.id !== id);
+  settings.partners = partners;
+  DB.set('settings', settings);
+  renderPartnersSettings();
+  renderWorkersPage();
+  renderPartnerExpensesInForm();
+  showToast('تم حذف الشريك', 'warning');
+}
+
+function renderPartnerExpensesInForm() {
+  const settings = DB.get('settings') || defaultSettings();
+  const partners = settings.partners || [];
+  const container = document.getElementById('partner-expenses-section');
+  if (!container) return;
+  if (!partners.length) { container.innerHTML = ''; return; }
+  container.innerHTML = `
+    <div class="section-divider">مصاريف الشركاء</div>
+    ${partners.map(p => `
+      <div class="form-group">
+        <label for="inp-pexp-${p.id}">🤝 مصاريف ${p.name} (دج)</label>
+        <input type="number" id="inp-pexp-${p.id}" placeholder="0" min="0"
+          oninput="updateDailyCalc()" />
+      </div>
+    `).join('')}
+  `;
 }
 
 /* ===================== FEED PAGE ===================== */
@@ -1378,8 +1955,30 @@ function renderFeedPage() {
     });
 }
 
-/* ===================== WORKERS PAGE ===================== */
+/* ===================== TEAM (WORKERS + PARTNERS) ===================== */
+function switchTeamTab(tabId, btn) {
+  document.querySelectorAll('#team-page-tabs .page-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('#page-workers .tab-panel').forEach(p => p.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  const panel = document.getElementById(tabId);
+  if (panel) panel.classList.add('active');
+  renderWorkersPage();
+}
+
 function renderWorkersPage() {
+  // Only owner and partner get read-only view — worker has full access
+  const isRestricted = (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner');
+  
+  // Hide add forms for restricted roles
+  document.querySelectorAll('#page-workers .restricted-edit').forEach(el => {
+    el.style.display = isRestricted ? 'none' : 'block';
+  });
+
+  renderWorkersList(isRestricted);
+  renderPartnersList(isRestricted);
+}
+
+function renderWorkersList(isRestricted) {
   const workers = DB.get('workers') || [];
   const container = document.getElementById('workers-list-container');
   if (!workers.length) {
@@ -1403,15 +2002,48 @@ function renderWorkersPage() {
           <div class="worker-avatar">${w.name.charAt(0)}</div>
           <div><div class="worker-name">${w.name}</div><div class="worker-id">#${w.id}</div></div>
         </div>
-        <button class="btn btn-danger btn-sm" onclick="deleteWorker(${w.id})">حذف</button>
+        ${!isRestricted ? `<button class="btn btn-danger btn-sm" onclick="deleteWorker(${w.id})">حذف</button>` : ''}
       </div>
       <div class="worker-stat"><span>الراتب الشهري</span><strong class="success">${fmt(w.salary, 'دج')}</strong></div>
       <div class="worker-stat"><span>إجمالي السلف</span><strong class="danger">${fmt(totalAdv, 'دج')}</strong></div>
       <div class="worker-stat"><span>الصافي المستحق</span><strong class="${netSalary < 0 ? 'danger' : 'success'}">${fmt(netSalary, 'دج')}</strong></div>
       <div class="adv-history">${advHtml}</div>
       <div class="worker-actions">
-        <button class="btn btn-outline btn-sm" onclick="resetWorkerAdvances(${w.id})">🔄 تصفية السلف</button>
+        ${!isRestricted ? `<button class="btn btn-outline btn-sm" onclick="resetWorkerAdvances(${w.id})">🔄 تصفية السلف</button>` : ''}
       </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function renderPartnersList(isRestricted) {
+  const settings = DB.get('settings') || defaultSettings();
+  const partners = settings.partners || [];
+  const container = document.getElementById('partners-list-container');
+  if (!container) return;
+  
+  if (!partners.length) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">🤝</div><p>لم يتم إضافة أي شركاء بعد.</p></div>`;
+    return;
+  }
+
+  container.innerHTML = `<div class="workers-grid" id="partners-grid-team"></div>`;
+  const grid = document.getElementById('partners-grid-team');
+  
+  partners.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'worker-card';
+    card.style.borderTop = '3px solid var(--blue)';
+    card.innerHTML = `
+      <div class="worker-header">
+        <div style="display:flex;gap:12px;align-items:center">
+          <div class="worker-avatar" style="background:var(--blue-gradient);color:white">${p.name.charAt(0)}</div>
+          <div><div class="worker-name">${p.name}</div><div class="worker-id">شريك 🤝</div></div>
+        </div>
+        ${!isRestricted ? `<button class="btn btn-danger btn-sm" onclick="deletePartner(${p.id})">حذف</button>` : ''}
+      </div>
+      <div class="worker-stat"><span>نسبة المشاركة</span><strong class="success">${p.sharePercent}%</strong></div>
+      <div class="worker-stat"><span>الحصة التقديرية</span><strong class="success">تلقائي</strong></div>
     `;
     grid.appendChild(card);
   });
@@ -1424,11 +2056,18 @@ document.addEventListener('click', function (e) {
 });
 
 function deleteLogById(logId) {
+  if (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner') {
+    showToast('صلاحية محظورة: المشاهدة فقط (الراية)', 'error');
+    return;
+  }
   if (!confirm('هل تريد حذف هذا السجل نهائياً؟ ستفقد كافة بيانات هذا اليوم.')) return;
   let logs = DB.get('daily_logs') || [];
+  const logToDelete = logs.find(l => l.id === logId);
+  const detailInfo = logToDelete ? `(يوم ${logToDelete.date} المدخول: ${fmt(logToDelete.income, 'دج')} والكرطونات: ${logToDelete.koliates})` : '';
+
   logs = logs.filter(l => l.id !== logId);
   DB.set('daily_logs', logs);
-  addActivity('تم حذف سجل يومي', '🗑');
+  addActivity(`قام العامل بحذف سجل ${detailInfo}`, '🗑');
   renderSalesTable();
   renderFeedPage();
   renderReportsPage();
@@ -1437,16 +2076,26 @@ function deleteLogById(logId) {
 }
 
 function deleteWorker(id) {
+  if (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner') {
+    showToast('صلاحية محظورة: المشاهدة فقط', 'error');
+    return;
+  }
   if (!confirm('هل تريد بالتأكيد حذف هذا العامل؟')) return;
   let workers = DB.get('workers') || [];
-  workers = workers.filter(w => w.id !== id);
+  const w = workers.find(wk => wk.id === id);
+  const detail = w ? `(${w.name})` : '';
+  workers = workers.filter(wk => wk.id !== id);
   DB.set('workers', workers);
-  addActivity('تم حذف عامل', '🗑');
+  addActivity(`قام العامل بحذف العامل ${detail}`, '🗑');
   renderWorkersPage();
   showToast('تم حذف العامل', 'warning');
 }
 
 function resetWorkerAdvances(id) {
+  if (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner') {
+    showToast('صلاحية محظورة: المشاهدة فقط', 'error');
+    return;
+  }
   if (!confirm('تصفية جميع السلفيات لهذا العامل؟ (بعد الخصم من الراتب)')) return;
   const workers = DB.get('workers') || [];
   const w = workers.find(wk => wk.id === id);
@@ -1532,12 +2181,72 @@ function loadSettingsForm() {
   document.getElementById('farm-feed-price').value = s.feedPrice || '';
   document.getElementById('feed-alert-threshold').value = s.feedAlertThreshold || 100;
   document.getElementById('broken-alert-pct').value = s.brokenAlertPct || 5;
+  const loyerEl = document.getElementById('farm-loyer');
+  const elecEl  = document.getElementById('farm-electricity');
+  if (loyerEl) loyerEl.value = s.loyer || '';
+  if (elecEl)  elecEl.value  = s.electricity || '';
+  const repLoyerEl = document.getElementById('farm-repair-loyer');
+  const repTotalEl = document.getElementById('farm-repair-total');
+  if (repLoyerEl) repLoyerEl.value = s.repairLoyer || '';
+  if (repTotalEl) repTotalEl.value  = s.repairTotal || '';
+  // Render partners list
+  renderPartnersSettings();
+
+  // Lock settings for owner/partner (read-only) — worker has full access
+  const isReadOnly = (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner');
+  const settingsInputs = document.querySelectorAll('#page-settings input, #page-settings textarea, #page-settings select');
+  settingsInputs.forEach(el => {
+    el.disabled = isReadOnly;
+    el.style.opacity = isReadOnly ? '0.7' : '1';
+    el.style.cursor = isReadOnly ? 'not-allowed' : '';
+  });
+  // Hide save/action buttons for restricted roles
+  // Note: we keep the cards visible (admin-only-card) for workers but in read-only mode
+  // Only hide the interactive action buttons/forms, not the info cards themselves
+  const settingsActionBtns = document.querySelectorAll(
+    '#btn-save-settings, #btn-save-general-settings, #btn-reset-all, #btn-add-partner, #partner-add-form, #btn-create-worker-account'
+  );
+  settingsActionBtns.forEach(el => {
+    if (el) el.style.display = isReadOnly ? 'none' : '';
+  });
+  // Show worker-accounts-card and partners-settings-card but disable all inputs inside them
+  const adminCards = document.querySelectorAll('#worker-accounts-card, #partners-settings-card');
+  adminCards.forEach(card => {
+    if (card) {
+      card.style.display = '';  // always visible
+      card.querySelectorAll('input, select, textarea, button:not(.btn-danger)').forEach(el => {
+        el.disabled = isReadOnly;
+        el.style.opacity = isReadOnly ? '0.6' : '1';
+        el.style.cursor = isReadOnly ? 'not-allowed' : '';
+      });
+    }
+  });
+  // Show a read-only notice
+  let notice = document.getElementById('settings-readonly-notice');
+  if (isReadOnly) {
+    if (!notice) {
+      notice = document.createElement('div');
+      notice.id = 'settings-readonly-notice';
+      notice.style.cssText = 'background:rgba(255,165,0,0.12);border:1px solid rgba(255,165,0,0.3);border-radius:10px;padding:12px 16px;margin-bottom:16px;color:#f6ad55;font-size:0.88rem;display:flex;align-items:center;gap:10px;';
+      notice.innerHTML = '🔒 <span>وضع المشاهدة فقط — لا يمكنك تعديل الإعدادات</span>';
+      const settingsPage = document.getElementById('page-settings');
+      const firstCard = settingsPage?.querySelector('.form-grid');
+      if (firstCard) settingsPage.querySelector('.page-header')?.after(notice);
+    }
+    notice.style.display = 'flex';
+  } else if (notice) {
+    notice.style.display = 'none';
+  }
 }
 
 function saveSettings() {
+  if (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner') {
+    showToast('صلاحية محظورة: المشاهدة فقط', 'error');
+    return;
+  }
   const existing = DB.get('settings') || defaultSettings();
   const s = {
-    farmName: document.getElementById('farm-name').value || (CURRENT_FACTORY?.name || 'مصنع زهير'),
+    farmName: document.getElementById('farm-name').value || (CURRENT_FACTORY?.name || 'deku'),
     owner: document.getElementById('farm-owner').value || '',
     initialChickens: Number(document.getElementById('farm-chickens').value) || 0,
     initialFeed: Number(document.getElementById('farm-feed-init').value) || 0,
@@ -1545,7 +2254,12 @@ function saveSettings() {
     feedPrice: Number(document.getElementById('farm-feed-price').value) || 0,
     feedAlertThreshold: Number(document.getElementById('feed-alert-threshold').value) || 100,
     brokenAlertPct: Number(document.getElementById('broken-alert-pct').value) || 5,
-    deletePassword: existing.deletePassword || '1234'
+    deletePassword: existing.deletePassword || '1234',
+    loyer: Number(document.getElementById('farm-loyer')?.value) || 0,
+    electricity: Number(document.getElementById('farm-electricity')?.value) || 0,
+    repairLoyer: Number(document.getElementById('farm-repair-loyer')?.value) || 0,
+    repairTotal: Number(document.getElementById('farm-repair-total')?.value) || 0,
+    partners: existing.partners || []  // preserve partners
   };
   DB.set('settings', s);
   addActivity('تم تحديث إعدادات المصنع', '⚙️');
@@ -1554,7 +2268,10 @@ function saveSettings() {
 
 /* ===================== ADD WORKER ===================== */
 function initWorkersPage() {
-  document.getElementById('btn-add-worker').addEventListener('click', () => {
+  document.getElementById('btn-add-worker')?.addEventListener('click', () => {
+    if (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner') {
+      showToast('صلاحية محظورة: المشاهدة فقط', 'error'); return;
+    }
     const name = document.getElementById('new-worker-name').value.trim();
     const salary = Number(document.getElementById('new-worker-salary').value) || 0;
     if (!name) { showToast('يرجى إدخال اسم العامل', 'error'); return; }
@@ -1569,6 +2286,8 @@ function initWorkersPage() {
     populateWorkerSelects();
     showToast(`✅ تمت إضافة ${name}`);
   });
+
+  document.getElementById('btn-add-team-partner')?.addEventListener('click', addPartner);
 }
 
 /* ===================== MOBILE SIDEBAR ===================== */
@@ -1588,17 +2307,22 @@ function initMobileSidebar() {
 
 /* ===================== RESET ===================== */
 function resetAllData() {
+  if (CURRENT_ROLE === 'owner' || CURRENT_ROLE === 'partner') { 
+    showToast('صلاحية محظورة: لا يمكنك إعادة تعيين بيانات المصنع', 'error');
+    return; 
+  }
   if (!confirm(`⚠️ تحذير: سيتم حذف جميع سجلات مصنع "${CURRENT_FACTORY?.name}" بشكل نهائي لا يمكن التراجع عنه!\n\nهل تريد المتابعة؟`)) return;
   if (!confirm(`⛔ تأكيد أخير: كل البيانات (الإنتاج، المبيعات، الشعير، العمال) ستُمسح من السحابة نهائياً.\n\nاضغط موافق للتأكيد.`)) return;
 
   showGlobalLoader('جاري إعادة ضبط المصنع...');
 
-  const keys = ['settings', 'workers', 'daily_logs', 'activities'];
+  const keys = ['settings', 'workers', 'daily_logs', 'activities', 'credits'];
   const emptyData = {
     settings:   defaultSettings(),
     workers:    [],
     daily_logs: [],
-    activities: []
+    activities: [],
+    credits:    []
   };
 
   // 1. وقف مستمعات المزامنة أولاً لمنع استرجاع البيانات القديمة
@@ -1674,6 +2398,17 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-save-settings').addEventListener('click', saveSettings);
   document.getElementById('btn-save-general-settings').addEventListener('click', saveSettings);
   document.getElementById('btn-reset-all').addEventListener('click', resetAllData);
+
+  // Credits tab events
+  document.getElementById('btn-add-credit')?.addEventListener('click', addCredit);
+
+  // Partners settings events
+  document.getElementById('btn-add-partner')?.addEventListener('click', addPartner);
+
+  // Sales page tabs
+  document.querySelectorAll('#sales-page-tabs .page-tab').forEach(btn => {
+    btn.addEventListener('click', () => switchSalesTab(btn.dataset.tab, btn));
+  });
 
   // Daily Form listeners are already attached in initDailyForm()
 
