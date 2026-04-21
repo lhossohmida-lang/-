@@ -1,7 +1,7 @@
 {
   "name": "deku",
   "short_name": "deku",
-  "description": "نظام deku لإدارة مصانع الدواجن",
+  "description": " deku ",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0d14",
@@ -10,7 +10,10 @@
   "lang": "ar",
   "dir": "rtl",
   "scope": "/",
-  "categories": ["business", "productivity"],
+  "categories": [
+    "business",
+    "productivity"
+  ],
   "icons": [
     {
       "src": "icons/icon-72.png",
@@ -67,14 +70,24 @@
       "short_name": "يومي",
       "description": "تسجيل بيانات اليوم",
       "url": "/?page=daily",
-      "icons": [{ "src": "icons/icon-96.png", "sizes": "96x96" }]
+      "icons": [
+        {
+          "src": "icons/icon-96.png",
+          "sizes": "96x96"
+        }
+      ]
     },
     {
       "name": "التقارير",
       "short_name": "تقارير",
       "description": "عرض التقارير المالية",
       "url": "/?page=reports",
-      "icons": [{ "src": "icons/icon-96.png", "sizes": "96x96" }]
+      "icons": [
+        {
+          "src": "icons/icon-96.png",
+          "sizes": "96x96"
+        }
+      ]
     }
   ]
 }
