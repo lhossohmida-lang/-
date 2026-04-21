@@ -949,7 +949,7 @@ function enterFactory(factory) {
   // Update sidebar UI
   document.getElementById('sidebar-factory-icon').textContent = factory.icon || '🐔';
   document.getElementById('sidebar-factory-name').textContent = factory.name;
-  document.getElementById('sidebar-factory-sub').textContent = 'مصنع الدواجن';
+  document.getElementById('sidebar-factory-sub').textContent = '';
   document.getElementById('topbar-factory-name').textContent = `deku — ${factory.name}`;
 
   // Init local data safely (no cloud push)

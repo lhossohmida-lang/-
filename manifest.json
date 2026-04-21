@@ -1,7 +1,7 @@
 {
-  "name": "deku — نظام إدارة المصانع",
+  "name": "deku",
   "short_name": "deku",
-  "description": "نظام deku لإدارة مصانع الدواجن — تتبع الإنتاج، المبيعات، العمال والمخزون",
+  "description": "نظام deku لإدارة مصانع الدواجن",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0d14",
