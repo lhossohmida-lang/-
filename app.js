@@ -189,6 +189,7 @@ async function doRegister() {
     CURRENT_ROLE = role;
     CURRENT_USER_NAME = name;
     EFFECTIVE_OWNER_UID = cred.user.uid;
+    CURRENT_LINKED_OWNERS = []; // Explicitly clear any leftover linked owners
     
     showToast(`✅ تم إنشاء الحساب — مرحباً ${name}!`);
     
@@ -233,6 +234,10 @@ async function doLogout() {
   CURRENT_FACTORY = null;
   CURRENT_USER = null;
   CURRENT_ROLE = null;
+  CURRENT_LINKED_OWNERS = [];
+  EFFECTIVE_OWNER_UID = null;
+  IS_INITIAL_CLOUD_LOAD = true;
+  INITIAL_CLOUD_SYNC_DONE = false;
   document.body.className = '';
   await auth.signOut();
   // onAuthStateChanged will show login screen
@@ -316,6 +321,16 @@ function initAuthListener() {
       showAuthScreen();
       setAuthBtnLoading('btn-login', false);
       setAuthBtnLoading('btn-register', false);
+      
+      // Critical: Clear global session state
+      CURRENT_USER = null;
+      CURRENT_ROLE = null;
+      CURRENT_USER_NAME = '';
+      CURRENT_LINKED_OWNERS = [];
+      EFFECTIVE_OWNER_UID = null;
+      CURRENT_FACTORY = null;
+      IS_INITIAL_CLOUD_LOAD = true;
+      INITIAL_CLOUD_SYNC_DONE = false;
       stopGlobalSync();
       return;
     }
