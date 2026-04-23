@@ -38,6 +38,27 @@ const ADMIN_SECRET_CODE = 'ZOHIR2025';
 const DEV_SECRET_CODE = 'dekudeku1123';
 // Tracks whether dev password was verified for the current partner account creation attempt
 let _devPasswordVerified = false;
+// Flag to prevent onAuthStateChanged from race-conditioning during registration
+let _isRegistering = false;
+
+/* ===================== PERMISSION HELPER ===================== */
+/**
+ * Returns true when the current user is in READ-ONLY mode.
+ *   'partner'             → always read-only
+ *   'worker'              → always read-write
+ *   'owner' (no workers)  → read-write — owner manages the factory himself
+ *   'owner' (has workers) → read-only  — workers handle daily data entry
+ */
+function isReadOnlyUser() {
+  if (CURRENT_ROLE === 'partner') return true;
+  if (CURRENT_ROLE === 'worker')  return false;
+  if (CURRENT_ROLE === 'owner') {
+    // Owner is read-only when viewing a factory owned by someone else (as a partner)
+    if (EFFECTIVE_OWNER_UID && CURRENT_USER && EFFECTIVE_OWNER_UID !== CURRENT_USER.uid) return true;
+    return false;
+  }
+  return false;
+}
 
 /* ---------- UI helpers ---------- */
 function showAuthScreen() {
@@ -115,12 +136,11 @@ function initRoleChooser() {
 
   const notes = {
     owner:   'صاحب عمل: تُنشئ مصانعك الخاصة وتدير عمالك بحرية كاملة.',
-    partner: 'شريك: وصول للقراءة فقط — تراقب الأرباح والبيانات.',
   };
 
   const applyRole = (r) => {
     if (adminCodeWrap)    adminCodeWrap.style.display    = 'none';
-    if (devCodeWrap)      devCodeWrap.style.display      = r === 'partner' ? '' : 'none';
+    if (devCodeWrap)      devCodeWrap.style.display      = 'none'; // Partner logic removed
     if (devCodeOwnerWrap) devCodeOwnerWrap.style.display = r === 'owner'   ? '' : 'none';
     if (roleNote)         roleNote.textContent           = notes[r] || '';
   };
@@ -151,10 +171,9 @@ async function doRegister() {
   if (password.length < 6) return showAuthError('reg-error', '⚠️ كلمة المرور يجب أن تكون 6 أحرف على الأقل');
   if (role === 'owner' && ownerCode !== ADMIN_SECRET_CODE && ownerCode !== DEV_SECRET_CODE)
     return showAuthError('reg-error', '❌ رمز المطور غير صحيح — تواصل مع المطور للحصول على الرمز');
-  if (role === 'partner' && devCode !== DEV_SECRET_CODE)
-    return showAuthError('reg-error', '❌ رمز المطور غير صحيح');
 
   setAuthBtnLoading('btn-register', true);
+  _isRegistering = true;
   try {
     const cred = await auth.createUserWithEmailAndPassword(email, password);
     await cred.user.updateProfile({ displayName: name });
@@ -164,9 +183,25 @@ async function doRegister() {
       createdAt: new Date().toISOString(),
       migrationDone: true   // new accounts have no legacy data to migrate
     });
+    
+    // Manually initialize the session data for the new account
+    CURRENT_USER = cred.user;
+    CURRENT_ROLE = role;
+    CURRENT_USER_NAME = name;
+    EFFECTIVE_OWNER_UID = cred.user.uid;
+    
     showToast(`✅ تم إنشاء الحساب — مرحباً ${name}!`);
-    // onAuthStateChanged will fire and handle the rest
+    
+    // Trigger UI update and sync
+    applyRoleToUI(CURRENT_ROLE, CURRENT_USER_NAME);
+    hideAuthScreen();
+    showGlobalLoader('جاري تهيئة حسابك الجديد...');
+    await migrateFactoriesIfNeeded();
+    initGlobalSync();
+
+    _isRegistering = false;
   } catch (e) {
+    _isRegistering = false;
     setAuthBtnLoading('btn-register', false);
     showAuthError('reg-error', translateAuthError(e.code));
   }
@@ -194,6 +229,7 @@ async function doLogin() {
 async function doLogout() {
   if (!confirm('هل تريد تسجيل الخروج؟')) return;
   stopFactorySync();
+  stopGlobalSync();
   CURRENT_FACTORY = null;
   CURRENT_USER = null;
   CURRENT_ROLE = null;
@@ -251,7 +287,7 @@ function applyRoleToUI(role, name) {
   });
 
   // Owner / Partner notice in daily page (orange — read-only)
-  const isReadOnly = (role === 'partner');
+  const isReadOnly = isReadOnlyUser();
   let ownerNotice = document.getElementById('entry-readonly-notice');
   if (isReadOnly) {
     if (!ownerNotice) {
@@ -271,53 +307,107 @@ function applyRoleToUI(role, name) {
   }
 }
 
+let CURRENT_LINKED_OWNERS = [];
+
 /* ---------- Auth State Listener — the master switch ---------- */
 function initAuthListener() {
   auth.onAuthStateChanged(async (user) => {
     if (!user) {
-      // Not logged in → show login screen
       showAuthScreen();
       setAuthBtnLoading('btn-login', false);
       setAuthBtnLoading('btn-register', false);
+      stopGlobalSync();
       return;
     }
 
-    // Logged in — fetch role from Firestore
     CURRENT_USER = user;
-    try {
-      const doc = await fs.collection('users').doc(user.uid).get();
-      if (doc.exists) {
-        const data = doc.data();
-        CURRENT_ROLE = data.role || 'worker';
-        CURRENT_USER_NAME = data.name || user.displayName || user.email;
-        // Workers & partners are linked to an owner — use that owner's UID for factory isolation
-        if ((CURRENT_ROLE === 'worker' || CURRENT_ROLE === 'partner') && data.ownerUid) {
-          EFFECTIVE_OWNER_UID = data.ownerUid;
-        } else {
-          EFFECTIVE_OWNER_UID = user.uid;
-        }
-      } else {
-        // Fallback: treat as worker if no doc found
-        CURRENT_ROLE = 'worker';
-        CURRENT_USER_NAME = user.displayName || user.email;
-        EFFECTIVE_OWNER_UID = user.uid;
-        await fs.collection('users').doc(user.uid).set({
-          name: CURRENT_USER_NAME, email: user.email,
-          role: 'worker', createdAt: new Date().toISOString()
-        });
-      }
-    } catch (e) {
-      CURRENT_ROLE = 'worker';
-      CURRENT_USER_NAME = user.displayName || user.email;
-      EFFECTIVE_OWNER_UID = user.uid;
-    }
+    const userEmail = (user.email || '').toLowerCase();
 
-    applyRoleToUI(CURRENT_ROLE, CURRENT_USER_NAME);
-    hideAuthScreen();
-    showGlobalLoader('جاري تحميل البيانات...');
-    // One-time migration: move legacy global factory list to per-owner doc
-    await migrateFactoriesIfNeeded();
-    initGlobalSync();
+    // 1. Setup real-time listener for user profile
+    const userDocRef = fs.collection('users').doc(user.uid);
+    const unsub = userDocRef.onSnapshot(async (doc) => {
+      if (!doc.exists) {
+        if (!_isRegistering) {
+          console.warn(`[Auth] No profile for ${user.uid}`);
+          CURRENT_ROLE = 'worker';
+          CURRENT_USER_NAME = user.displayName || user.email;
+          EFFECTIVE_OWNER_UID = user.uid;
+          CURRENT_LINKED_OWNERS = [];
+          applyRoleToUI(CURRENT_ROLE, CURRENT_USER_NAME);
+        }
+        return;
+      }
+
+      const data = doc.data();
+      const oldLinkedStr = JSON.stringify(CURRENT_LINKED_OWNERS);
+      
+      CURRENT_ROLE = data.role || 'worker';
+      CURRENT_USER_NAME = data.name || user.displayName || user.email;
+      CURRENT_LINKED_OWNERS = data.linkedOwners || [];
+
+      // 2. Check for invitations (Cloud-based linking)
+      try {
+        const inviteRes = await fs.collection('app_data')
+          .where('type', '==', 'partner_invite')
+          .where('email', '==', userEmail)
+          .get();
+        
+        if (!inviteRes.empty) {
+          let hasNewLink = false;
+          for (const invDoc of inviteRes.docs) {
+            const inv = invDoc.data();
+            if (!CURRENT_LINKED_OWNERS.includes(inv.ownerUid)) {
+              CURRENT_LINKED_OWNERS.push(inv.ownerUid);
+              hasNewLink = true;
+            }
+            
+            // Link current UID to the owner's factory list
+            try {
+              const fListDocId = `factories_list_${inv.ownerUid}`;
+              const fListDoc = await fs.collection('app_data').doc(fListDocId).get();
+              if (fListDoc.exists) {
+                const list = fListDoc.data().data || [];
+                const factory = list.find(f => f.id === inv.factoryId);
+                if (factory) {
+                  factory.partnerUids = factory.partnerUids || [];
+                  if (!factory.partnerUids.includes(user.uid)) {
+                    factory.partnerUids.push(user.uid);
+                    if (inv.sharePercent) {
+                      factory.partnerShares = factory.partnerShares || {};
+                      factory.partnerShares[user.uid] = inv.sharePercent;
+                    }
+                    await fs.collection('app_data').doc(fListDocId).update({ data: list });
+                  }
+                }
+              }
+            } catch (fErr) { console.error('Link list error:', fErr); }
+            
+            await fs.collection('app_data').doc(invDoc.id).delete();
+          }
+          if (hasNewLink) {
+            await userDocRef.update({ linkedOwners: CURRENT_LINKED_OWNERS });
+            return; // next snapshot will trigger sync
+          }
+        }
+      } catch (e) { console.error('Inv observer error:', e); }
+
+      // 3. Set effective owner for data scoping
+      if ((CURRENT_ROLE === 'worker' || CURRENT_ROLE === 'partner') && data.ownerUid) {
+        EFFECTIVE_OWNER_UID = data.ownerUid;
+      } else {
+        EFFECTIVE_OWNER_UID = user.uid;
+      }
+
+      applyRoleToUI(CURRENT_ROLE, CURRENT_USER_NAME);
+      hideAuthScreen();
+
+      // 4. Trigger global sync if owners changed or first load
+      if (oldLinkedStr !== JSON.stringify(CURRENT_LINKED_OWNERS) || IS_INITIAL_CLOUD_LOAD) {
+        initGlobalSync();
+      }
+    });
+
+    GLOBAL_SYNC_UNSUBS.push(unsub);
   });
 }
 
@@ -338,17 +428,6 @@ async function createWorkerAccount() {
   const btn = document.getElementById('btn-create-worker-account');
   btn.disabled = true; btn.textContent = '⏳ جاري الإنشاء...';
 
-  const waRole = document.getElementById('wa-role')?.value || 'worker';
-
-  // Safety gate: partner accounts require prior dev-password verification
-  if (waRole === 'partner' && !_devPasswordVerified) {
-    errEl.textContent = '⛔ يجب التحقق بكلمة مرور المطور أولاً — اختر دور "شريك" مجدداً';
-    errEl.classList.add('visible');
-    btn.disabled = false; btn.textContent = '➕ إنشاء حساب';
-    showDevPasswordModal();
-    return;
-  }
-
   let secondApp = null;
   try {
     // Delete any lingering instance first so state never carries over
@@ -358,81 +437,28 @@ async function createWorkerAccount() {
 
     const cred = await secondAuth.createUserWithEmailAndPassword(email, password);
     await cred.user.updateProfile({ displayName: name });
-    const userDoc = { name, email, role: waRole, createdAt: new Date().toISOString(), migrationDone: true };
-    if (waRole === 'worker' || waRole === 'partner') {
-      userDoc.ownerUid = CURRENT_USER.uid;
-    }
+    const userDoc = { name, email, role: 'worker', createdAt: new Date().toISOString(), migrationDone: true, ownerUid: CURRENT_USER.uid };
     await fs.collection('users').doc(cred.user.uid).set(userDoc);
     await secondAuth.signOut();
 
     document.getElementById('wa-name').value = '';
     document.getElementById('wa-email').value = '';
     document.getElementById('wa-password').value = '';
-    if (document.getElementById('wa-role')) document.getElementById('wa-role').value = 'worker';
-    _devPasswordVerified = false;
-    const roleLabel = waRole === 'partner' ? 'الشريك' : waRole === 'owner' ? 'صاحب العمل' : 'العامل';
-    const roleIcon  = waRole === 'partner' ? '🤝' : waRole === 'owner' ? '👔' : '👷';
-    okEl.textContent = `✅ تم إنشاء حساب ${roleLabel} "${name}" بنجاح! يمكنه الآن تسجيل الدخول.`;
-    addActivity(`تم إنشاء حساب للـ${roleLabel} ${name}`, roleIcon);
-    showToast(`✅ حساب ${roleLabel} ${name} جاهز`);
+
+    okEl.textContent = `✅ تم إنشاء حساب العامل "${name}" بنجاح! يمكنه الآن تسجيل الدخول.`;
+    addActivity(`تم إنشاء حساب للعامل ${name}`, '👷');
+    showToast(`✅ حساب العامل ${name} جاهز`);
   } catch(e) {
     errEl.textContent = translateAuthError(e.code);
     errEl.classList.add('visible');
   } finally {
     if (secondApp) { try { await secondApp.delete(); } catch(_) {} }
-    btn.disabled = false; btn.textContent = '➕ إنشاء حساب';
+    btn.disabled = false; btn.textContent = '➕ إنشاء حساب عامل';
   }
 }
 
-/* ---------- Create viewer (read-only) account — owner only ---------- */
-async function createViewerAccount() {
-  const name     = document.getElementById('viewer-name').value.trim();
-  const email    = document.getElementById('viewer-email').value.trim();
-  const password = document.getElementById('viewer-password').value;
-  const errEl    = document.getElementById('viewer-error');
-  const okEl     = document.getElementById('viewer-success');
-  errEl.classList.remove('visible'); errEl.textContent = '';
-  okEl.textContent = '';
 
-  if (!name)  return (errEl.textContent = '⚠️ أدخل الاسم الكامل', errEl.classList.add('visible'));
-  if (!email) return (errEl.textContent = '⚠️ أدخل البريد الإلكتروني', errEl.classList.add('visible'));
-  if (password.length < 6) return (errEl.textContent = '⚠️ كلمة المرور يجب 6 أحرف على الأقل', errEl.classList.add('visible'));
-  if (CURRENT_ROLE !== 'owner') return;
 
-  const btn = document.getElementById('btn-create-viewer');
-  btn.disabled = true; btn.textContent = '⏳ جاري الإنشاء...';
-
-  let secondApp = null;
-  try {
-    // Always create a fresh named instance so state never carries over from previous creation
-    try { await firebase.app('viewerCreation').delete(); } catch(_) {}
-    secondApp = firebase.initializeApp(firebaseConfig, 'viewerCreation');
-    const secondAuth = secondApp.auth();
-
-    const cred = await secondAuth.createUserWithEmailAndPassword(email, password);
-    await cred.user.updateProfile({ displayName: name });
-    await fs.collection('users').doc(cred.user.uid).set({
-      name, email,
-      role: 'partner',
-      ownerUid: CURRENT_USER.uid,
-      migrationDone: true,
-      createdAt: new Date().toISOString()
-    });
-    await secondAuth.signOut();
-
-    document.getElementById('viewer-name').value = '';
-    document.getElementById('viewer-email').value = '';
-    document.getElementById('viewer-password').value = '';
-    okEl.textContent = `✅ تم إنشاء حساب المشاهدة لـ ${name}`;
-    showToast(`✅ تم إنشاء حساب المشاهدة: ${name}`);
-  } catch(e) {
-    errEl.textContent = translateAuthError(e.code);
-    errEl.classList.add('visible');
-  } finally {
-    if (secondApp) { try { await secondApp.delete(); } catch(_) {} }
-    btn.disabled = false; btn.textContent = '➕ إضافة مشاهد';
-  }
-}
 
 /* ===================== FACTORY STATE ===================== */
 let CURRENT_FACTORY = null; // { id, name, icon, color }
@@ -589,6 +615,8 @@ function initCloudSync() {
         }
         if (fetchDone >= keys.length) {
           renderCurrentPage();
+          // Re-update UI permissions based on synced data (e.g. workers list)
+          applyRoleToUI(CURRENT_ROLE, CURRENT_USER_NAME);
           setSyncStatus('online');
           hideGlobalLoader();
         }
@@ -676,55 +704,64 @@ async function migrateFactoriesIfNeeded() {
   }
 }
 
-/* ===================== GLOBAL CLOUD SYNC ===================== */
-function initGlobalSync() {
-  // STEP 1: Fetch directly from server (bypasses cache) — guarantees fresh data on every device
-  fs.collection('app_data').doc(FactoryDB.cloudDocId).get({ source: 'server' })
-    .then(doc => {
-      IS_INITIAL_CLOUD_LOAD = false;
-      INITIAL_CLOUD_SYNC_DONE = true;
 
-      if (doc.exists) {
-        const cloudList = doc.data().data;
-        if (cloudList && Array.isArray(cloudList)) {
-          // Always overwrite local with server data — server is the single source of truth
-          localStorage.setItem(FactoryDB.listKey, JSON.stringify(cloudList));
+
+let GLOBAL_SYNC_UNSUBS = [];
+function stopGlobalSync() {
+  GLOBAL_SYNC_UNSUBS.forEach(unsub => { try { unsub(); } catch(e){} });
+  GLOBAL_SYNC_UNSUBS = [];
+}
+
+async function initGlobalSync() {
+  if (!CURRENT_USER) return;
+  stopGlobalSync();
+
+  // Owners to sync: self + anyone who added me as a partner
+  const ownersToSync = [CURRENT_USER.uid, ...CURRENT_LINKED_OWNERS];
+  
+  IS_INITIAL_CLOUD_LOAD = true;
+  let loadedCount = 0;
+
+  ownersToSync.forEach(uid => {
+    const docId = `factories_list_${uid}`;
+    
+    // STEP 1: Direct fetch for initial load
+    fs.collection('app_data').doc(docId).get({ source: 'server' })
+      .then(doc => {
+        loadedCount++;
+        if (doc.exists) {
+          const cloudList = doc.data().data || [];
+          localStorage.setItem(`zohir_factories_${uid}`, JSON.stringify(cloudList));
         }
-      }
-
-      hideGlobalLoader();
-
-      if (!CURRENT_FACTORY) {
-        renderFactoryScreen();
-        checkAutoEnter();
-      }
-    })
-    .catch(() => {
-      // Offline or network error — fall back to localStorage cache
-      console.warn('[Sync] Cannot reach server, using local cache');
-      IS_INITIAL_CLOUD_LOAD = false;
-      INITIAL_CLOUD_SYNC_DONE = true;
-      hideGlobalLoader();
-      if (!CURRENT_FACTORY) {
-        renderFactoryScreen();
-        checkAutoEnter();
-      }
-    });
-
-  // STEP 2: Set up real-time listener for ongoing changes from any device
-  GLOBAL_SYNC_UNSUB = fs.collection('app_data').doc(FactoryDB.cloudDocId)
-    .onSnapshot({ includeMetadataChanges: false }, doc => {
-      if (doc.exists) {
-        const cloudList = doc.data().data;
-        const localList = FactoryDB.getFactories();
-        if (cloudList && Array.isArray(cloudList) && JSON.stringify(localList) !== JSON.stringify(cloudList)) {
-          localStorage.setItem(FactoryDB.listKey, JSON.stringify(cloudList));
+        if (loadedCount >= ownersToSync.length) {
+          IS_INITIAL_CLOUD_LOAD = false;
+          INITIAL_CLOUD_SYNC_DONE = true;
+          hideGlobalLoader();
           if (!CURRENT_FACTORY) {
             renderFactoryScreen();
+            checkAutoEnter();
           }
         }
-      }
-    }, () => { /* ignore errors — step 1 already handled initial load */ });
+      })
+      .catch(() => {
+        loadedCount++;
+        if (loadedCount >= ownersToSync.length) {
+          IS_INITIAL_CLOUD_LOAD = false;
+          hideGlobalLoader();
+        }
+      });
+
+    // STEP 2: Snapshot listener for real-time changes
+    const unsub = fs.collection('app_data').doc(docId)
+      .onSnapshot({ includeMetadataChanges: false }, doc => {
+        if (doc.exists) {
+          const cloudList = doc.data().data || [];
+          localStorage.setItem(`zohir_factories_${uid}`, JSON.stringify(cloudList));
+          if (!CURRENT_FACTORY) renderFactoryScreen();
+        }
+      }, () => {});
+    GLOBAL_SYNC_UNSUBS.push(unsub);
+  });
 }
 
 function hideGlobalLoader() {
@@ -1031,10 +1068,37 @@ function renderCurrentPage() {
 /* ===================== FACTORY SELECTION SCREEN ===================== */
 function renderFactoryScreen() {
   const grid = document.getElementById('factory-cards-grid');
-  const factories = FactoryDB.getFactories();
   grid.innerHTML = '';
 
-  if (!factories.length) {
+  // Get own factories
+  let allFactories = [...FactoryDB.getFactories()];
+
+  // Fetch factories from linked owners where I am a partner
+  if (CURRENT_LINKED_OWNERS && CURRENT_LINKED_OWNERS.length > 0) {
+    CURRENT_LINKED_OWNERS.forEach(uid => {
+      try {
+        const cloudListKey = `zohir_factories_${uid}`;
+        const cloudList = JSON.parse(localStorage.getItem(cloudListKey)) || [];
+        // Filter to include only factories where I am listed in partnerUids
+        const partnered = cloudList.filter(f => f.partnerUids && f.partnerUids.includes(CURRENT_USER?.uid));
+        allFactories = [...allFactories, ...partnered];
+      } catch (e) {
+        console.warn(`Error loading partnered factories for owner ${uid}:`, e);
+      }
+    });
+  }
+
+  // Remove potential duplicates by ID
+  const uniqueFactories = [];
+  const seenIds = new Set();
+  allFactories.forEach(f => {
+    if (!seenIds.has(f.id)) {
+      uniqueFactories.push(f);
+      seenIds.add(f.id);
+    }
+  });
+
+  if (!uniqueFactories.length) {
     if (IS_INITIAL_CLOUD_LOAD) {
       grid.innerHTML = `
         <div style="grid-column:1/-1;text-align:center;padding:100px 0;color:var(--text-muted)">
@@ -1052,7 +1116,7 @@ function renderFactoryScreen() {
     return;
   }
 
-  factories.forEach((factory, idx) => {
+  uniqueFactories.forEach((factory, idx) => {
     // Get today's income from local data for quick stats
     const logs = (() => {
       try { return JSON.parse(localStorage.getItem(`zohir_${factory.id}_daily_logs`)) || []; }
@@ -1067,15 +1131,21 @@ function renderFactoryScreen() {
     card.setAttribute('data-id', factory.id);
     card.style.animationDelay = `${idx * 0.07}s`;
 
-    // Partners cannot delete factories; owners and workers can
-    const canDelete = (CURRENT_ROLE !== 'partner');
+    // Only actual owner of THIS factory can delete it
+    const isPrimaryOwner = factory.ownerUid === CURRENT_USER?.uid;
+    const canDelete = !isReadOnlyUser() && isPrimaryOwner;
+    
+    // Find my share in this factory
+    const myShareRaw = (factory.partnerShares && factory.partnerShares[CURRENT_USER?.uid]) || null;
+    const shareSuffix = myShareRaw ? ` (حصتك: ${myShareRaw}%)` : '';
+
     card.innerHTML = `
       ${canDelete ? `<button class="factory-card-delete" data-id="${factory.id}" title="حذف المصنع">✕</button>` : ''}
       <span class="factory-card-icon">${factory.icon || '🐔'}</span>
       <div class="factory-card-name">${factory.name}</div>
-      <div class="factory-card-meta">منذ ${fmtDate(factory.createdAt?.split('T')[0] || today)}</div>
+      <div class="factory-card-meta">${isPrimaryOwner ? '👔 تملك هذا المصنع' : '🤝 شريك في هذا المصنع' + shareSuffix}</div>
       <div class="factory-card-stat">
-        <span class="label">اليوم</span>
+        <span class="label">مدخول اليوم</span>
         <span class="value">${todayLog ? fmt(todayLog.income, 'دج') : '—'}</span>
       </div>
     `;
@@ -1086,7 +1156,7 @@ function renderFactoryScreen() {
       enterFactory(factory);
     });
 
-    // Delete button (only rendered for workers)
+    // Delete button
     const delBtn = card.querySelector('.factory-card-delete');
     if (delBtn) {
       delBtn.addEventListener('click', (e) => {
@@ -1094,12 +1164,10 @@ function renderFactoryScreen() {
         const fname = factory.name;
         if (!confirm('هل تريد حذف مصنع "' + fname + '"؟')) return;
         if (!confirm('تأكيد نهائي: سيتم حذف جميع بيانات "' + fname + '" من السحابة بشكل دائم. متأكد؟')) return;
-        // Stop global listener first to prevent re-sync of deleted data
-        if (GLOBAL_SYNC_UNSUB) { try { GLOBAL_SYNC_UNSUB(); GLOBAL_SYNC_UNSUB = null; } catch(er) {} }
+        stopGlobalSync();
         FactoryDB.deleteFactory(factory.id);
         renderFactoryScreen();
         showToast('✅ تم حذف المصنع نهائياً', 'warning');
-        // Restart global listener for remaining factories
         setTimeout(() => initGlobalSync(), 800);
       });
     }
@@ -1109,6 +1177,8 @@ function renderFactoryScreen() {
 }
 
 function enterFactory(factory) {
+  // Set the "owner" to the factory owner so all paths resolve correctly
+  EFFECTIVE_OWNER_UID = factory.ownerUid || CURRENT_USER?.uid;
   CURRENT_FACTORY = factory;
 
   // Show loader while switching data
@@ -1117,11 +1187,14 @@ function enterFactory(factory) {
   // Update sidebar UI
   document.getElementById('sidebar-factory-icon').textContent = factory.icon || '🐔';
   document.getElementById('sidebar-factory-name').textContent = factory.name;
-  document.getElementById('sidebar-factory-sub').textContent = '';
-  document.getElementById('topbar-factory-name').textContent = `deku — ${factory.name}`;
+  document.getElementById('sidebar-factory-sub').textContent = factory.ownerUid !== CURRENT_USER?.uid ? '(شراكة)' : '';
+  document.getElementById('topbar-factory-name').textContent = `deku — ${factory.name} ${factory.ownerUid !== CURRENT_USER?.uid ? '(شراكة)' : ''}`;
 
   // Init local data safely (no cloud push)
   initFactoryData();
+
+  // Re-evaluate read-only state now that factory/local data is loaded
+  applyRoleToUI(CURRENT_ROLE, CURRENT_USER_NAME);
 
   // Render partner expense fields in daily form
   renderPartnerExpensesInForm();
@@ -1145,6 +1218,7 @@ function enterFactory(factory) {
 function exitToFactoryScreen() {
   stopFactorySync();
   CURRENT_FACTORY = null;
+  EFFECTIVE_OWNER_UID = CURRENT_USER?.uid;
 
   document.getElementById('app-wrapper').style.display = 'none';
   const screen = document.getElementById('factory-screen');
@@ -1163,7 +1237,7 @@ function initFactoryScreen() {
 
   // Add factory modal — only workers can add factories
   document.getElementById('btn-add-factory').addEventListener('click', () => {
-    if (CURRENT_ROLE === 'partner') {
+    if (isReadOnlyUser()) {
       showToast('🔒 وضع المشاهدة فقط — لا يمكنك إضافة مصنع', 'error');
       return;
     }
@@ -1292,6 +1366,9 @@ function renderDashboard() {
     netProfitEl.style.color = netProfit >= 0 ? 'var(--green)' : 'var(--red)';
   }
 
+  // Personal Share KPI
+  renderPersonalProfitKpi(netProfit, settings);
+
   const feedKpi = document.querySelector('.kpi-feed');
   if (feedBal < (Number(settings.feedAlertThreshold) || 100)) {
     feedKpi.style.borderColor = 'rgba(246,173,85,0.4)';
@@ -1358,6 +1435,44 @@ function generateAccountantNote(log, brokenPct, brokenWarn) {
   if (log.income > 0) notes.push(`✅ مدخول اليوم ${fmt(log.income, 'دج')} — أداء مقبول.`);
   if (notes.length === 0) notes.push('✅ كل شيء يسير بشكل طبيعي. استمر في المراقبة اليومية.');
   return notes.join('<br>');
+}
+
+function renderPersonalProfitKpi(totalNetProfit, settings) {
+  const grid = document.getElementById('kpi-grid');
+  if (!grid) return;
+  
+  const existing = document.getElementById('kpi-personal-share');
+  if (existing) existing.remove();
+  
+  let mySharePct = 0;
+  let label = '';
+  
+  if (CURRENT_ROLE === 'owner') {
+     mySharePct = settings.ownerShare !== undefined ? Number(settings.ownerShare) : 100;
+     label = 'حصتي كصاحب مصنع';
+  } else if (CURRENT_ROLE === 'partner') {
+     const myEmail = CURRENT_USER?.email?.toLowerCase();
+     const myUid = CURRENT_USER?.uid;
+     const p = (settings.partners || []).find(x => x.uid === myUid || (x.email && x.email.toLowerCase() === myEmail));
+     if (p) {
+        mySharePct = Number(p.sharePercent) || 0;
+        label = `حصتي كشريك (${mySharePct}%)`;
+     } else { return; }
+  } else { return; }
+  
+  const myProfit = totalNetProfit * (mySharePct / 100);
+  const card = document.createElement('div');
+  card.id = 'kpi-personal-share';
+  card.className = 'kpi-card kpi-my-share';
+  card.innerHTML = `
+    <div class="kpi-icon">💎</div>
+    <div class="kpi-info">
+      <span class="kpi-value" style="color:${myProfit >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(myProfit, 'دج')}</span>
+      <span class="kpi-label">${label}</span>
+    </div>
+    <div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%; opacity:0.3"></div></div>
+  `;
+  grid.appendChild(card);
 }
 
 function renderActivities() {
@@ -1530,8 +1645,8 @@ function populateWorkerSelects() {
 }
 
 function saveDayData() {
-  if (CURRENT_ROLE === 'partner') {
-    showToast('صلاحية محظورة: المشاهدة فقط', 'error');
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error');
     return;
   }
   const date = document.getElementById('inp-date').value;
@@ -1961,8 +2076,8 @@ function renderCreditsTable() {
 }
 
 function addCredit() {
-  if (CURRENT_ROLE === 'partner') {
-    showToast('صلاحية محظورة: المشاهدة فقط (الراية)', 'error'); return;
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error'); return;
   }
   const date   = document.getElementById('inp-credit-date')?.value || todayStr();
   const client = document.getElementById('inp-credit-client')?.value.trim() || '';
@@ -1983,8 +2098,8 @@ function addCredit() {
 }
 
 function deleteCredit(id) {
-  if (CURRENT_ROLE === 'partner') {
-    showToast('صلاحية محظورة: المشاهدة فقط (الراية)', 'error'); return;
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error'); return;
   }
   if (!confirm('حذف هذا الكريديت نهائياً؟')) return;
   let credits = DB.get('credits') || [];
@@ -2030,65 +2145,131 @@ function renderPartnersSettings() {
   }
 }
 
-function addPartner() {
-  if (CURRENT_ROLE === 'partner') {
-    showToast('صلاحية محظورة: المشاهدة فقط', 'error'); return;
+async function addPartner() {
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error'); return;
   }
   // This can be called from Settings or the new Team page
   const nameFromSettings = document.getElementById('new-partner-name')?.value.trim();
   const shareFromSettingsRaw = document.getElementById('new-partner-share')?.value;
   const shareFromSettings = shareFromSettingsRaw !== '' ? parseFloat(shareFromSettingsRaw) : 0;
   const nameFromTeam = document.getElementById('new-team-partner-name')?.value.trim();
+  const emailFromTeam = document.getElementById('new-team-partner-email')?.value.trim();
   const shareFromTeamRaw = document.getElementById('new-team-partner-share')?.value;
   const shareFromTeam = shareFromTeamRaw !== '' ? parseFloat(shareFromTeamRaw) : 0;
 
   const name = nameFromSettings || nameFromTeam;
   const share = shareFromSettings || shareFromTeam;
+  const email = emailFromTeam || '';
 
   if (!name) { showToast('يرجى إدخال اسم الشريك', 'error'); return; }
   if (isNaN(share) || share <= 0 || share > 100) { showToast('نسبة غير صحيحة (1-100)', 'error'); return; }
   
-  const settings = DB.get('settings') || defaultSettings();
-  const partners = settings.partners || [];
-  // Always parse ownerShare as a strict number (default 100 only when truly not set)
-  const ownerShare = (settings.ownerShare !== undefined && settings.ownerShare !== null && settings.ownerShare !== '')
-    ? Number(settings.ownerShare)
-    : 100;
-  const existingPartnersSum = partners.reduce((sum, p) => sum + (Number(p.sharePercent) || 0), 0);
+  const btn = document.getElementById('btn-add-team-partner');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري الإضافة...'; }
 
-  // Hard cap 1: partners alone cannot exceed 100%
-  if (existingPartnersSum + share > 100) {
-    showToast(`❌ مجموع حصص الشركاء يتجاوز 100%: سيصبح ${existingPartnersSum + share}%`, 'error');
-    return;
+  try {
+    const settings = DB.get('settings') || defaultSettings();
+    const partners = settings.partners || [];
+    const ownerShare = (settings.ownerShare !== undefined && settings.ownerShare !== null && settings.ownerShare !== '')
+      ? Number(settings.ownerShare)
+      : 100;
+    const existingPartnersSum = partners.reduce((sum, p) => sum + (Number(p.sharePercent) || 0), 0);
+
+    if (existingPartnersSum + share > 100) {
+      showToast(`❌ مجموع حصص الشركاء يتجاوز 100%: سيصبح ${existingPartnersSum + share}%`, 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'إضافة'; }
+      return;
+    }
+    const totalAfterAdding = ownerShare + existingPartnersSum + share;
+    if (totalAfterAdding > 100) {
+      const available = Math.max(0, 100 - ownerShare - existingPartnersSum);
+      showToast(`❌ تجاوزت الحد! المتاح للشركاء: ${available}%، المجموع سيصبح ${totalAfterAdding}%`, 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'إضافة'; }
+      return;
+    }
+
+    let partnerUid = null;
+    if (email) {
+      try {
+        const userRes = await fs.collection('users').where('email', '==', email).limit(1).get();
+        if (!userRes.empty) {
+          const userDoc = userRes.docs[0];
+          partnerUid = userDoc.id;
+          // Add current owner to their linkedOwners array
+          try {
+            const uData = userDoc.data();
+            const linked = uData.linkedOwners || [];
+            if (!linked.includes(CURRENT_USER.uid)) {
+              linked.push(CURRENT_USER.uid);
+              await fs.collection('users').doc(partnerUid).update({ linkedOwners: linked });
+            }
+          } catch (linkErr) {
+            console.warn('Could not update linkedOwners on partner doc:', linkErr);
+          }
+        } else {
+          // USER NOT FOUND: Store a cloud invitation so they link automatically when they register
+          await fs.collection('app_data').doc(`invite_${email.replace(/[^a-zA-Z0-9]/g, '_')}_${CURRENT_USER.uid}`).set({
+            type: 'partner_invite',
+            email: email,
+            name: name,
+            sharePercent: share,
+            ownerUid: CURRENT_USER.uid,
+            factoryId: CURRENT_FACTORY?.id,
+            timestamp: Date.now()
+          });
+          showToast('⚠️ الحساب بهذا البريد غير موجود حالياً — سيتم الربط تلقائياً عند تسجيله', 'warning');
+        }
+      } catch (queryErr) {
+        console.error('Firestore email query failed:', queryErr);
+        showToast('⚠️ تعذر البحث عن حساب الشريك حالياً', 'warning');
+      }
+    }
+
+    partners.push({ id: Date.now(), name, email, uid: partnerUid, sharePercent: share });
+    settings.partners = partners;
+    DB.set('settings', settings);
+
+    // If user exists, update the specific factory object in the owner's list to record this partner UID
+    if (partnerUid && CURRENT_FACTORY) {
+      const factories = FactoryDB.getFactories();
+      const fIdx = factories.findIndex(f => f.id === CURRENT_FACTORY.id);
+      if (fIdx !== -1) {
+        const pUids = factories[fIdx].partnerUids || [];
+        if (!pUids.includes(partnerUid)) {
+          pUids.push(partnerUid);
+          factories[fIdx].partnerUids = pUids;
+        }
+        // Also store share in metadata for immediate visibility in selection screen
+        factories[fIdx].partnerShares = factories[fIdx].partnerShares || {};
+        factories[fIdx].partnerShares[partnerUid] = share;
+        
+        FactoryDB.saveFactories(factories);
+      }
+    }
+    
+    if (document.getElementById('new-partner-name')) document.getElementById('new-partner-name').value = '';
+    if (document.getElementById('new-partner-share')) document.getElementById('new-partner-share').value = '';
+    if (document.getElementById('new-team-partner-name')) document.getElementById('new-team-partner-name').value = '';
+    if (document.getElementById('new-team-partner-email')) document.getElementById('new-team-partner-email').value = '';
+    if (document.getElementById('new-team-partner-share')) document.getElementById('new-team-partner-share').value = '';
+
+    renderPartnersSettings();
+    renderWorkersPage(); 
+    renderPartnerExpensesInForm();
+    addActivity(`تم إضافة الشريك ${name} (حصة ${share}%)`, '🤝');
+    showToast(`✅ تمت إضافة ${name}`);
+  } catch (err) {
+    console.error('Add Partner Error:', err);
+    showToast('❌ حدث خطأ أثناء إضافة الشريك', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'إضافة'; }
   }
-
-  // Hard cap 2: owner + all partners cannot exceed 100%
-  const totalAfterAdding = ownerShare + existingPartnersSum + share;
-  if (totalAfterAdding > 100) {
-    const available = Math.max(0, 100 - ownerShare - existingPartnersSum);
-    showToast(`❌ تجاوزت الحد! المتاح للشركاء: ${available}%، المجموع سيصبح ${totalAfterAdding}%`, 'error');
-    return;
-  }
-
-  partners.push({ id: Date.now(), name, sharePercent: share });
-  settings.partners = partners;
-  DB.set('settings', settings);
-  
-  if (document.getElementById('new-partner-name')) document.getElementById('new-partner-name').value = '';
-  if (document.getElementById('new-partner-share')) document.getElementById('new-partner-share').value = '';
-  if (document.getElementById('new-team-partner-name')) document.getElementById('new-team-partner-name').value = '';
-  if (document.getElementById('new-team-partner-share')) document.getElementById('new-team-partner-share').value = '';
-
-  renderPartnersSettings();
-  renderWorkersPage(); // Refresh team page too
-  renderPartnerExpensesInForm();
-  addActivity(`تم إضافة الشريك ${name} (حصة ${share}%)`, '🤝');
-  showToast(`✅ تمت إضافة ${name}`);
 }
 
 function deletePartner(id) {
-  if (CURRENT_ROLE === 'partner') {
-    showToast('صلاحية محظورة: المشاهدة فقط', 'error'); return;
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error'); return;
   }
   if (!confirm('هل تريد حذف هذا الشريك؟')) return;
   const settings = DB.get('settings') || defaultSettings();
@@ -2188,7 +2369,7 @@ function switchTeamTab(tabId, btn) {
 
 function renderWorkersPage() {
   // Only owner and partner get read-only view — worker has full access
-  const isRestricted = (CURRENT_ROLE === 'partner');
+  const isRestricted = isReadOnlyUser();
   
   // Hide add forms for restricted roles
   document.querySelectorAll('#page-workers .restricted-edit').forEach(el => {
@@ -2293,45 +2474,52 @@ function renderPartnersList(isRestricted) {
     return;
   }
 
-  partners.forEach(p => {
-    const card = document.createElement('div');
-    card.className = 'worker-card';
-    card.id = `partner-team-card-${p.id}`;
-    card.style.borderTop = '3px solid var(--blue)';
-    card.innerHTML = `
-      <div class="worker-header">
-        <div style="display:flex;gap:12px;align-items:center">
-          <div class="worker-avatar" style="background:var(--blue-gradient);color:white" id="partner-avatar-${p.id}">${p.name.charAt(0)}</div>
-          <div><div class="worker-name" id="partner-name-display-${p.id}">${p.name}</div><div class="worker-id">شريك 🤝</div></div>
+
+    partners.forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'worker-card';
+      card.id = `partner-team-card-${p.id}`;
+      card.style.borderTop = '3px solid var(--blue)';
+      const pStatus = p.uid ? '<span class="partner-status-badge status-linked">متصل 🔗</span>' 
+                            : (p.email ? '<span class="partner-status-badge status-pending">في الانتظار ⏳</span>' : '');
+      card.innerHTML = `
+        <div class="worker-header">
+          <div style="display:flex;gap:12px;align-items:center">
+            <div class="worker-avatar" style="background:var(--blue-gradient);color:white" id="partner-avatar-${p.id}">${p.name.charAt(0)}</div>
+            <div>
+              <div class="worker-name" id="partner-name-display-${p.id}">${p.name}</div>
+              <div class="worker-id">شريك 🤝 ${pStatus}</div>
+            </div>
+          </div>
+          ${!isRestricted ? `
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-outline btn-sm" onclick="togglePartnerEdit(${p.id})">✏️</button>
+              <button class="btn btn-danger btn-sm" onclick="deletePartner(${p.id})">حذف</button>
+            </div>` : ''}
         </div>
-        ${!isRestricted ? `
-          <div style="display:flex;gap:6px">
-            <button class="btn btn-outline btn-sm" onclick="togglePartnerEdit(${p.id})">✏️</button>
-            <button class="btn btn-danger btn-sm" onclick="deletePartner(${p.id})">حذف</button>
-          </div>` : ''}
-      </div>
-      <!-- view mode -->
-      <div id="partner-view-${p.id}">
-        <div class="worker-stat"><span>نسبة المشاركة</span><strong class="success" id="partner-share-display-${p.id}">${p.sharePercent}%</strong></div>
-      </div>
-      <!-- edit mode -->
-      <div id="partner-edit-${p.id}" style="display:none;margin-top:10px">
-        <div style="margin-bottom:8px">
-          <label style="font-size:0.8rem;color:var(--text-secondary)">اسم الشريك</label>
-          <input type="text" id="edit-partner-name-${p.id}" value="${p.name}" style="${inputStyle}" />
+        <!-- view mode -->
+        <div id="partner-view-${p.id}">
+          <div class="worker-stat"><span>نسبة المشاركة</span><strong class="success" id="partner-share-display-${p.id}">${p.sharePercent}%</strong></div>
+          <div class="worker-stat" style="font-size:0.8rem"><span>البريد الإلكتروني</span><span style="color:var(--text-muted)">${p.email || '—'}</span></div>
         </div>
-        <div style="margin-bottom:10px">
-          <label style="font-size:0.8rem;color:var(--text-secondary)">نسبة المشاركة (%)</label>
-          <input type="number" id="edit-partner-share-${p.id}" value="${p.sharePercent}" min="1" max="100" style="${inputStyle}" />
+        <!-- edit mode -->
+        <div id="partner-edit-${p.id}" style="display:none;margin-top:10px">
+          <div style="margin-bottom:8px">
+            <label style="font-size:0.8rem;color:var(--text-secondary)">اسم الشريك</label>
+            <input type="text" id="edit-partner-name-${p.id}" value="${p.name}" style="${inputStyle}" />
+          </div>
+          <div style="margin-bottom:10px">
+            <label style="font-size:0.8rem;color:var(--text-secondary)">نسبة المشاركة (%)</label>
+            <input type="number" id="edit-partner-share-${p.id}" value="${p.sharePercent}" min="1" max="100" style="${inputStyle}" />
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="savePartnerEdit(${p.id})">💾 حفظ</button>
+            <button class="btn btn-outline btn-sm" onclick="togglePartnerEdit(${p.id})">إلغاء</button>
+          </div>
         </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-primary btn-sm" onclick="savePartnerEdit(${p.id})">💾 حفظ</button>
-          <button class="btn btn-outline btn-sm" onclick="togglePartnerEdit(${p.id})">إلغاء</button>
-        </div>
-      </div>
-    `;
-    grid.appendChild(card);
-  });
+      `;
+      grid.appendChild(card);
+    });
 
   // Total share summary
   const total = ownerShare + partners.reduce((s, p) => s + Number(p.sharePercent), 0);
@@ -2356,8 +2544,8 @@ function toggleOwnerEdit() {
 }
 
 function saveOwnerEdit() {
-  if (CURRENT_ROLE === 'partner') {
-    showToast('صلاحية محظورة', 'error'); return;
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error'); return;
   }
   const newName  = document.getElementById('edit-owner-name')?.value.trim() || '';
   const newShare = Number(document.getElementById('edit-owner-share')?.value);
@@ -2397,8 +2585,8 @@ function togglePartnerEdit(id) {
 }
 
 function savePartnerEdit(id) {
-  if (CURRENT_ROLE === 'partner') {
-    showToast('صلاحية محظورة', 'error'); return;
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error'); return;
   }
   const newName  = document.getElementById(`edit-partner-name-${id}`)?.value.trim() || '';
   const newShare = Number(document.getElementById(`edit-partner-share-${id}`)?.value);
@@ -2418,10 +2606,22 @@ function savePartnerEdit(id) {
 
   const idx = partners.findIndex(p => p.id === id);
   if (idx === -1) return;
-  partners[idx].name         = newName;
-  partners[idx].sharePercent = newShare;
+  
+  const oldPartner = partners[idx];
+  partners[idx] = { ...oldPartner, name: newName, sharePercent: newShare };
   settings.partners = partners;
   DB.set('settings', settings);
+
+  // If already linked, update the factory list metadata too
+  if (oldPartner.uid && CURRENT_FACTORY) {
+    const factories = FactoryDB.getFactories();
+    const fIdx = factories.findIndex(f => f.id === CURRENT_FACTORY.id);
+    if (fIdx !== -1) {
+      factories[fIdx].partnerShares = factories[fIdx].partnerShares || {};
+      factories[fIdx].partnerShares[oldPartner.uid] = newShare;
+      FactoryDB.saveFactories(factories);
+    }
+  }
 
   // Update display without full re-render
   const nameDisplay  = document.getElementById(`partner-name-display-${id}`);
@@ -2444,8 +2644,8 @@ document.addEventListener('click', function (e) {
 });
 
 function deleteLogById(logId) {
-  if (CURRENT_ROLE === 'partner') {
-    showToast('صلاحية محظورة: المشاهدة فقط (الراية)', 'error');
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error');
     return;
   }
   if (!confirm('هل تريد حذف هذا السجل نهائياً؟ ستفقد كافة بيانات هذا اليوم.')) return;
@@ -2464,8 +2664,8 @@ function deleteLogById(logId) {
 }
 
 function deleteWorker(id) {
-  if (CURRENT_ROLE === 'partner') {
-    showToast('صلاحية محظورة: المشاهدة فقط', 'error');
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error');
     return;
   }
   if (!confirm('هل تريد بالتأكيد حذف هذا العامل؟')) return;
@@ -2480,8 +2680,8 @@ function deleteWorker(id) {
 }
 
 function resetWorkerAdvances(id) {
-  if (CURRENT_ROLE === 'partner') {
-    showToast('صلاحية محظورة: المشاهدة فقط', 'error');
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error');
     return;
   }
   if (!confirm('تصفية جميع السلفيات لهذا العامل؟ (بعد الخصم من الراتب)')) return;
@@ -2556,6 +2756,42 @@ function renderReportsPage() {
   tbody.querySelectorAll('.btn-delete-log-rep').forEach(btn => {
     btn.addEventListener('click', () => deleteLogById(Number(btn.dataset.id)));
   });
+
+  // Render Partner Summary
+  renderPartnerFinancialSummary(logs, settings);
+}
+
+function renderPartnerFinancialSummary(logs, settings) {
+  const tbody = document.getElementById('partner-summary-tbody');
+  if (!tbody) return;
+
+  const totalDailyProfit = logs.reduce((s, l) => s + (Number(l.baseProfit ?? l.profit) || 0), 0);
+  const partners = settings.partners || [];
+  
+  if (partners.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">لا يوجد شركاء مضافون</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = '';
+  partners.forEach(p => {
+    const shareAmt = totalDailyProfit * (Number(p.sharePercent) || 0) / 100;
+    const totalExpenses = logs.reduce((s, l) => {
+      const pe = (l.partnerExpenses || []).find(e => e.partnerId === p.id);
+      return s + (pe ? Number(pe.amount) || 0 : 0);
+    }, 0);
+    const balance = shareAmt - totalExpenses;
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${p.name}</strong></td>
+      <td><span class="partner-share-badge">${p.sharePercent}%</span></td>
+      <td><span style="color:var(--blue)">${fmt(shareAmt, 'دج')}</span></td>
+      <td><span style="color:var(--orange)">${fmt(totalExpenses, 'دج')}</span></td>
+      <td><strong style="color:${balance >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(balance, 'دج')}</strong></td>
+    `;
+    tbody.appendChild(tr);
+  });
 }
 
 /* ===================== SETTINGS ===================== */
@@ -2583,7 +2819,7 @@ function loadSettingsForm() {
   renderPartnersSettings();
 
   // Lock settings for partner role (read-only) — owner and worker have full access
-  const isReadOnly = (CURRENT_ROLE === 'partner');
+  const isReadOnly = isReadOnlyUser();
   const settingsInputs = document.querySelectorAll('#page-settings input, #page-settings textarea, #page-settings select');
   settingsInputs.forEach(el => {
     el.disabled = isReadOnly;
@@ -2630,8 +2866,8 @@ function loadSettingsForm() {
 }
 
 function saveSettings() {
-  if (CURRENT_ROLE === 'partner') {
-    showToast('صلاحية محظورة: المشاهدة فقط', 'error');
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error');
     return;
   }
   const existing = DB.get('settings') || defaultSettings();
@@ -2669,8 +2905,8 @@ function saveSettings() {
 /* ===================== ADD WORKER ===================== */
 function initWorkersPage() {
   document.getElementById('btn-add-worker')?.addEventListener('click', () => {
-    if (CURRENT_ROLE === 'partner') {
-      showToast('صلاحية محظورة: المشاهدة فقط', 'error'); return;
+    if (isReadOnlyUser()) {
+      showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error'); return;
     }
     const name = document.getElementById('new-worker-name').value.trim();
     const salary = Number(document.getElementById('new-worker-salary').value) || 0;
@@ -2707,9 +2943,9 @@ function initMobileSidebar() {
 
 /* ===================== RESET ===================== */
 function resetAllData() {
-  if (CURRENT_ROLE === 'partner') { 
-    showToast('صلاحية محظورة: لا يمكنك إعادة تعيين بيانات المصنع', 'error');
-    return; 
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error');
+    return;
   }
   if (!confirm(`⚠️ تحذير: سيتم حذف جميع سجلات مصنع "${CURRENT_FACTORY?.name}" بشكل نهائي لا يمكن التراجع عنه!\n\nهل تريد المتابعة؟`)) return;
   if (!confirm(`⛔ تأكيد أخير: كل البيانات (الإنتاج، المبيعات، الشعير، العمال) ستُمسح من السحابة نهائياً.\n\nاضغط موافق للتأكيد.`)) return;

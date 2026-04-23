@@ -2221,11 +2221,15 @@ body.role-worker .worker-mode-banner { display: block; }
    ============================================= */
 body.role-partner input,
 body.role-partner select,
-body.role-partner textarea {
+body.role-partner textarea,
+body.role-owner #page-daily input,
+body.role-owner #page-daily select,
+body.role-owner #page-daily textarea {
   pointer-events: none;
-  background-color: transparent !important;
-  border-color: rgba(255,255,255,0.1) !important;
-  opacity: 0.8;
+  background-color: rgba(255,255,255,0.02) !important;
+  border-color: rgba(255,255,255,0.08) !important;
+  opacity: 1; /* Keep fully readable */
+  color: var(--text-primary) !important;
 }
 
 body.role-partner .btn-primary,
@@ -2287,20 +2291,7 @@ body.role-owner .btn-delete-log-feed,
 body.role-owner .btn-remove-adv,
 body.role-owner .btn-delete-credit,
 body.role-owner .worker-actions,
-body.role-owner .restricted-edit,
-body.role-owner .admin-only-card {
-  display: none !important;
-}
-/* Disable daily form inputs for owner */
-body.role-owner #page-daily input,
-body.role-owner #page-daily textarea,
-body.role-owner #page-daily select {
-  pointer-events: none;
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-
-/* Partner: same as owner (read-only) */
+/* Partner remains read-only for admin cards */
 body.role-partner .admin-only-card,
 body.role-partner .restricted-edit {
   display: none !important;
@@ -2333,8 +2324,7 @@ body.role-worker .worker-mode-banner {
 body.role-worker .admin-only-card {
   border-color: rgba(72,199,142,0.25) !important;
 }
-/* Owner/Partner see admin-only-card as read-only (actually hidden above, this is fallback) */
-body.role-owner .admin-only-card input,
+/* Partner sees admin-only-card (if not hidden above) as read-only */
 body.role-partner .admin-only-card input {
   cursor: not-allowed !important;
   opacity: 0.5 !important;
@@ -2452,6 +2442,29 @@ body.role-partner .admin-only-card input {
   font-size: 0.82rem;
   padding: 3px 12px;
   border-radius: 99px;
+}
+
+.partner-status-badge {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  margin-right: 8px;
+}
+.status-linked {
+  background: rgba(72,187,120,0.15);
+  color: #68d391;
+  border: 1px solid rgba(72,187,120,0.3);
+}
+.status-pending {
+  background: rgba(246,173,85,0.15);
+  color: #f6ad55;
+  border: 1px solid rgba(246,173,85,0.3);
+}
+
+.kpi-my-share {
+  border-color: rgba(72,199,142,0.4) !important;
+  background: linear-gradient(135deg, rgba(72,199,142,0.1), rgba(56,178,172,0.05));
 }
 
 /* =============================================
@@ -3213,7 +3226,6 @@ body.role-partner .admin-only-card {
 /* =============================================
    FACTORY SCREEN: Add factory button for read-only roles
    ============================================= */
-body.role-owner .btn-add-factory,
 body.role-partner .btn-add-factory {
   opacity: 0.45;
   cursor: not-allowed;

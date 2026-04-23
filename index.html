@@ -83,7 +83,6 @@
         <label>نوع الحساب</label>
         <select id="reg-role" onchange="initRoleChooser()">
           <option value="owner">👔 صاحب عمل</option>
-          <option value="partner">🤝 شريك</option>
         </select>
         <p class="auth-role-note" id="reg-role-note">صاحب عمل: تُنشئ مصانعك الخاصة وتدير عمالك بحرية كاملة.</p>
       </div>
@@ -96,13 +95,7 @@
         </div>
       </div>
 
-      <div id="reg-dev-code-wrap" class="auth-form-group" style="display:none">
-        <label>رمز الشريك <span style="color:var(--text-muted);font-size:0.8rem">(من المطور)</span></label>
-        <div class="auth-pass-wrap">
-          <input type="password" id="reg-dev-code" placeholder="أدخل رمز الشريك" />
-          <button type="button" class="auth-eye-btn" onclick="togglePassVis('reg-dev-code',this)">👁</button>
-        </div>
-      </div>
+
 
       <div id="reg-admin-code-wrap" class="auth-form-group" style="display:none">
         <input type="password" id="reg-admin-code" placeholder="رمز الإدارة" />
@@ -699,6 +692,7 @@
         <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:12px">أضف شركاءك مع نسبة مشاركة كل واحد.</p>
         <div class="inline-form">
           <input type="text" id="new-team-partner-name" placeholder="اسم الشريك" />
+          <input type="email" id="new-team-partner-email" placeholder="البريد الإلكتروني (اختياري للربط)" />
           <input type="number" id="new-team-partner-share" placeholder="نسبة المشاركة %" min="1" max="100" />
           <button class="btn btn-primary" id="btn-add-team-partner">إضافة</button>
         </div>
@@ -723,6 +717,26 @@
     <div class="section-card">
       <div class="section-title">📅 ملخص الشهر الحالي</div>
       <div class="report-grid" id="monthly-summary"></div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">🤝 خلاصة أرباح الشركاء</div>
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>الشريك</th>
+              <th>النسبة %</th>
+              <th>الحصة الإجمالية 💰</th>
+              <th>المصاريف المسحوبة 💸</th>
+              <th>الصافي المستحق 🔥</th>
+            </tr>
+          </thead>
+          <tbody id="partner-summary-tbody">
+            <tr><td colspan="5" class="empty-cell">لا يوجد شركاء مضافون</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <div class="section-card">
@@ -828,34 +842,18 @@
         </div>
       </div>
 
-      <!-- Viewer Account Card — OWNER ONLY -->
-      <div class="form-card" id="viewer-account-section">
-        <div class="form-card-title">👁 إضافة حساب مشاهدة فقط</div>
-        <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:14px">أنشئ حساباً يستطيع رؤية البيانات فقط دون أي تعديل.</p>
-        <div class="inline-form">
-          <input type="text" id="viewer-name" placeholder="الاسم الكامل" />
-          <input type="email" id="viewer-email" placeholder="البريد الإلكتروني" />
-          <input type="password" id="viewer-password" placeholder="كلمة المرور (6+ أحرف)" />
-          <button class="btn btn-primary" id="btn-create-viewer" onclick="createViewerAccount()">➕ إضافة مشاهد</button>
-        </div>
-        <div id="viewer-error" class="auth-error" style="margin-top:8px"></div>
-        <div id="viewer-success" style="margin-top:8px;color:var(--green);font-size:0.85rem"></div>
-      </div>
+
 
       <!-- Worker Accounts Card — ADMIN ONLY -->
       <div class="form-card admin-only-card" id="worker-accounts-card">
-        <div class="form-card-title">👥 إدارة حسابات العمال والشركاء</div>
-        <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:14px">أنشئ حسابات دخول للعمال أو الشركاء.</p>
+        <div class="form-card-title">👷 إنشاء حساب عامل</div>
+        <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:14px">أنشئ حساب دخول للعامل حتى يتمكن من تسجيل البيانات اليومية.</p>
         <div class="inline-form">
           <input type="text" id="wa-name" placeholder="الاسم الكامل" />
           <input type="email" id="wa-email" placeholder="البريد الإلكتروني" />
           <input type="password" id="wa-password" placeholder="كلمة المرور (6+ أحرف)" />
-          <select id="wa-role" onchange="onWaRoleChange()" style="flex:0.6;min-width:110px;background:var(--bg-dark);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 14px;color:var(--text-primary);font-family:'Cairo',sans-serif">
-            <option value="worker">👷 عامل</option>
-            <option value="partner">🤝 شريك</option>
-            <option value="owner">👔 صاحب عمل جديد</option>
-          </select>
-          <button class="btn btn-primary" id="btn-create-worker-account" onclick="createWorkerAccount()">➕ إنشاء حساب</button>
+          <input type="hidden" id="wa-role" value="worker" />
+          <button class="btn btn-primary" id="btn-create-worker-account" onclick="createWorkerAccount()">➕ إنشاء حساب عامل</button>
         </div>
         <div id="wa-error" class="auth-error" style="margin-top:8px"></div>
         <div id="wa-success" style="margin-top:8px;color:var(--green);font-size:0.85rem"></div>
