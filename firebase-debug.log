@@ -1,0 +1,30 @@
+[debug] [2026-04-24T12:31:33.802Z] ----------------------------------------------------------------------
+[debug] [2026-04-24T12:31:33.804Z] Command:       C:\Program Files\nodejs\node.exe C:\Users\12\AppData\Roaming\npm\node_modules\firebase-tools\lib\bin\firebase.js deploy --only hosting
+[debug] [2026-04-24T12:31:33.804Z] CLI Version:   15.14.0
+[debug] [2026-04-24T12:31:33.805Z] Platform:      win32
+[debug] [2026-04-24T12:31:33.805Z] Node Version:  v24.14.1
+[debug] [2026-04-24T12:31:33.805Z] Time:          Fri Apr 24 2026 14:31:33 GMT+0200 (Central European Summer Time)
+[debug] [2026-04-24T12:31:33.805Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-04-24T12:31:35.627Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-04-24T12:31:35.628Z] > authorizing via signed-in user (lhossohmida@gmail.com)
+[debug] [2026-04-24T12:31:35.628Z] [iam] checking project zohir-farm-app for permissions ["firebase.projects.get","firebasehosting.sites.update"]
+[debug] [2026-04-24T12:31:35.628Z] Checked if tokens are valid: false, expires at: 1776978406723
+[debug] [2026-04-24T12:31:35.628Z] Checked if tokens are valid: false, expires at: 1776978406723
+[debug] [2026-04-24T12:31:35.629Z] > refreshing access token with scopes: []
+[debug] [2026-04-24T12:31:35.630Z] >>> [apiv2][query] POST https://www.googleapis.com/oauth2/v3/token [none]
+[debug] [2026-04-24T12:31:35.630Z] >>> [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-04-24T12:31:50.349Z] <<< [apiv2][status] POST https://www.googleapis.com/oauth2/v3/token 200
+[debug] [2026-04-24T12:31:50.349Z] <<< [apiv2][body] POST https://www.googleapis.com/oauth2/v3/token [omitted]
+[debug] [2026-04-24T12:31:50.361Z] >>> [apiv2][query] POST https://cloudresourcemanager.googleapis.com/v1/projects/zohir-farm-app:testIamPermissions [none]
+[debug] [2026-04-24T12:31:50.361Z] >>> [apiv2][(partial)header] POST https://cloudresourcemanager.googleapis.com/v1/projects/zohir-farm-app:testIamPermissions  x-goog-user-project=zohir-farm-app
+[debug] [2026-04-24T12:31:50.361Z] >>> [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/zohir-farm-app:testIamPermissions {"permissions":["firebase.projects.get","firebasehosting.sites.update"]}
+[debug] [2026-04-24T12:31:58.313Z] <<< [apiv2][status] POST https://cloudresourcemanager.googleapis.com/v1/projects/zohir-farm-app:testIamPermissions 200
+[debug] [2026-04-24T12:31:58.314Z] <<< [apiv2][body] POST https://cloudresourcemanager.googleapis.com/v1/projects/zohir-farm-app:testIamPermissions {"permissions":["firebase.projects.get","firebasehosting.sites.update"]}
+[debug] [2026-04-24T12:31:58.314Z] Checked if tokens are valid: true, expires at: 1777037509349
+[debug] [2026-04-24T12:31:58.314Z] Checked if tokens are valid: true, expires at: 1777037509349
+[debug] [2026-04-24T12:31:58.314Z] >>> [apiv2][query] GET https://firebase.googleapis.com/v1beta1/projects/zohir-farm-app [none]
+[debug] [2026-04-24T12:32:28.319Z] *** [apiv2] error from fetch(https://firebase.googleapis.com/v1beta1/projects/zohir-farm-app, {"headers":{},"method":"GET","signal":{"reason":""}}): AbortError: The user aborted a request.
+[debug] [2026-04-24T12:32:28.319Z] Timeout reached making request to https://firebase.googleapis.com/v1beta1/projects/zohir-farm-app (original: The user aborted a request.)
+[error] 
+[error] Error: Assertion failed: resolving hosting target of a site with no site name or target name. This should have caused an error earlier

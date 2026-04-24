@@ -189,7 +189,61 @@ async function doRegister() {
     CURRENT_ROLE = role;
     CURRENT_USER_NAME = name;
     EFFECTIVE_OWNER_UID = cred.user.uid;
-    CURRENT_LINKED_OWNERS = []; // Explicitly clear any leftover linked owners
+    CURRENT_LINKED_OWNERS = [];
+    
+    // Process any pending partner invitations for this email BEFORE syncing
+    try {
+      const regInviteRes = await fs.collection('app_data')
+        .where('type', '==', 'partner_invite')
+        .where('email', '==', email.toLowerCase())
+        .get();
+      
+      if (!regInviteRes.empty) {
+        console.log('[Register] Found', regInviteRes.size, 'pending partner invitations');
+        for (const invDoc of regInviteRes.docs) {
+          const inv = invDoc.data();
+          if (!CURRENT_LINKED_OWNERS.includes(inv.ownerUid)) {
+            CURRENT_LINKED_OWNERS.push(inv.ownerUid);
+          }
+          
+          // Add this new user's UID to the owner's factory partnerUids
+          try {
+            const fListDocId = `factories_list_${inv.ownerUid}`;
+            const fListDoc = await fs.collection('app_data').doc(fListDocId).get();
+            if (fListDoc.exists) {
+              const list = fListDoc.data().data || [];
+              let listUpdated = false;
+              list.forEach(factory => {
+                if (!inv.factoryId || factory.id === inv.factoryId) {
+                  factory.partnerUids = factory.partnerUids || [];
+                  if (!factory.partnerUids.includes(cred.user.uid)) {
+                    factory.partnerUids.push(cred.user.uid);
+                    listUpdated = true;
+                  }
+                  if (inv.sharePercent) {
+                    factory.partnerShares = factory.partnerShares || {};
+                    factory.partnerShares[cred.user.uid] = inv.sharePercent;
+                  }
+                }
+              });
+              if (listUpdated) {
+                await fs.collection('app_data').doc(fListDocId).update({ data: list });
+                console.log('[Register] Updated factory list for owner', inv.ownerUid);
+              }
+            }
+          } catch (fErr) { console.error('[Register] Factory link error:', fErr); }
+          
+          // Delete the processed invitation
+          await fs.collection('app_data').doc(invDoc.id).delete();
+        }
+        
+        // Update user doc with linked owners
+        if (CURRENT_LINKED_OWNERS.length > 0) {
+          await fs.collection('users').doc(cred.user.uid).update({ linkedOwners: CURRENT_LINKED_OWNERS });
+          console.log('[Register] Linked to owners:', CURRENT_LINKED_OWNERS);
+        }
+      }
+    } catch (invErr) { console.error('[Register] Invitation processing error:', invErr); }
     
     showToast(`✅ تم إنشاء الحساب — مرحباً ${name}!`);
     
@@ -376,23 +430,29 @@ function initAuthListener() {
               hasNewLink = true;
             }
             
-            // Link current UID to the owner's factory list
+            // Link current UID to the owner's factory list (all factories of that owner)
             try {
               const fListDocId = `factories_list_${inv.ownerUid}`;
               const fListDoc = await fs.collection('app_data').doc(fListDocId).get();
               if (fListDoc.exists) {
                 const list = fListDoc.data().data || [];
-                const factory = list.find(f => f.id === inv.factoryId);
-                if (factory) {
-                  factory.partnerUids = factory.partnerUids || [];
-                  if (!factory.partnerUids.includes(user.uid)) {
-                    factory.partnerUids.push(user.uid);
+                let listUpdated = false;
+                // If specific factoryId given, add to that factory only; else add to all
+                list.forEach(factory => {
+                  if (!inv.factoryId || factory.id === inv.factoryId) {
+                    factory.partnerUids = factory.partnerUids || [];
+                    if (!factory.partnerUids.includes(user.uid)) {
+                      factory.partnerUids.push(user.uid);
+                      listUpdated = true;
+                    }
                     if (inv.sharePercent) {
                       factory.partnerShares = factory.partnerShares || {};
                       factory.partnerShares[user.uid] = inv.sharePercent;
                     }
-                    await fs.collection('app_data').doc(fListDocId).update({ data: list });
                   }
+                });
+                if (listUpdated) {
+                  await fs.collection('app_data').doc(fListDocId).update({ data: list });
                 }
               }
             } catch (fErr) { console.error('Link list error:', fErr); }
@@ -401,12 +461,15 @@ function initAuthListener() {
           }
           if (hasNewLink) {
             await userDocRef.update({ linkedOwners: CURRENT_LINKED_OWNERS });
-            return; // next snapshot will trigger sync
+            console.log('[Auth] New partner links processed, linkedOwners updated:', CURRENT_LINKED_OWNERS);
+            // Don't return — let code continue to apply UI and trigger initGlobalSync
           }
         }
       } catch (e) { console.error('Inv observer error:', e); }
 
       // 3. Set effective owner for data scoping
+      // For owners acting as partners in other factories: EFFECTIVE_OWNER_UID = their own UID
+      // (enterFactory will override it per-factory when needed)
       if ((CURRENT_ROLE === 'worker' || CURRENT_ROLE === 'partner') && data.ownerUid) {
         EFFECTIVE_OWNER_UID = data.ownerUid;
       } else {
@@ -416,8 +479,10 @@ function initAuthListener() {
       applyRoleToUI(CURRENT_ROLE, CURRENT_USER_NAME);
       hideAuthScreen();
 
-      // 4. Trigger global sync if owners changed or first load
-      if (oldLinkedStr !== JSON.stringify(CURRENT_LINKED_OWNERS) || IS_INITIAL_CLOUD_LOAD) {
+      // 4. ALWAYS trigger global sync on first load or when linkedOwners changed
+      const linkedChanged = oldLinkedStr !== JSON.stringify(CURRENT_LINKED_OWNERS);
+      if (linkedChanged || IS_INITIAL_CLOUD_LOAD) {
+        console.log('[Auth] Triggering global sync. linkedChanged:', linkedChanged, 'isInitial:', IS_INITIAL_CLOUD_LOAD);
         initGlobalSync();
       }
     });
@@ -1085,23 +1150,26 @@ function renderFactoryScreen() {
   const grid = document.getElementById('factory-cards-grid');
   grid.innerHTML = '';
 
-  // Get own factories
+  // Get own factories (factories owned by the current user)
   let allFactories = [...FactoryDB.getFactories()];
 
-  // Fetch factories from linked owners where I am a partner
-  if (CURRENT_LINKED_OWNERS && CURRENT_LINKED_OWNERS.length > 0) {
-    CURRENT_LINKED_OWNERS.forEach(uid => {
-      try {
-        const cloudListKey = `zohir_factories_${uid}`;
-        const cloudList = JSON.parse(localStorage.getItem(cloudListKey)) || [];
-        // Filter to include only factories where I am listed in partnerUids
-        const partnered = cloudList.filter(f => f.partnerUids && f.partnerUids.includes(CURRENT_USER?.uid));
-        allFactories = [...allFactories, ...partnered];
-      } catch (e) {
-        console.warn(`Error loading partnered factories for owner ${uid}:`, e);
-      }
-    });
-  }
+  // Also fetch factories from all linked owners (people who added me as partner)
+  // This works for both 'owner' users who are partners in another owner's factory
+  const allLinkedUids = [...(CURRENT_LINKED_OWNERS || [])];
+  
+  allLinkedUids.forEach(uid => {
+    try {
+      const cloudListKey = `zohir_factories_${uid}`;
+      const cloudList = JSON.parse(localStorage.getItem(cloudListKey)) || [];
+      // Show factories where I am explicitly listed as a partner UID
+      const partnered = cloudList.filter(f =>
+        (f.partnerUids && f.partnerUids.includes(CURRENT_USER?.uid))
+      );
+      allFactories = [...allFactories, ...partnered];
+    } catch (e) {
+      console.warn(`Error loading partnered factories for owner ${uid}:`, e);
+    }
+  });
 
   // Remove potential duplicates by ID
   const uniqueFactories = [];
@@ -1192,9 +1260,12 @@ function renderFactoryScreen() {
 }
 
 function enterFactory(factory) {
-  // Set the "owner" to the factory owner so all paths resolve correctly
-  EFFECTIVE_OWNER_UID = factory.ownerUid || CURRENT_USER?.uid;
+  // The factory's true owner UID determines where data lives in Firestore
+  const factoryOwnerUid = factory.ownerUid || CURRENT_USER?.uid;
+  EFFECTIVE_OWNER_UID = factoryOwnerUid;
   CURRENT_FACTORY = factory;
+
+  const isSharedFactory = factoryOwnerUid !== CURRENT_USER?.uid;
 
   // Show loader while switching data
   showGlobalLoader(`جاري تحميل بيانات "${factory.name}"...`);
@@ -1202,8 +1273,8 @@ function enterFactory(factory) {
   // Update sidebar UI
   document.getElementById('sidebar-factory-icon').textContent = factory.icon || '🐔';
   document.getElementById('sidebar-factory-name').textContent = factory.name;
-  document.getElementById('sidebar-factory-sub').textContent = factory.ownerUid !== CURRENT_USER?.uid ? '(شراكة)' : '';
-  document.getElementById('topbar-factory-name').textContent = `deku — ${factory.name} ${factory.ownerUid !== CURRENT_USER?.uid ? '(شراكة)' : ''}`;
+  document.getElementById('sidebar-factory-sub').textContent = isSharedFactory ? '(شراكة)' : '';
+  document.getElementById('topbar-factory-name').textContent = `deku — ${factory.name}${isSharedFactory ? ' (شراكة)' : ''}`;
 
   // Init local data safely (no cloud push)
   initFactoryData();
@@ -1223,7 +1294,7 @@ function enterFactory(factory) {
   showPage('dashboard');
   updateLiveDate();
 
-  // Start sync
+  // Start sync — uses EFFECTIVE_OWNER_UID so data is fetched from factory owner's namespace
   initCloudSync();
 
   // Populate worker selects
@@ -2207,30 +2278,40 @@ async function addPartner() {
     let partnerUid = null;
     if (email) {
       try {
-        const userRes = await fs.collection('users').where('email', '==', email).limit(1).get();
+        const userRes = await fs.collection('users').where('email', '==', email.toLowerCase()).limit(1).get();
         if (!userRes.empty) {
           const userDoc = userRes.docs[0];
           partnerUid = userDoc.id;
-          // Add current owner to their linkedOwners array
+          
+          // Prevent self-partnership
+          if (partnerUid === CURRENT_USER.uid) {
+            showToast('❌ لا يمكنك إضافة نفسك كشريك', 'error');
+            if (btn) { btn.disabled = false; btn.textContent = 'إضافة'; }
+            return;
+          }
+          
+          // Add current owner UID to partner's linkedOwners so they see this factory
           try {
             const uData = userDoc.data();
             const linked = uData.linkedOwners || [];
             if (!linked.includes(CURRENT_USER.uid)) {
               linked.push(CURRENT_USER.uid);
               await fs.collection('users').doc(partnerUid).update({ linkedOwners: linked });
+              console.log('[Partnership] Updated linkedOwners for partner:', partnerUid);
             }
           } catch (linkErr) {
             console.warn('Could not update linkedOwners on partner doc:', linkErr);
           }
         } else {
           // USER NOT FOUND: Store a cloud invitation so they link automatically when they register
-          await fs.collection('app_data').doc(`invite_${email.replace(/[^a-zA-Z0-9]/g, '_')}_${CURRENT_USER.uid}`).set({
+          const inviteId = `invite_${email.replace(/[^a-zA-Z0-9]/g, '_')}_${CURRENT_USER.uid}`;
+          await fs.collection('app_data').doc(inviteId).set({
             type: 'partner_invite',
-            email: email,
+            email: email.toLowerCase(),
             name: name,
             sharePercent: share,
             ownerUid: CURRENT_USER.uid,
-            factoryId: CURRENT_FACTORY?.id,
+            factoryId: CURRENT_FACTORY?.id || null,
             timestamp: Date.now()
           });
           showToast('⚠️ الحساب بهذا البريد غير موجود حالياً — سيتم الربط تلقائياً عند تسجيله', 'warning');
@@ -2241,25 +2322,29 @@ async function addPartner() {
       }
     }
 
-    partners.push({ id: Date.now(), name, email, uid: partnerUid, sharePercent: share });
+    partners.push({ id: Date.now(), name, email: email.toLowerCase(), uid: partnerUid, sharePercent: share });
     settings.partners = partners;
     DB.set('settings', settings);
 
-    // If user exists, update the specific factory object in the owner's list to record this partner UID
-    if (partnerUid && CURRENT_FACTORY) {
-      const factories = FactoryDB.getFactories();
-      const fIdx = factories.findIndex(f => f.id === CURRENT_FACTORY.id);
-      if (fIdx !== -1) {
-        const pUids = factories[fIdx].partnerUids || [];
-        if (!pUids.includes(partnerUid)) {
-          pUids.push(partnerUid);
-          factories[fIdx].partnerUids = pUids;
+    // Update the factory's partnerUids list so the partner can see this factory
+    if (partnerUid) {
+      // Always update current factory if inside one
+      const factoryIdToUpdate = CURRENT_FACTORY?.id;
+      if (factoryIdToUpdate) {
+        const factories = FactoryDB.getFactories();
+        const fIdx = factories.findIndex(f => f.id === factoryIdToUpdate);
+        if (fIdx !== -1) {
+          const pUids = factories[fIdx].partnerUids || [];
+          if (!pUids.includes(partnerUid)) {
+            pUids.push(partnerUid);
+            factories[fIdx].partnerUids = pUids;
+          }
+          // Store share percentage for display on factory selection screen
+          factories[fIdx].partnerShares = factories[fIdx].partnerShares || {};
+          factories[fIdx].partnerShares[partnerUid] = share;
+          FactoryDB.saveFactories(factories);
+          console.log('[Partnership] Added partnerUid', partnerUid, 'to factory', factoryIdToUpdate);
         }
-        // Also store share in metadata for immediate visibility in selection screen
-        factories[fIdx].partnerShares = factories[fIdx].partnerShares || {};
-        factories[fIdx].partnerShares[partnerUid] = share;
-        
-        FactoryDB.saveFactories(factories);
       }
     }
     
@@ -2273,7 +2358,7 @@ async function addPartner() {
     renderWorkersPage(); 
     renderPartnerExpensesInForm();
     addActivity(`تم إضافة الشريك ${name} (حصة ${share}%)`, '🤝');
-    showToast(`✅ تمت إضافة ${name}`);
+    showToast(`✅ تمت إضافة ${name} — سيظهر المصنع في حسابه فور تسجيل الدخول`);
   } catch (err) {
     console.error('Add Partner Error:', err);
     showToast('❌ حدث خطأ أثناء إضافة الشريك', 'error');
@@ -2288,13 +2373,40 @@ function deletePartner(id) {
   }
   if (!confirm('هل تريد حذف هذا الشريك؟')) return;
   const settings = DB.get('settings') || defaultSettings();
+  const partnerToDelete = (settings.partners || []).find(p => p.id === id);
   const partners = (settings.partners || []).filter(p => p.id !== id);
   settings.partners = partners;
   DB.set('settings', settings);
+
+  // Remove partner UID from factory.partnerUids and factory.partnerShares
+  if (partnerToDelete?.uid && CURRENT_FACTORY) {
+    const factories = FactoryDB.getFactories();
+    const fIdx = factories.findIndex(f => f.id === CURRENT_FACTORY.id);
+    if (fIdx !== -1) {
+      if (factories[fIdx].partnerUids) {
+        factories[fIdx].partnerUids = factories[fIdx].partnerUids.filter(uid => uid !== partnerToDelete.uid);
+      }
+      if (factories[fIdx].partnerShares) {
+        delete factories[fIdx].partnerShares[partnerToDelete.uid];
+      }
+      FactoryDB.saveFactories(factories);
+    }
+
+    // Remove current owner from ex-partner's linkedOwners in Firestore
+    fs.collection('users').doc(partnerToDelete.uid).get()
+      .then(doc => {
+        if (doc.exists) {
+          const linked = (doc.data().linkedOwners || []).filter(uid => uid !== CURRENT_USER.uid);
+          return fs.collection('users').doc(partnerToDelete.uid).update({ linkedOwners: linked });
+        }
+      })
+      .catch(e => console.warn('[Partnership] Could not remove linkedOwner on deletion:', e));
+  }
+
   renderPartnersSettings();
   renderWorkersPage();
   renderPartnerExpensesInForm();
-  showToast('تم حذف الشريك', 'warning');
+  showToast('تم حذف الشريك — لن يرى المصنع بعد الآن', 'warning');
 }
 
 function renderPartnerExpensesInForm() {

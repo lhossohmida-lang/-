@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "zohir-farm-app",
     "public": ".",
     "ignore": [
       "firebase.json",
