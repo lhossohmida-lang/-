@@ -334,6 +334,14 @@
         </div>
         <div class="kpi-bar"><div class="kpi-bar-fill" style="width:0%"></div></div>
       </div>
+      <div class="kpi-card" style="border-color:rgba(128,90,213,0.3);background:linear-gradient(135deg,rgba(128,90,213,0.08),rgba(107,70,193,0.04))">
+        <div class="kpi-icon">🔮</div>
+        <div class="kpi-info">
+          <span class="kpi-value" id="kpi-expected-profit">0 دج</span>
+          <span class="kpi-label">الفائدة المتوقعة (الشهر)</span>
+        </div>
+        <div class="kpi-bar"><div class="kpi-bar-fill" style="width:0%"></div></div>
+      </div>
     </div>
 
     <div class="section-card" id="last-report-card">
@@ -721,19 +729,22 @@
 
     <div class="section-card">
       <div class="section-title">🤝 خلاصة أرباح الشركاء</div>
+      <!-- Faida breakdown block — filled by JS -->
+      <div id="partner-summary-faida-block" style="margin-bottom:16px;padding:14px 16px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid rgba(255,255,255,0.08);display:none"></div>
       <div class="table-wrapper">
         <table class="data-table">
           <thead>
             <tr>
               <th>الشريك</th>
               <th>النسبة %</th>
-              <th>الحصة الإجمالية 💰</th>
+              <th>الحصة من الإنتاج 💰</th>
+              <th>الفائدة الصافية 💹</th>
               <th>المصاريف المسحوبة 💸</th>
               <th>الصافي المستحق 🔥</th>
             </tr>
           </thead>
           <tbody id="partner-summary-tbody">
-            <tr><td colspan="5" class="empty-cell">لا يوجد شركاء مضافون</td></tr>
+            <tr><td colspan="6" class="empty-cell">لا يوجد شركاء مضافون</td></tr>
           </tbody>
         </table>
       </div>

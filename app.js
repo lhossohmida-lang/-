@@ -1127,6 +1127,23 @@ function getTotalNetProfit() {
   return totalDailyProfit - chickensCost - feedCost - effectiveLoyer - totalElectricity - repairTotal - totalPartnerExp - totalCredits;
 }
 
+function getExpectedMonthlyProfit() {
+  const logs = DB.get('daily_logs') || [];
+  const settings = DB.get('settings') || defaultSettings();
+  if (!logs.length) return 0;
+  
+  const totalDailyProfit = logs.reduce((s, l) => s + (Number(l.baseProfit ?? l.profit) || 0), 0);
+  const avgDailyProfit = totalDailyProfit / logs.length;
+  const expectedMonthlyBase = avgDailyProfit * 30;
+  
+  const loyer = Number(settings.loyer) || 0;
+  const repairLoyer = Number(settings.repairLoyer) || 0;
+  const effectiveLoyer = Math.max(0, loyer - repairLoyer);
+  const electricity = Number(settings.electricity) || 0;
+  
+  return expectedMonthlyBase - effectiveLoyer - electricity;
+}
+
 function getTotalCredits() {
   const credits = DB.get('credits') || [];
   return credits.reduce((s, c) => s + (Number(c.amount) || 0), 0);
@@ -1450,6 +1467,14 @@ function renderDashboard() {
   if (netProfitEl) {
     netProfitEl.textContent = fmt(netProfit, 'دج');
     netProfitEl.style.color = netProfit >= 0 ? 'var(--green)' : 'var(--red)';
+  }
+
+  // Expected Profit KPI
+  const expectedProfit = getExpectedMonthlyProfit();
+  const expectedProfitEl = document.getElementById('kpi-expected-profit');
+  if (expectedProfitEl) {
+    expectedProfitEl.textContent = fmt(expectedProfit, 'دج');
+    expectedProfitEl.style.color = expectedProfit >= 0 ? 'var(--green)' : 'var(--red)';
   }
 
   // Personal Share KPI
@@ -2885,40 +2910,133 @@ function renderReportsPage() {
   });
 
   // Render Partner Summary
+  const settings = DB.get('settings') || defaultSettings();
   renderPartnerFinancialSummary(logs, settings);
 }
 
 function renderPartnerFinancialSummary(logs, settings) {
   const tbody = document.getElementById('partner-summary-tbody');
+  const faidaBlock = document.getElementById('partner-summary-faida-block');
   if (!tbody) return;
 
+  // Total gross daily base profit across all logs
   const totalDailyProfit = logs.reduce((s, l) => s + (Number(l.baseProfit ?? l.profit) || 0), 0);
   const partners = settings.partners || [];
-  
+
+  // ── Fixed cost deductions (same formula as getTotalNetProfit) ──
+  const chickensCost   = (Number(settings.initialChickens) || 0) * (Number(settings.chickenPrice) || 0);
+  const feedCost       = (Number(settings.initialFeed)     || 0) * (Number(settings.feedPrice)    || 0);
+  const loyer          = Number(settings.loyer)       || 0;
+  const repairLoyer    = Number(settings.repairLoyer)  || 0;
+  const repairTotal    = Number(settings.repairTotal)  || 0;
+  const effectiveLoyer = Math.max(0, loyer - repairLoyer);
+  const electricity    = Number(settings.electricity)  || 0;
+  const credits        = DB.get('credits') || [];
+  const totalCredits   = credits.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+
+  // Calculate months since first log for electricity
+  let monthsDiff = 1;
+  if (logs.length > 0) {
+    const sorted = [...logs].sort((a, b) => a.date.localeCompare(b.date));
+    const firstDate = new Date(sorted[0].date);
+    const now = new Date();
+    monthsDiff = Math.max(1, (now.getFullYear() - firstDate.getFullYear()) * 12 + (now.getMonth() - firstDate.getMonth()) + 1);
+  }
+  const totalElectricity = electricity * monthsDiff;
+  const totalFixedDeductions = chickensCost + feedCost + effectiveLoyer + totalElectricity + repairTotal + totalCredits;
+
+  // Net profit base = gross daily profit − all fixed deductions (before individual partner expenses)
+  const netProfitBase = totalDailyProfit - totalFixedDeductions;
+
+  // ── Show faida breakdown block ──
+  if (faidaBlock) {
+    faidaBlock.style.display = 'block';
+    const rows = [
+      `<div style="color:var(--text-secondary)">💵 إجمالي الفائدة اليومية</div>
+       <div style="color:var(--green);font-weight:600;text-align:left">${fmt(totalDailyProfit,'دج')}</div>`
+    ];
+    if (chickensCost > 0) rows.push(`
+      <div style="color:var(--text-secondary)">🐔 تكلفة الدجاج الابتدائي (${fmt(settings.initialChickens)} × ${fmt(settings.chickenPrice,'دج')})</div>
+      <div style="color:var(--red);text-align:left">− ${fmt(chickensCost,'دج')}</div>`);
+    if (feedCost > 0) rows.push(`
+      <div style="color:var(--text-secondary)">🌾 تكلفة الشعير الابتدائي (${fmt(settings.initialFeed,'كغ')} × ${fmt(settings.feedPrice,'دج')})</div>
+      <div style="color:var(--red);text-align:left">− ${fmt(feedCost,'دج')}</div>`);
+    if (effectiveLoyer > 0) rows.push(`
+      <div style="color:var(--text-secondary)">🏠 الكراء (إجمالي ثابت)</div>
+      <div style="color:var(--red);text-align:left">− ${fmt(effectiveLoyer,'دج')}</div>`);
+    if (totalElectricity > 0) rows.push(`
+      <div style="color:var(--text-secondary)">⚡ الكهرباء (${monthsDiff} شهر × ${fmt(electricity,'دج')})</div>
+      <div style="color:var(--red);text-align:left">− ${fmt(totalElectricity,'دج')}</div>`);
+    if (repairTotal > 0) rows.push(`
+      <div style="color:var(--text-secondary)">🔨 ريباراسيون الفائدة</div>
+      <div style="color:var(--red);text-align:left">− ${fmt(repairTotal,'دج')}</div>`);
+    if (totalCredits > 0) rows.push(`
+      <div style="color:var(--text-secondary)">📋 الكريديات</div>
+      <div style="color:var(--red);text-align:left">− ${fmt(totalCredits,'دج')}</div>`);
+
+    faidaBlock.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr auto;gap:6px 20px;font-size:0.88rem;align-items:center">
+        ${rows.join('')}
+        <div style="border-top:1px solid rgba(255,255,255,0.12);padding-top:8px;margin-top:2px;color:var(--text-primary);font-weight:700;font-size:0.95rem">
+          💹 صافي الفائدة الإجمالية
+        </div>
+        <div style="border-top:1px solid rgba(255,255,255,0.12);padding-top:8px;margin-top:2px;font-weight:700;text-align:left;font-size:0.95rem;
+          color:${netProfitBase >= 0 ? 'var(--green)' : 'var(--red)'}">
+          ${fmt(netProfitBase,'دج')}
+        </div>
+      </div>`;
+  }
+
   if (partners.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">لا يوجد شركاء مضافون</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">لا يوجد شركاء مضافون</td></tr>';
     return;
   }
 
   tbody.innerHTML = '';
   partners.forEach(p => {
-    const shareAmt = totalDailyProfit * (Number(p.sharePercent) || 0) / 100;
+    const pct = Number(p.sharePercent) || 0;
+    // Gross share (of daily production profit)
+    const shareAmt  = totalDailyProfit * pct / 100;
+    // Net faida share (of profit after all fixed deductions)
+    const faidaAmt  = netProfitBase    * pct / 100;
+    // Partner's individual expenses (advances/withdrawals)
     const totalExpenses = logs.reduce((s, l) => {
       const pe = (l.partnerExpenses || []).find(e => e.partnerId === p.id);
       return s + (pe ? Number(pe.amount) || 0 : 0);
     }, 0);
-    const balance = shareAmt - totalExpenses;
+    // Net due = faida share − individual expenses
+    const balance = faidaAmt - totalExpenses;
 
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td><strong>${p.name}</strong></td>
-      <td><span class="partner-share-badge">${p.sharePercent}%</span></td>
-      <td><span style="color:var(--blue)">${fmt(shareAmt, 'دج')}</span></td>
-      <td><span style="color:var(--orange)">${fmt(totalExpenses, 'دج')}</span></td>
-      <td><strong style="color:${balance >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(balance, 'دج')}</strong></td>
+      <td><span class="partner-share-badge">${pct}%</span></td>
+      <td><span style="color:var(--blue)">${fmt(shareAmt,'دج')}</span></td>
+      <td><strong style="color:${faidaAmt >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(faidaAmt,'دج')}</strong></td>
+      <td><span style="color:var(--orange)">${fmt(totalExpenses,'دج')}</span></td>
+      <td><strong style="color:${balance >= 0 ? 'var(--green)' : 'var(--red)'}; font-size:1.05rem">${fmt(balance,'دج')}</strong></td>
     `;
     tbody.appendChild(tr);
   });
+
+  // Owner row
+  const ownerShare = Number(settings.ownerShare) || 0;
+  if (ownerShare > 0) {
+    const ownerFaida = netProfitBase * ownerShare / 100;
+    const ownerAdvs  = logs.reduce((s, l) => s + (Number(l.ownerAdvance) || 0), 0);
+    const ownerBal   = ownerFaida - ownerAdvs;
+    const trOwner = document.createElement('tr');
+    trOwner.style.cssText = 'border-top:2px solid rgba(212,160,23,0.3);background:rgba(212,160,23,0.04)';
+    trOwner.innerHTML = `
+      <td><strong style="color:var(--gold)">👔 ${settings.owner || 'صاحب العمل'}</strong></td>
+      <td><span class="partner-share-badge" style="background:linear-gradient(135deg,rgba(212,160,23,0.25),rgba(212,160,23,0.1));color:var(--gold)">${ownerShare}%</span></td>
+      <td><span style="color:var(--blue)">${fmt(totalDailyProfit * ownerShare / 100,'دج')}</span></td>
+      <td><strong style="color:${ownerFaida >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(ownerFaida,'دج')}</strong></td>
+      <td><span style="color:var(--orange)">${fmt(ownerAdvs,'دج')}</span></td>
+      <td><strong style="color:${ownerBal >= 0 ? 'var(--green)' : 'var(--red)'}; font-size:1.05rem">${fmt(ownerBal,'دج')}</strong></td>
+    `;
+    tbody.appendChild(trOwner);
+  }
 }
 
 /* ===================== SETTINGS ===================== */
