@@ -1533,7 +1533,7 @@ input.shake {
 .auth-tab:not(.active):hover { color: var(--text-secondary); }
 
 /* FORM */
-.auth-form { display: flex; flex-direction: column; gap: 16px; }
+.auth-form { display: flex; flex-direction: column; gap: 16px; animation: fadeIn 0.3s ease-out; }
 
 .auth-form-group {
   display: flex;
@@ -2706,6 +2706,7 @@ body.role-partner .admin-only-card input {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  animation: fadeIn 0.3s ease-out;
 }
 
 .auth-form-group {

@@ -32,10 +32,17 @@ fs.enablePersistence({ synchronizeTabs: true }).catch(err => {
 let CURRENT_USER = null;  // Firebase user object
 let CURRENT_ROLE = null;  // 'owner' | 'worker' | 'partner'
 let CURRENT_USER_NAME = '';
-// Secret code that new owners must enter when registering
-const ADMIN_SECRET_CODE = 'ZOHIR2025';
-// Developer secret — required to register a partner account
-const DEV_SECRET_CODE = 'dekudeku1123';
+// Hashed versions of the secret codes
+const ADMIN_SECRET_HASH = '2cad27b2e9406f8248c1806c048b3c51671db8e65888f418e93c74e185553686';
+const DEV_SECRET_HASH = 'f2eb032f911a094ab44ac20b7603f57ef37523c3b96a49c4d0b3496595c8b0ad';
+
+async function hashString(str) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(str);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
 // Tracks whether dev password was verified for the current partner account creation attempt
 let _devPasswordVerified = false;
 // Flag to prevent onAuthStateChanged from race-conditioning during registration
@@ -169,8 +176,12 @@ async function doRegister() {
   if (!name)     return showAuthError('reg-error', '⚠️ يرجى إدخال الاسم الكامل');
   if (!email)    return showAuthError('reg-error', '⚠️ يرجى إدخال البريد الإلكتروني');
   if (password.length < 6) return showAuthError('reg-error', '⚠️ كلمة المرور يجب أن تكون 6 أحرف على الأقل');
-  if (role === 'owner' && ownerCode !== ADMIN_SECRET_CODE && ownerCode !== DEV_SECRET_CODE)
-    return showAuthError('reg-error', '❌ رمز المطور غير صحيح — تواصل مع المطور للحصول على الرمز');
+  if (role === 'owner') {
+    const hashedOwnerCode = await hashString(ownerCode);
+    if (hashedOwnerCode !== ADMIN_SECRET_HASH && hashedOwnerCode !== DEV_SECRET_HASH) {
+      return showAuthError('reg-error', '❌ رمز المطور غير صحيح — تواصل مع المطور للحصول على الرمز');
+    }
+  }
 
   setAuthBtnLoading('btn-register', true);
   _isRegistering = true;
@@ -293,6 +304,18 @@ async function doLogout() {
   IS_INITIAL_CLOUD_LOAD = true;
   INITIAL_CLOUD_SYNC_DONE = false;
   document.body.className = '';
+  
+  // Clear auth forms so credentials aren't exposed
+  const inputsToClear = [
+    'login-email', 'login-password',
+    'reg-name', 'reg-email', 'reg-password', 
+    'reg-dev-code-owner', 'reg-admin-code'
+  ];
+  inputsToClear.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+
   await auth.signOut();
   // onAuthStateChanged will show login screen
 }
@@ -1003,12 +1026,14 @@ function showDevPasswordModal() {
   setTimeout(() => { if (input) input.focus(); }, 300);
 }
 
-function confirmDevPassword() {
+async function confirmDevPassword() {
   const input = document.getElementById('dev-password-input');
   const errEl = document.getElementById('dev-password-error');
   if (!input) return;
 
-  if (input.value === DEV_SECRET_CODE) {
+  const hashedInput = await hashString(input.value);
+
+  if (hashedInput === DEV_SECRET_HASH) {
     _devPasswordVerified = true;
     const modal = document.getElementById('modal-dev-password');
     if (modal) modal.classList.remove('open');
