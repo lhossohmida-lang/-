@@ -683,6 +683,10 @@
           <input type="number" id="new-worker-salary" placeholder="الراتب الشهري (دج)" min="0" />
           <button class="btn btn-primary" id="btn-add-worker">إضافة</button>
         </div>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:0.88rem;color:var(--text-secondary);cursor:pointer">
+          <input type="checkbox" id="new-worker-is-dust" style="width:18px;height:18px;cursor:pointer" />
+          <span>💩 عامل الغبار (تُخصم أجرته وسلفياته من فائدة الغبار)</span>
+        </label>
       </div>
 
       <div id="workers-list-container">
@@ -727,6 +731,13 @@
       <div class="report-grid" id="monthly-summary"></div>
     </div>
 
+    <div class="section-card" id="dust-profit-card">
+      <div class="section-title">💩 فائدة الغبار (الحساب المنفصل)</div>
+      <div id="dust-profit-block" style="margin-bottom:8px;padding:14px 16px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid rgba(255,255,255,0.08)">
+        <div class="empty-state" style="padding:14px 0;color:var(--text-muted);font-size:0.9rem">لا توجد بيانات بعد لحساب فائدة الغبار.</div>
+      </div>
+    </div>
+
     <div class="section-card">
       <div class="section-title">🤝 خلاصة أرباح الشركاء</div>
       <!-- Faida breakdown block — filled by JS -->
@@ -739,12 +750,13 @@
               <th>النسبة %</th>
               <th>الحصة من الإنتاج 💰</th>
               <th>الفائدة الصافية 💹</th>
+              <th>الفائدة المتوقعة 🔮</th>
               <th>المصاريف المسحوبة 💸</th>
               <th>الصافي المستحق 🔥</th>
             </tr>
           </thead>
           <tbody id="partner-summary-tbody">
-            <tr><td colspan="6" class="empty-cell">لا يوجد شركاء مضافون</td></tr>
+            <tr><td colspan="7" class="empty-cell">لا يوجد شركاء مضافون</td></tr>
           </tbody>
         </table>
       </div>

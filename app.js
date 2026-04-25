@@ -1648,14 +1648,26 @@ function updateDailyCalc() {
   const baseFeedPrice = Number(settings.feedPrice) || 0;
   const consumedFeedCost = feedUsed * (feedPrice > 0 ? feedPrice : baseFeedPrice);
 
+  // Identify dust worker (advances of dust worker are deducted from dust profit, not general profit)
+  const _workersList = DB.get('workers') || [];
+  const _dustWorkerIds = new Set(_workersList.filter(w => w.isDustWorker).map(w => String(w.id)));
+
   let workerAdvancesTotal = 0;
+  let dustWorkerAdvancesToday = 0;
   document.querySelectorAll('.advance-row').forEach(row => {
-    workerAdvancesTotal += Number(row.querySelector('.adv-amount').value) || 0;
+    const wid = row.querySelector('.adv-worker-select')?.value;
+    const amt = Number(row.querySelector('.adv-amount').value) || 0;
+    if (wid && _dustWorkerIds.has(String(wid))) {
+      dustWorkerAdvancesToday += amt;
+    } else {
+      workerAdvancesTotal += amt;
+    }
   });
 
   const ownerAdvance = Number(document.getElementById('inp-owner-advance')?.value) || 0;
 
   // Base profit before partner expenses and owner advance
+  // Note: dust worker advances are excluded from workerAdvancesTotal — they're charged against dust profit
   const baseProfit = income + manureIncome + specialIncome - consumedFeedCost - waterCost - workerAdvancesTotal;
 
   // Collect partner expenses
@@ -1791,15 +1803,23 @@ function saveDayData() {
   const feedCost = feedIn * feedPrice;
 
   // Collect advances
+  // Dust-worker advances are tracked separately and NOT deducted from baseProfit (they come out of dust profit)
+  const _workersForCalc = DB.get('workers') || [];
+  const _dustIds = new Set(_workersForCalc.filter(w => w.isDustWorker).map(w => String(w.id)));
   const advRows = document.querySelectorAll('.advance-row');
   const advancesThisDay = [];
   let workerAdvancesTotal = 0;
+  let dustWorkerAdvancesToday = 0;
   advRows.forEach(row => {
     const workerId = row.querySelector('.adv-worker-select').value;
     const amount = Number(row.querySelector('.adv-amount').value) || 0;
     if (workerId && amount > 0) {
       advancesThisDay.push({ workerId, amount, date });
-      workerAdvancesTotal += amount;
+      if (_dustIds.has(String(workerId))) {
+        dustWorkerAdvancesToday += amount;
+      } else {
+        workerAdvancesTotal += amount;
+      }
     }
   });
 
@@ -1832,6 +1852,7 @@ function saveDayData() {
     feedIn, feedPrice, feedCost, feedUsed, dead, waterCost, manureIncome, notes,
     expenses: 0, ownerAdvance, baseProfit, profit, partnerExpenses,
     specialPlates, specialSingles, specialPrice, specialIncome,
+    dustAdvances: dustWorkerAdvancesToday,
     enteredBy: CURRENT_USER_NAME || '',
     enteredByUid: CURRENT_USER ? CURRENT_USER.uid : ''
   };
@@ -2550,20 +2571,38 @@ function renderWorkersList(isRestricted) {
 
     const card = document.createElement('div');
     card.className = 'worker-card';
+    if (w.isDustWorker) {
+      card.style.borderTop = '3px solid #a0826d';
+      card.style.background = 'linear-gradient(135deg, rgba(160,130,109,0.06), rgba(255,255,255,0.02))';
+    }
+    const dustBadge = w.isDustWorker
+      ? `<span class="partner-status-badge" style="background:rgba(160,130,109,0.18);color:#d4b895;border:1px solid rgba(160,130,109,0.4);margin-right:6px">💩 عامل الغبار</span>`
+      : '';
+    const dustToggleBtn = !isRestricted
+      ? `<button class="btn btn-outline btn-sm" onclick="toggleDustWorker(${w.id})" title="${w.isDustWorker ? 'إلغاء تعيين عامل الغبار' : 'تعيين كعامل الغبار'}">
+           ${w.isDustWorker ? '✖ إلغاء عامل الغبار' : '💩 جعله عامل الغبار'}
+         </button>`
+      : '';
+
     card.innerHTML = `
       <div class="worker-header">
         <div style="display:flex;gap:12px;align-items:center">
           <div class="worker-avatar">${w.name.charAt(0)}</div>
-          <div><div class="worker-name">${w.name}</div><div class="worker-id">#${w.id}</div></div>
+          <div>
+            <div class="worker-name">${w.name} ${dustBadge}</div>
+            <div class="worker-id">#${w.id}</div>
+          </div>
         </div>
         ${!isRestricted ? `<button class="btn btn-danger btn-sm" onclick="deleteWorker(${w.id})">حذف</button>` : ''}
       </div>
       <div class="worker-stat"><span>الراتب الشهري</span><strong class="success">${fmt(w.salary, 'دج')}</strong></div>
       <div class="worker-stat"><span>إجمالي السلف</span><strong class="danger">${fmt(totalAdv, 'دج')}</strong></div>
       <div class="worker-stat"><span>الصافي المستحق</span><strong class="${netSalary < 0 ? 'danger' : 'success'}">${fmt(netSalary, 'دج')}</strong></div>
+      ${w.isDustWorker ? '<div class="worker-stat" style="font-size:0.78rem;color:#d4b895"><span>📌 ملاحظة</span><span>تُخصم من فائدة الغبار</span></div>' : ''}
       <div class="adv-history">${advHtml}</div>
-      <div class="worker-actions">
+      <div class="worker-actions" style="display:flex;gap:6px;flex-wrap:wrap">
         ${!isRestricted ? `<button class="btn btn-outline btn-sm" onclick="resetWorkerAdvances(${w.id})">🔄 تصفية السلف</button>` : ''}
+        ${dustToggleBtn}
       </div>
     `;
     grid.appendChild(card);
@@ -2831,6 +2870,30 @@ function deleteWorker(id) {
   showToast('تم حذف العامل', 'warning');
 }
 
+function toggleDustWorker(id) {
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error');
+    return;
+  }
+  const workers = DB.get('workers') || [];
+  const w = workers.find(wk => wk.id === id);
+  if (!w) return;
+  const willBeDust = !w.isDustWorker;
+  if (willBeDust) {
+    // Only one dust worker at a time
+    workers.forEach(wk => { wk.isDustWorker = false; });
+    w.isDustWorker = true;
+    addActivity(`تم تعيين ${w.name} كعامل الغبار 💩`, '👷');
+    showToast(`💩 ${w.name} هو الآن عامل الغبار`);
+  } else {
+    w.isDustWorker = false;
+    addActivity(`تم إلغاء تعيين ${w.name} كعامل الغبار`, '👷');
+    showToast('تم إلغاء تعيين عامل الغبار');
+  }
+  DB.set('workers', workers);
+  renderWorkersPage();
+}
+
 function resetWorkerAdvances(id) {
   if (isReadOnlyUser()) {
     showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error');
@@ -2919,6 +2982,12 @@ function renderPartnerFinancialSummary(logs, settings) {
   const faidaBlock = document.getElementById('partner-summary-faida-block');
   if (!tbody) return;
 
+  // Render dust profit section first (separate accounting view)
+  renderDustProfitSection(logs);
+
+  // Expected monthly profit (used for "expected" partner column)
+  const expectedMonthly = (typeof getExpectedMonthlyProfit === 'function') ? getExpectedMonthlyProfit() : 0;
+
   // Total gross daily base profit across all logs
   const totalDailyProfit = logs.reduce((s, l) => s + (Number(l.baseProfit ?? l.profit) || 0), 0);
   const partners = settings.partners || [];
@@ -2988,7 +3057,7 @@ function renderPartnerFinancialSummary(logs, settings) {
   }
 
   if (partners.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">لا يوجد شركاء مضافون</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-cell">لا يوجد شركاء مضافون</td></tr>';
     return;
   }
 
@@ -2999,6 +3068,8 @@ function renderPartnerFinancialSummary(logs, settings) {
     const shareAmt  = totalDailyProfit * pct / 100;
     // Net faida share (of profit after all fixed deductions)
     const faidaAmt  = netProfitBase    * pct / 100;
+    // Expected partner profit = expected monthly profit × share %
+    const expectedAmt = expectedMonthly * pct / 100;
     // Partner's individual expenses (advances/withdrawals)
     const totalExpenses = logs.reduce((s, l) => {
       const pe = (l.partnerExpenses || []).find(e => e.partnerId === p.id);
@@ -3013,6 +3084,7 @@ function renderPartnerFinancialSummary(logs, settings) {
       <td><span class="partner-share-badge">${pct}%</span></td>
       <td><span style="color:var(--blue)">${fmt(shareAmt,'دج')}</span></td>
       <td><strong style="color:${faidaAmt >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(faidaAmt,'دج')}</strong></td>
+      <td><strong style="color:${expectedAmt >= 0 ? '#b794f4' : 'var(--red)'}">${fmt(expectedAmt,'دج')}</strong></td>
       <td><span style="color:var(--orange)">${fmt(totalExpenses,'دج')}</span></td>
       <td><strong style="color:${balance >= 0 ? 'var(--green)' : 'var(--red)'}; font-size:1.05rem">${fmt(balance,'دج')}</strong></td>
     `;
@@ -3023,6 +3095,7 @@ function renderPartnerFinancialSummary(logs, settings) {
   const ownerShare = Number(settings.ownerShare) || 0;
   if (ownerShare > 0) {
     const ownerFaida = netProfitBase * ownerShare / 100;
+    const ownerExpected = expectedMonthly * ownerShare / 100;
     const ownerAdvs  = logs.reduce((s, l) => s + (Number(l.ownerAdvance) || 0), 0);
     const ownerBal   = ownerFaida - ownerAdvs;
     const trOwner = document.createElement('tr');
@@ -3032,11 +3105,84 @@ function renderPartnerFinancialSummary(logs, settings) {
       <td><span class="partner-share-badge" style="background:linear-gradient(135deg,rgba(212,160,23,0.25),rgba(212,160,23,0.1));color:var(--gold)">${ownerShare}%</span></td>
       <td><span style="color:var(--blue)">${fmt(totalDailyProfit * ownerShare / 100,'دج')}</span></td>
       <td><strong style="color:${ownerFaida >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(ownerFaida,'دج')}</strong></td>
+      <td><strong style="color:${ownerExpected >= 0 ? '#b794f4' : 'var(--red)'}">${fmt(ownerExpected,'دج')}</strong></td>
       <td><span style="color:var(--orange)">${fmt(ownerAdvs,'دج')}</span></td>
       <td><strong style="color:${ownerBal >= 0 ? 'var(--green)' : 'var(--red)'}; font-size:1.05rem">${fmt(ownerBal,'دج')}</strong></td>
     `;
     tbody.appendChild(trOwner);
   }
+}
+
+/* ===================== DUST PROFIT (فائدة الغبار) ===================== */
+function renderDustProfitSection(logs) {
+  const block = document.getElementById('dust-profit-block');
+  if (!block) return;
+
+  // Total dust (manure) revenue across all logs
+  const totalManureIncome = (logs || []).reduce((s, l) => s + (Number(l.manureIncome) || 0), 0);
+
+  // Find the dust worker
+  const workers = DB.get('workers') || [];
+  const dustWorker = workers.find(w => w.isDustWorker);
+
+  // Dust worker advances total (independent of where they were stored historically)
+  const dustWorkerAdvances = dustWorker
+    ? (dustWorker.advances || []).reduce((s, a) => s + (Number(a.amount) || 0), 0)
+    : 0;
+
+  // Net dust profit = dust revenue − dust worker advances actually paid
+  const netDustProfit = totalManureIncome - dustWorkerAdvances;
+
+  if (totalManureIncome === 0 && !dustWorker) {
+    block.innerHTML = `<div class="empty-state" style="padding:14px 0;color:var(--text-muted);font-size:0.9rem">
+      💡 لم يتم تسجيل مدخول غبار بعد، ولا يوجد عامل غبار محدد.<br>
+      <span style="font-size:0.82rem">يمكنك تعيين عامل من صفحة العمال بالضغط على "💩 جعله عامل الغبار"</span>
+    </div>`;
+    return;
+  }
+
+  const rows = [];
+  rows.push(`
+    <div style="color:var(--text-secondary)">💩 إجمالي مدخول الغبار</div>
+    <div style="color:var(--green);font-weight:600;text-align:left">${fmt(totalManureIncome,'دج')}</div>
+  `);
+
+  if (dustWorker) {
+    rows.push(`
+      <div style="color:var(--text-secondary)">👷 عامل الغبار</div>
+      <div style="text-align:left;color:#d4b895;font-weight:600">${dustWorker.name}</div>
+    `);
+    rows.push(`
+      <div style="color:var(--text-secondary)">💵 الراتب الشهري المقرر</div>
+      <div style="text-align:left;color:var(--text-primary)">${fmt(Number(dustWorker.salary)||0,'دج')}</div>
+    `);
+    rows.push(`
+      <div style="color:var(--text-secondary)">💸 إجمالي السلفيات المدفوعة</div>
+      <div style="color:var(--red);text-align:left">− ${fmt(dustWorkerAdvances,'دج')}</div>
+    `);
+  } else {
+    rows.push(`
+      <div style="color:var(--text-secondary)">👷 عامل الغبار</div>
+      <div style="text-align:left;color:var(--text-muted);font-size:0.85rem">لم يتم تعيينه بعد</div>
+    `);
+  }
+
+  block.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr auto;gap:8px 20px;font-size:0.9rem;align-items:center">
+      ${rows.join('')}
+      <div style="border-top:1px solid rgba(255,255,255,0.12);padding-top:10px;margin-top:4px;color:var(--text-primary);font-weight:700;font-size:1rem">
+        🔥 صافي فائدة الغبار
+      </div>
+      <div style="border-top:1px solid rgba(255,255,255,0.12);padding-top:10px;margin-top:4px;font-weight:700;text-align:left;font-size:1rem;
+        color:${netDustProfit >= 0 ? 'var(--green)' : 'var(--red)'}">
+        ${fmt(netDustProfit,'دج')}
+      </div>
+    </div>
+    ${dustWorker ? `
+      <div style="margin-top:10px;padding:8px 12px;background:rgba(160,130,109,0.08);border-radius:8px;font-size:0.78rem;color:#d4b895;border:1px dashed rgba(160,130,109,0.3)">
+        ⓘ سلفيات عامل الغبار لا تُخصم من الفائدة العامة — تُخصم فقط من فائدة الغبار.
+      </div>` : ''}
+  `;
 }
 
 /* ===================== SETTINGS ===================== */
@@ -3155,14 +3301,21 @@ function initWorkersPage() {
     }
     const name = document.getElementById('new-worker-name').value.trim();
     const salary = Number(document.getElementById('new-worker-salary').value) || 0;
+    const isDustWorker = !!document.getElementById('new-worker-is-dust')?.checked;
     if (!name) { showToast('يرجى إدخال اسم العامل', 'error'); return; }
     const workers = DB.get('workers') || [];
-    const newWorker = { id: Date.now(), name, salary, advances: [] };
+    // Ensure only one dust worker at a time
+    if (isDustWorker) {
+      workers.forEach(w => { w.isDustWorker = false; });
+    }
+    const newWorker = { id: Date.now(), name, salary, advances: [], isDustWorker };
     workers.push(newWorker);
     DB.set('workers', workers);
     document.getElementById('new-worker-name').value = '';
     document.getElementById('new-worker-salary').value = '';
-    addActivity(`تم إضافة العامل ${name}`, '👷');
+    const dustChk = document.getElementById('new-worker-is-dust');
+    if (dustChk) dustChk.checked = false;
+    addActivity(`تم إضافة العامل ${name}${isDustWorker ? ' (عامل الغبار)' : ''}`, '👷');
     renderWorkersPage();
     populateWorkerSelects();
     showToast(`✅ تمت إضافة ${name}`);
