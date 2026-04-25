@@ -117,13 +117,16 @@ function switchAuthTab(tab) {
   const registerForm = document.getElementById('form-register');
   const tabLogin     = document.getElementById('tab-login');
   const tabReg       = document.getElementById('tab-register');
+  const tabsContainer = document.getElementById('auth-tabs-container');
   clearAuthErrors();
   if (tab === 'login') {
+    if (tabsContainer) tabsContainer.classList.remove('is-register');
     loginForm.style.display    = '';
     registerForm.style.display = 'none';
     tabLogin.classList.add('active');
     tabReg.classList.remove('active');
   } else {
+    if (tabsContainer) tabsContainer.classList.add('is-register');
     loginForm.style.display    = 'none';
     registerForm.style.display = '';
     tabLogin.classList.remove('active');
@@ -3550,3 +3553,31 @@ if (installBtn) {
     }
   });
 }
+
+// Global Enter key navigation for inputs
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    const activeEl = document.activeElement;
+    if (activeEl && ['INPUT', 'SELECT'].includes(activeEl.tagName)) {
+      // Ignore if it has custom onkeydown matching Enter
+      if (activeEl.hasAttribute('onkeydown') && activeEl.getAttribute('onkeydown').includes('Enter')) return;
+      
+      const form = activeEl.closest('form, .form-card, .modal-box, .section-card, .inline-form, .auth-form');
+      if (!form) return;
+      
+      const focusable = Array.from(form.querySelectorAll('input:not([disabled]):not([type="hidden"]), select:not([disabled]), button[id^="btn-"]:not([disabled]), .btn:not([disabled])'))
+                               .filter(el => el.offsetParent !== null && !el.classList.contains('btn-remove-adv') && !el.classList.contains('auth-eye-btn'));
+      
+      const idx = focusable.indexOf(activeEl);
+      if (idx > -1 && idx < focusable.length - 1) {
+        e.preventDefault();
+        const nextEl = focusable[idx + 1];
+        if (nextEl.tagName === 'BUTTON') {
+          nextEl.click();
+        } else {
+          nextEl.focus();
+        }
+      }
+    }
+  }
+});
