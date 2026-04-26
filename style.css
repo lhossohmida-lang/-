@@ -2243,9 +2243,9 @@ body.role-worker .worker-mode-banner { display: block; }
 body.role-partner input,
 body.role-partner select,
 body.role-partner textarea,
-body.role-owner #page-daily input,
-body.role-owner #page-daily select,
-body.role-owner #page-daily textarea {
+body.has-workers.role-owner #page-daily input,
+body.has-workers.role-owner #page-daily select,
+body.has-workers.role-owner #page-daily textarea {
   pointer-events: none;
   background-color: rgba(255,255,255,0.02) !important;
   border-color: rgba(255,255,255,0.08) !important;
@@ -2286,8 +2286,8 @@ body.role-partner #btn-switch-factory {
    ADMIN-ONLY VISIBILITY
    ============================================= */
 /* .admin-only = inline delete buttons in tables.
-   Hidden for OWNER only — workers CAN delete records */
-body.role-owner .admin-only,
+   Hidden for OWNER only when workers exist — workers CAN delete records */
+body.has-workers.role-owner .admin-only,
 body.role-owner #btn-add-factory,
 body.role-partner .admin-only {
   display: none !important;
@@ -2301,17 +2301,17 @@ body.role-partner .factory-card-delete {
   display: none !important;
 }
 
-/* Owner role: fully read-only — hide all edit controls */
-body.role-owner #btn-save-day,
-body.role-owner #btn-clear-form,
-body.role-owner #add-advance-row,
-body.role-owner #btn-add-worker,
-body.role-owner .btn-delete-log,
-body.role-owner .btn-delete-log-rep,
-body.role-owner .btn-delete-log-feed,
-body.role-owner .btn-remove-adv,
-body.role-owner .btn-delete-credit,
-body.role-owner .worker-actions,
+/* Owner role: read-only when workers exist — hide all edit controls */
+body.has-workers.role-owner #btn-save-day,
+body.has-workers.role-owner #btn-clear-form,
+body.has-workers.role-owner #add-advance-row,
+body.has-workers.role-owner #btn-add-worker,
+body.has-workers.role-owner .btn-delete-log,
+body.has-workers.role-owner .btn-delete-log-rep,
+body.has-workers.role-owner .btn-delete-log-feed,
+body.has-workers.role-owner .btn-remove-adv,
+body.has-workers.role-owner .btn-delete-credit,
+body.has-workers.role-owner .worker-actions,
 /* Partner remains read-only for admin cards */
 body.role-partner .admin-only-card,
 body.role-partner .restricted-edit {
@@ -2825,22 +2825,22 @@ body.role-partner .admin-only-card input {
    ROLE-BASED VISIBILITY
    ============================================= */
 
-/* Hide admin-only columns/cells for owner and partner (read-only roles) */
-body.role-owner .admin-only,
+/* Hide admin-only columns/cells for owner (with workers) and partner (read-only roles) */
+body.has-workers.role-owner .admin-only,
 body.role-partner .admin-only {
   display: none !important;
 }
 
-/* Hide daily form save button for owner/partner */
-body.role-owner #btn-save-day,
+/* Hide daily form save button for owner (with workers) / partner */
+body.has-workers.role-owner #btn-save-day,
 body.role-partner #btn-save-day {
   display: none !important;
 }
 
-/* Make daily form inputs non-interactive for owner/partner */
-body.role-owner #page-daily .form-group input,
-body.role-owner #page-daily .form-group select,
-body.role-owner #page-daily .form-group textarea,
+/* Make daily form inputs non-interactive for owner (with workers) / partner */
+body.has-workers.role-owner #page-daily .form-group input,
+body.has-workers.role-owner #page-daily .form-group select,
+body.has-workers.role-owner #page-daily .form-group textarea,
 body.role-partner #page-daily .form-group input,
 body.role-partner #page-daily .form-group select,
 body.role-partner #page-daily .form-group textarea {

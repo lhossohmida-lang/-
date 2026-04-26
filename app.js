@@ -62,6 +62,9 @@ function isReadOnlyUser() {
   if (CURRENT_ROLE === 'owner') {
     // Owner is read-only when viewing a factory owned by someone else (as a partner)
     if (EFFECTIVE_OWNER_UID && CURRENT_USER && EFFECTIVE_OWNER_UID !== CURRENT_USER.uid) return true;
+    // Owner is read-only when workers exist (workers handle daily entry)
+    const workers = DB.get('workers') || [];
+    if (workers.length > 0) return true;
     return false;
   }
   return false;
@@ -345,6 +348,10 @@ function applyRoleToUI(role, name) {
   if (role === 'owner') document.body.classList.add('role-owner');
   else if (role === 'partner') document.body.classList.add('role-partner');
   else document.body.classList.add('role-worker');
+
+  const workers = DB.get('workers') || [];
+  if (workers.length > 0) document.body.classList.add('has-workers');
+  else document.body.classList.remove('has-workers');
 
   // Sidebar user info
   const avatar = document.getElementById('sidebar-user-avatar');
