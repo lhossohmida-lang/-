@@ -949,7 +949,10 @@
 <!-- ===== MODAL: DAILY RECORD DETAILS ===== -->
 <div id="daily-details-modal" class="modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; justify-content:center; align-items:center; backdrop-filter:blur(5px);">
   <div class="modal-content section-card" style="position:relative; width:90%; max-width:600px; max-height:90vh; overflow-y:auto; padding:20px; background:var(--bg-card); border-radius:var(--radius); border:1px solid var(--border); box-shadow:var(--shadow-glow);">
-    <button id="btn-close-details" style="position:absolute; top:15px; left:15px; background:transparent; border:none; color:var(--text-secondary); font-size:1.5rem; cursor:pointer;">&times;</button>
+    <div style="position:absolute; top:15px; left:15px; display:flex; gap:15px; align-items:center;">
+      <button id="btn-print-details" onclick="printDailyLogDetails()" style="background:transparent; border:none; font-size:1.3rem; cursor:pointer;" title="طباعة">🖨️</button>
+      <button id="btn-close-details" style="background:transparent; border:none; color:var(--text-secondary); font-size:1.6rem; cursor:pointer; line-height:1;" title="إغلاق">&times;</button>
+    </div>
     <div class="section-title" id="details-modal-title" style="margin-bottom:15px; font-size:1.2rem; color:var(--text-primary);">تفاصيل اليوم</div>
     <div id="details-modal-body"></div>
   </div>

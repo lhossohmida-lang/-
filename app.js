@@ -2339,6 +2339,47 @@ window.addEventListener('click', (e) => {
   if (e.target === modal) modal.style.display = 'none';
 });
 
+function printDailyLogDetails() {
+  const content = document.getElementById('details-modal-body').innerHTML;
+  const title = document.getElementById('details-modal-title').textContent;
+  
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(`
+    <html dir="rtl" lang="ar">
+      <head>
+        <title>${title}</title>
+        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap" rel="stylesheet" />
+        <style>
+          body { 
+            font-family: 'Cairo', sans-serif; 
+            padding: 20px; 
+            color: #000; 
+            background: #fff; 
+            direction: rtl;
+          }
+          h2 { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+          .report-block { margin-bottom: 20px; border: 1px solid #000; padding: 15px; border-radius: 8px; page-break-inside: avoid; }
+          .report-block-title { font-weight: bold; font-size: 1.2rem; margin-bottom: 10px; border-bottom: 1px solid #000; padding-bottom: 5px; }
+          .report-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 16px; border-bottom: 1px dashed #ccc; padding-bottom: 4px; }
+          .report-row:last-child { border-bottom: none; }
+          .accountant-note { padding: 15px; background: #eee; border-right: 4px solid #000; margin-top: 20px; font-style: italic; border-radius: 5px; page-break-inside: avoid; }
+          .negative, .positive, .warn { font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <h2>${title}</h2>
+        ${content}
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => {
+    printWindow.print();
+    printWindow.close();
+  }, 500);
+}
+
 function clearDailyForm() {
   setPaymentStatus('paid');
   ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates',
