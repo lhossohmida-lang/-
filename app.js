@@ -191,9 +191,10 @@ async function doRegister() {
   try {
     const cred = await auth.createUserWithEmailAndPassword(email, password);
     await cred.user.updateProfile({ displayName: name });
-    // Save role + name in Firestore users collection
+    // Save role + name in Firestore users collection — store lowercased email for reliable lookup
+    const emailLc = (email || '').toLowerCase();
     await fs.collection('users').doc(cred.user.uid).set({
-      name, email, role,
+      name, email: emailLc, emailLower: emailLc, role,
       createdAt: new Date().toISOString(),
       migrationDone: true   // new accounts have no legacy data to migrate
     });
@@ -440,13 +441,68 @@ function initAuthListener() {
       CURRENT_USER_NAME = data.name || user.displayName || user.email;
       CURRENT_LINKED_OWNERS = data.linkedOwners || [];
 
-      // 2. Check for invitations (Cloud-based linking)
+      // 2a. Self-process queued partner_link docs (cross-user-safe path)
+      try {
+        const linkRes = await fs.collection('app_data')
+          .where('type', '==', 'partner_link')
+          .where('partnerUid', '==', user.uid)
+          .get();
+
+        if (!linkRes.empty) {
+          console.log('[Auth] Found', linkRes.size, 'pending partner_link docs');
+          let linkAdded = false;
+          for (const lDoc of linkRes.docs) {
+            const ln = lDoc.data();
+            if (ln.ownerUid && !CURRENT_LINKED_OWNERS.includes(ln.ownerUid)) {
+              CURRENT_LINKED_OWNERS.push(ln.ownerUid);
+              linkAdded = true;
+            }
+            // Also ensure the factory list contains me in partnerUids
+            try {
+              const fListDocId = `factories_list_${ln.ownerUid}`;
+              const fListDoc = await fs.collection('app_data').doc(fListDocId).get();
+              if (fListDoc.exists) {
+                const list = fListDoc.data().data || [];
+                let listUpdated = false;
+                list.forEach(factory => {
+                  if (!ln.factoryId || factory.id === ln.factoryId) {
+                    factory.partnerUids = factory.partnerUids || [];
+                    if (!factory.partnerUids.includes(user.uid)) {
+                      factory.partnerUids.push(user.uid);
+                      listUpdated = true;
+                    }
+                    if (ln.sharePercent) {
+                      factory.partnerShares = factory.partnerShares || {};
+                      factory.partnerShares[user.uid] = ln.sharePercent;
+                      listUpdated = true;
+                    }
+                  }
+                });
+                if (listUpdated) {
+                  await fs.collection('app_data').doc(fListDocId).update({ data: list });
+                  console.log('[Auth] partner_link processed: factory list updated for owner', ln.ownerUid);
+                }
+              }
+            } catch (fErr) {
+              console.warn('[Auth] partner_link factory update failed:', fErr);
+            }
+            // Delete only if we are an owner (rules allow), else leave it (no harm — it's idempotent)
+            try { await fs.collection('app_data').doc(lDoc.id).delete(); } catch(_) {}
+          }
+          if (linkAdded) {
+            try { await userDocRef.update({ linkedOwners: CURRENT_LINKED_OWNERS }); }
+            catch (e) { console.warn('[Auth] Could not persist linkedOwners (will retry next session):', e); }
+          }
+        }
+      } catch (e) { console.error('[Auth] partner_link observer error:', e); }
+
+      // 2b. Check for partner_invite (legacy + new-account path)
       try {
         const inviteRes = await fs.collection('app_data')
           .where('type', '==', 'partner_invite')
           .where('email', '==', userEmail)
           .get();
-        
+
         if (!inviteRes.empty) {
           let hasNewLink = false;
           for (const invDoc of inviteRes.docs) {
@@ -477,6 +533,31 @@ function initAuthListener() {
                     }
                   }
                 });
+                
+                // [FIX] Also attach the new UID to the settings.partners array
+                if (inv.factoryId) {
+                  try {
+                    const sDocId = `${inv.factoryId}_settings`;
+                    const sDoc = await fs.collection('app_data').doc(sDocId).get();
+                    if (sDoc.exists) {
+                      const sData = sDoc.data().data || {};
+                      const partners = sData.partners || [];
+                      let sUpdated = false;
+                      partners.forEach(p => {
+                        if (p.email && p.email.toLowerCase() === inv.email && !p.uid) {
+                          p.uid = user.uid;
+                          sUpdated = true;
+                        }
+                      });
+                      if (sUpdated) {
+                        await fs.collection('app_data').doc(sDocId).update({ data: sData });
+                      }
+                    }
+                  } catch (e) {
+                    console.warn('Could not inject partner uid into settings:', e);
+                  }
+                }
+
                 if (listUpdated) {
                   await fs.collection('app_data').doc(fListDocId).update({ data: list });
                 }
@@ -543,7 +624,8 @@ async function createWorkerAccount() {
 
     const cred = await secondAuth.createUserWithEmailAndPassword(email, password);
     await cred.user.updateProfile({ displayName: name });
-    const userDoc = { name, email, role: 'worker', createdAt: new Date().toISOString(), migrationDone: true, ownerUid: CURRENT_USER.uid };
+    const emailLc = (email || '').toLowerCase();
+    const userDoc = { name, email: emailLc, emailLower: emailLc, role: 'worker', createdAt: new Date().toISOString(), migrationDone: true, ownerUid: CURRENT_USER.uid };
     await fs.collection('users').doc(cred.user.uid).set(userDoc);
     await secondAuth.signOut();
 
@@ -868,6 +950,65 @@ async function initGlobalSync() {
       }, () => {});
     GLOBAL_SYNC_UNSUBS.push(unsub);
   });
+
+  // STEP 3: Live listener on partner_link queue — picks up brand-new partnerships
+  // added by an owner while this partner is currently online. When triggered, we
+  // self-process the link (add ownerUid to linkedOwners + ensure factory list contains us)
+  // and re-run initGlobalSync so the factory appears immediately.
+  try {
+    const linkUnsub = fs.collection('app_data')
+      .where('type', '==', 'partner_link')
+      .where('partnerUid', '==', CURRENT_USER.uid)
+      .onSnapshot(async (snap) => {
+        if (snap.empty) return;
+        let needsResync = false;
+        for (const lDoc of snap.docs) {
+          const ln = lDoc.data();
+          if (ln.ownerUid && !CURRENT_LINKED_OWNERS.includes(ln.ownerUid)) {
+            CURRENT_LINKED_OWNERS.push(ln.ownerUid);
+            needsResync = true;
+          }
+          // Make sure factory list contains us in partnerUids
+          try {
+            const fListDocId = `factories_list_${ln.ownerUid}`;
+            const fListDoc = await fs.collection('app_data').doc(fListDocId).get();
+            if (fListDoc.exists) {
+              const list = fListDoc.data().data || [];
+              let listUpdated = false;
+              list.forEach(factory => {
+                if (!ln.factoryId || factory.id === ln.factoryId) {
+                  factory.partnerUids = factory.partnerUids || [];
+                  if (!factory.partnerUids.includes(CURRENT_USER.uid)) {
+                    factory.partnerUids.push(CURRENT_USER.uid);
+                    listUpdated = true;
+                  }
+                  if (ln.sharePercent) {
+                    factory.partnerShares = factory.partnerShares || {};
+                    factory.partnerShares[CURRENT_USER.uid] = ln.sharePercent;
+                    listUpdated = true;
+                  }
+                }
+              });
+              if (listUpdated) {
+                await fs.collection('app_data').doc(fListDocId).update({ data: list });
+                needsResync = true;
+              }
+            }
+          } catch (e) { console.warn('[LiveLink] factory update failed:', e); }
+        }
+        if (needsResync) {
+          // Persist linkedOwners and re-run sync so new factory appears
+          try {
+            await fs.collection('users').doc(CURRENT_USER.uid).update({ linkedOwners: CURRENT_LINKED_OWNERS });
+          } catch (e) { console.warn('[LiveLink] Could not persist linkedOwners:', e); }
+          showToast('🤝 تمت إضافتك كشريك في مصنع جديد', 'info');
+          initGlobalSync();
+        }
+      }, (err) => console.warn('[LiveLink] listener error:', err));
+    GLOBAL_SYNC_UNSUBS.push(linkUnsub);
+  } catch (e) {
+    console.warn('[LiveLink] could not subscribe to partner_link queue:', e);
+  }
 }
 
 function hideGlobalLoader() {
@@ -2350,38 +2491,40 @@ async function addPartner() {
     }
 
     let partnerUid = null;
+    const emailLc = email.toLowerCase();
     if (email) {
       try {
-        const userRes = await fs.collection('users').where('email', '==', email.toLowerCase()).limit(1).get();
-        if (!userRes.empty) {
-          const userDoc = userRes.docs[0];
+        // Try multiple query strategies to handle case variations stored in legacy docs
+        let userDoc = null;
+        // 1. Lowercased email (new canonical)
+        let userRes = await fs.collection('users').where('email', '==', emailLc).limit(1).get();
+        if (!userRes.empty) userDoc = userRes.docs[0];
+        // 2. emailLower field (compat layer)
+        if (!userDoc) {
+          userRes = await fs.collection('users').where('emailLower', '==', emailLc).limit(1).get();
+          if (!userRes.empty) userDoc = userRes.docs[0];
+        }
+        // 3. Original casing (legacy)
+        if (!userDoc) {
+          userRes = await fs.collection('users').where('email', '==', email).limit(1).get();
+          if (!userRes.empty) userDoc = userRes.docs[0];
+        }
+
+        if (userDoc) {
           partnerUid = userDoc.id;
-          
+
           // Prevent self-partnership
           if (partnerUid === CURRENT_USER.uid) {
             showToast('❌ لا يمكنك إضافة نفسك كشريك', 'error');
             if (btn) { btn.disabled = false; btn.textContent = 'إضافة'; }
             return;
           }
-          
-          // Add current owner UID to partner's linkedOwners so they see this factory
-          try {
-            const uData = userDoc.data();
-            const linked = uData.linkedOwners || [];
-            if (!linked.includes(CURRENT_USER.uid)) {
-              linked.push(CURRENT_USER.uid);
-              await fs.collection('users').doc(partnerUid).update({ linkedOwners: linked });
-              console.log('[Partnership] Updated linkedOwners for partner:', partnerUid);
-            }
-          } catch (linkErr) {
-            console.warn('Could not update linkedOwners on partner doc:', linkErr);
-          }
         } else {
           // USER NOT FOUND: Store a cloud invitation so they link automatically when they register
-          const inviteId = `invite_${email.replace(/[^a-zA-Z0-9]/g, '_')}_${CURRENT_USER.uid}`;
+          const inviteId = `invite_${emailLc.replace(/[^a-zA-Z0-9]/g, '_')}_${CURRENT_USER.uid}`;
           await fs.collection('app_data').doc(inviteId).set({
             type: 'partner_invite',
-            email: email.toLowerCase(),
+            email: emailLc,
             name: name,
             sharePercent: share,
             ownerUid: CURRENT_USER.uid,
@@ -2396,13 +2539,16 @@ async function addPartner() {
       }
     }
 
-    partners.push({ id: Date.now(), name, email: email.toLowerCase(), uid: partnerUid, sharePercent: share });
+    partners.push({ id: Date.now(), name, email: emailLc, uid: partnerUid, sharePercent: share });
     settings.partners = partners;
     DB.set('settings', settings);
 
-    // Update the factory's partnerUids list so the partner can see this factory
+    // ── ORDER OF OPERATIONS ──
+    // 1) Update factory list (partnerUids/partnerShares) FIRST and await the cloud write.
+    // 2) Try fast-path: update partner's linkedOwners directly (works if rules allow).
+    // 3) ALWAYS write a partner_link queue doc — the partner picks it up on next login
+    //    and processes it themselves (works even when cross-user write is blocked).
     if (partnerUid) {
-      // Always update current factory if inside one
       const factoryIdToUpdate = CURRENT_FACTORY?.id;
       if (factoryIdToUpdate) {
         const factories = FactoryDB.getFactories();
@@ -2413,12 +2559,56 @@ async function addPartner() {
             pUids.push(partnerUid);
             factories[fIdx].partnerUids = pUids;
           }
-          // Store share percentage for display on factory selection screen
           factories[fIdx].partnerShares = factories[fIdx].partnerShares || {};
           factories[fIdx].partnerShares[partnerUid] = share;
-          FactoryDB.saveFactories(factories);
-          console.log('[Partnership] Added partnerUid', partnerUid, 'to factory', factoryIdToUpdate);
+          if (!factories[fIdx].ownerUid) factories[fIdx].ownerUid = CURRENT_USER.uid;
+
+          localStorage.setItem(FactoryDB.listKey, JSON.stringify(factories));
+          try {
+            await fs.collection('app_data').doc(FactoryDB.cloudDocId).set({
+              data: factories, lastUpdated: new Date().toISOString()
+            });
+            console.log('[Partnership] Factory list updated on cloud with partner UID', partnerUid);
+          } catch (cloudErr) {
+            console.error('[Partnership] Cloud factory list write failed:', cloudErr);
+          }
         }
+      }
+
+      // Always queue a partner_link doc — this is the reliable path that works
+      // regardless of cross-user write permissions. The partner self-processes
+      // it on login (see auth listener). Idempotent by ID.
+      try {
+        const linkDocId = `link_${partnerUid}_${CURRENT_USER.uid}_${factoryIdToUpdate || 'all'}`;
+        await fs.collection('app_data').doc(linkDocId).set({
+          type: 'partner_link',
+          partnerUid: partnerUid,
+          ownerUid: CURRENT_USER.uid,
+          factoryId: factoryIdToUpdate || null,
+          sharePercent: share,
+          name: name,
+          email: emailLc,
+          timestamp: Date.now()
+        });
+        console.log('[Partnership] Queued partner_link doc:', linkDocId);
+      } catch (qErr) {
+        console.error('[Partnership] Could not queue partner_link doc:', qErr);
+      }
+
+      // Fast-path: try direct update (works if rules permit owner-cross-write)
+      try {
+        const partnerDocRef = fs.collection('users').doc(partnerUid);
+        const freshPartnerDoc = await partnerDocRef.get();
+        const uData = freshPartnerDoc.exists ? freshPartnerDoc.data() : {};
+        const linked = uData.linkedOwners || [];
+        if (!linked.includes(CURRENT_USER.uid)) {
+          linked.push(CURRENT_USER.uid);
+          await partnerDocRef.update({ linkedOwners: linked });
+          console.log('[Partnership] Fast-path linkedOwners updated for partner:', partnerUid);
+        }
+      } catch (linkErr) {
+        // Falls back to queue path — partner will self-link on next login
+        console.warn('[Partnership] Fast-path blocked — partner will self-link on login. Reason:', linkErr?.message || linkErr);
       }
     }
     
@@ -2481,6 +2671,132 @@ function deletePartner(id) {
   renderWorkersPage();
   renderPartnerExpensesInForm();
   showToast('تم حذف الشريك — لن يرى المصنع بعد الآن', 'warning');
+}
+
+/**
+ * Re-link a partner who was added but never got the factory in their account.
+ * Useful for partners that were added before the lowercase-email fix, or where
+ * the cloud write failed mid-flight.
+ *
+ * Steps:
+ *   1. Re-search for partner by email (lowercase + emailLower + raw casing).
+ *   2. If found: stamp their UID into settings.partners, factory.partnerUids,
+ *      factory.partnerShares; update partner.linkedOwners.
+ *   3. If not found: re-create the cloud invitation document.
+ */
+async function resyncPartnerLink(partnerId) {
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error'); return;
+  }
+  const settings = DB.get('settings') || defaultSettings();
+  const partners = settings.partners || [];
+  const idx = partners.findIndex(p => p.id === partnerId);
+  if (idx === -1) { showToast('❌ لم يتم العثور على الشريك', 'error'); return; }
+  const p = partners[idx];
+  if (!p.email) { showToast('⚠️ هذا الشريك بدون بريد إلكتروني — لا يمكن ربطه', 'warning'); return; }
+  if (!CURRENT_FACTORY) { showToast('⚠️ افتح المصنع أولاً ثم أعد المحاولة', 'warning'); return; }
+
+  showToast('🔄 جاري إعادة الربط...', 'info');
+  const emailLc = p.email.toLowerCase();
+
+  try {
+    // 1) Look up partner's user doc with multiple strategies
+    let userDoc = null;
+    let res = await fs.collection('users').where('email', '==', emailLc).limit(1).get();
+    if (!res.empty) userDoc = res.docs[0];
+    if (!userDoc) {
+      res = await fs.collection('users').where('emailLower', '==', emailLc).limit(1).get();
+      if (!res.empty) userDoc = res.docs[0];
+    }
+    if (!userDoc) {
+      res = await fs.collection('users').where('email', '==', p.email).limit(1).get();
+      if (!res.empty) userDoc = res.docs[0];
+    }
+
+    if (!userDoc) {
+      // No account yet — re-create invitation
+      const inviteId = `invite_${emailLc.replace(/[^a-zA-Z0-9]/g, '_')}_${CURRENT_USER.uid}`;
+      await fs.collection('app_data').doc(inviteId).set({
+        type: 'partner_invite',
+        email: emailLc,
+        name: p.name,
+        sharePercent: p.sharePercent,
+        ownerUid: CURRENT_USER.uid,
+        factoryId: CURRENT_FACTORY.id,
+        timestamp: Date.now()
+      });
+      showToast('⚠️ لا يوجد حساب بهذا البريد — أُعيد إرسال الدعوة، ستُربط تلقائياً عند تسجيله', 'warning');
+      return;
+    }
+
+    const partnerUid = userDoc.id;
+    if (partnerUid === CURRENT_USER.uid) {
+      showToast('❌ لا يمكنك ربط نفسك كشريك', 'error'); return;
+    }
+
+    // 2) Stamp UID on partner record
+    partners[idx].uid = partnerUid;
+    settings.partners = partners;
+    DB.set('settings', settings);
+
+    // 3) Update factory.partnerUids + partnerShares + ownerUid
+    const factories = FactoryDB.getFactories();
+    const fIdx = factories.findIndex(f => f.id === CURRENT_FACTORY.id);
+    if (fIdx !== -1) {
+      const pUids = factories[fIdx].partnerUids || [];
+      if (!pUids.includes(partnerUid)) pUids.push(partnerUid);
+      factories[fIdx].partnerUids = pUids;
+      factories[fIdx].partnerShares = factories[fIdx].partnerShares || {};
+      factories[fIdx].partnerShares[partnerUid] = p.sharePercent;
+      if (!factories[fIdx].ownerUid) factories[fIdx].ownerUid = CURRENT_USER.uid;
+      localStorage.setItem(FactoryDB.listKey, JSON.stringify(factories));
+      try {
+        await fs.collection('app_data').doc(FactoryDB.cloudDocId).set({
+          data: factories, lastUpdated: new Date().toISOString()
+        });
+      } catch (e) {
+        console.error('[Resync] Cloud factory list write failed:', e);
+      }
+    }
+
+    // 4) Queue a partner_link doc (the partner self-processes it on next login or live)
+    try {
+      const linkDocId = `link_${partnerUid}_${CURRENT_USER.uid}_${CURRENT_FACTORY.id}`;
+      await fs.collection('app_data').doc(linkDocId).set({
+        type: 'partner_link',
+        partnerUid: partnerUid,
+        ownerUid: CURRENT_USER.uid,
+        factoryId: CURRENT_FACTORY.id,
+        sharePercent: p.sharePercent,
+        name: p.name,
+        email: emailLc,
+        timestamp: Date.now()
+      });
+    } catch (e) {
+      console.warn('[Resync] could not queue partner_link:', e);
+    }
+
+    // 5) Fast-path: also try direct write to partner's linkedOwners
+    try {
+      const partnerDocRef = fs.collection('users').doc(partnerUid);
+      const fresh = await partnerDocRef.get();
+      const uData = fresh.exists ? fresh.data() : {};
+      const linked = uData.linkedOwners || [];
+      if (!linked.includes(CURRENT_USER.uid)) {
+        linked.push(CURRENT_USER.uid);
+        await partnerDocRef.update({ linkedOwners: linked });
+      }
+    } catch (e) {
+      console.warn('[Resync] linkedOwners direct update failed (fallback to queue):', e);
+    }
+
+    renderPartnersList(false);
+    addActivity(`تم إعادة ربط الشريك ${p.name}`, '🔄');
+    showToast(`✅ تم ربط ${p.name} بالمصنع — سيظهر عنده فوراً (أو عند تسجيل دخوله)`);
+  } catch (err) {
+    console.error('[Resync] Error:', err);
+    showToast('❌ تعذرت إعادة الربط — تحقق من الاتصال', 'error');
+  }
 }
 
 function renderPartnerExpensesInForm() {
@@ -2711,7 +3027,7 @@ function renderPartnersList(isRestricted) {
             </div>
           </div>
           ${!isRestricted ? `
-            <div style="display:flex;gap:6px">
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
               <button class="btn btn-outline btn-sm" onclick="togglePartnerEdit(${p.id})">✏️</button>
               <button class="btn btn-danger btn-sm" onclick="deletePartner(${p.id})">حذف</button>
             </div>` : ''}
@@ -2720,6 +3036,13 @@ function renderPartnersList(isRestricted) {
         <div id="partner-view-${p.id}">
           <div class="worker-stat"><span>نسبة المشاركة</span><strong class="success" id="partner-share-display-${p.id}">${p.sharePercent}%</strong></div>
           <div class="worker-stat" style="font-size:0.8rem"><span>البريد الإلكتروني</span><span style="color:var(--text-muted)">${p.email || '—'}</span></div>
+          ${!isRestricted && p.email ? `
+            <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-outline btn-sm" onclick="resyncPartnerLink(${p.id})" title="إعادة محاولة ربط الشريك بالمصنع">
+                🔄 إعادة الربط
+              </button>
+              ${!p.uid ? `<span style="font-size:0.78rem;color:#f6ad55;align-self:center">⚠️ غير مربوط — اضغط إعادة الربط</span>` : ''}
+            </div>` : ''}
         </div>
         <!-- edit mode -->
         <div id="partner-edit-${p.id}" style="display:none;margin-top:10px">
