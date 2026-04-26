@@ -614,7 +614,9 @@ const FactoryDB = {
   addFactory(name, icon, color) {
     const list = this.getFactories();
     const id = 'f_' + Date.now();
-    const factory = { id, name, icon, color, ownerUid: EFFECTIVE_OWNER_UID, createdAt: new Date().toISOString() };
+    // Carry existing partner UIDs into the new factory so they see it immediately
+    const partnerUids = [...new Set(list.flatMap(f => f.partnerUids || []))];
+    const factory = { id, name, icon, color, ownerUid: EFFECTIVE_OWNER_UID, createdAt: new Date().toISOString(), partnerUids };
     list.push(factory);
     this.saveFactories(list);
     return factory;
@@ -2403,7 +2405,7 @@ async function addPartner() {
             name: name,
             sharePercent: share,
             ownerUid: CURRENT_USER.uid,
-            factoryId: CURRENT_FACTORY?.id || null,
+            factoryId: null,  // null = link to ALL owner factories
             timestamp: Date.now()
           });
           showToast('⚠️ الحساب بهذا البريد غير موجود حالياً — سيتم الربط تلقائياً عند تسجيله', 'warning');
@@ -2418,26 +2420,17 @@ async function addPartner() {
     settings.partners = partners;
     DB.set('settings', settings);
 
-    // Update the factory's partnerUids list so the partner can see this factory
+    // Update partnerUids in ALL factories so the partner can see every factory of this owner
     if (partnerUid) {
-      // Always update current factory if inside one
-      const factoryIdToUpdate = CURRENT_FACTORY?.id;
-      if (factoryIdToUpdate) {
-        const factories = FactoryDB.getFactories();
-        const fIdx = factories.findIndex(f => f.id === factoryIdToUpdate);
-        if (fIdx !== -1) {
-          const pUids = factories[fIdx].partnerUids || [];
-          if (!pUids.includes(partnerUid)) {
-            pUids.push(partnerUid);
-            factories[fIdx].partnerUids = pUids;
-          }
-          // Store share percentage for display on factory selection screen
-          factories[fIdx].partnerShares = factories[fIdx].partnerShares || {};
-          factories[fIdx].partnerShares[partnerUid] = share;
-          FactoryDB.saveFactories(factories);
-          console.log('[Partnership] Added partnerUid', partnerUid, 'to factory', factoryIdToUpdate);
-        }
-      }
+      const factories = FactoryDB.getFactories();
+      factories.forEach(f => {
+        f.partnerUids = f.partnerUids || [];
+        if (!f.partnerUids.includes(partnerUid)) f.partnerUids.push(partnerUid);
+        f.partnerShares = f.partnerShares || {};
+        f.partnerShares[partnerUid] = share;
+      });
+      FactoryDB.saveFactories(factories);
+      console.log('[Partnership] Added partnerUid', partnerUid, 'to all', factories.length, 'factories');
     }
     
     if (document.getElementById('new-partner-name')) document.getElementById('new-partner-name').value = '';
@@ -2470,19 +2463,14 @@ function deletePartner(id) {
   settings.partners = partners;
   DB.set('settings', settings);
 
-  // Remove partner UID from factory.partnerUids and factory.partnerShares
-  if (partnerToDelete?.uid && CURRENT_FACTORY) {
+  // Remove partner UID from ALL factories' partnerUids and partnerShares
+  if (partnerToDelete?.uid) {
     const factories = FactoryDB.getFactories();
-    const fIdx = factories.findIndex(f => f.id === CURRENT_FACTORY.id);
-    if (fIdx !== -1) {
-      if (factories[fIdx].partnerUids) {
-        factories[fIdx].partnerUids = factories[fIdx].partnerUids.filter(uid => uid !== partnerToDelete.uid);
-      }
-      if (factories[fIdx].partnerShares) {
-        delete factories[fIdx].partnerShares[partnerToDelete.uid];
-      }
-      FactoryDB.saveFactories(factories);
-    }
+    factories.forEach(f => {
+      if (f.partnerUids) f.partnerUids = f.partnerUids.filter(uid => uid !== partnerToDelete.uid);
+      if (f.partnerShares) delete f.partnerShares[partnerToDelete.uid];
+    });
+    FactoryDB.saveFactories(factories);
 
     // Remove current owner from ex-partner's linkedOwners in Firestore
     fs.collection('users').doc(partnerToDelete.uid).get()
