@@ -304,6 +304,7 @@ async function doLogout() {
   CURRENT_ROLE = null;
   CURRENT_LINKED_OWNERS = [];
   EFFECTIVE_OWNER_UID = null;
+  WORKER_OWNER_UID = null;
   IS_INITIAL_CLOUD_LOAD = true;
   INITIAL_CLOUD_SYNC_DONE = false;
   document.body.className = '';
@@ -408,6 +409,7 @@ function initAuthListener() {
       CURRENT_USER_NAME = '';
       CURRENT_LINKED_OWNERS = [];
       EFFECTIVE_OWNER_UID = null;
+      WORKER_OWNER_UID = null;
       CURRENT_FACTORY = null;
       IS_INITIAL_CLOUD_LOAD = true;
       INITIAL_CLOUD_SYNC_DONE = false;
@@ -498,8 +500,10 @@ function initAuthListener() {
       // (enterFactory will override it per-factory when needed)
       if ((CURRENT_ROLE === 'worker' || CURRENT_ROLE === 'partner') && data.ownerUid) {
         EFFECTIVE_OWNER_UID = data.ownerUid;
+        WORKER_OWNER_UID = data.ownerUid;
       } else {
         EFFECTIVE_OWNER_UID = user.uid;
+        WORKER_OWNER_UID = null;
       }
 
       applyRoleToUI(CURRENT_ROLE, CURRENT_USER_NAME);
@@ -575,6 +579,7 @@ let INITIAL_CLOUD_SYNC_DONE = false;
 
 // UID of the "owning" user — equals current user for owners, equals assigned owner for workers/partners
 let EFFECTIVE_OWNER_UID = null;
+let WORKER_OWNER_UID = null;  // owner UID for workers/partner-role users — persists across factory enter/exit
 
 const CARD_COLORS = ['gold', 'blue', 'green', 'purple', 'teal', 'orange', 'red', 'pink'];
 
@@ -823,7 +828,12 @@ async function initGlobalSync() {
   stopGlobalSync();
 
   // Owners to sync: self + anyone who added me as a partner
-  const ownersToSync = [CURRENT_USER.uid, ...CURRENT_LINKED_OWNERS];
+  // Also include WORKER_OWNER_UID for workers/partner-role users so their employer's factory list is fetched
+  const ownersSet = new Set([CURRENT_USER.uid, ...CURRENT_LINKED_OWNERS]);
+  if (WORKER_OWNER_UID && WORKER_OWNER_UID !== CURRENT_USER.uid) {
+    ownersSet.add(WORKER_OWNER_UID);
+  }
+  const ownersToSync = [...ownersSet];
   
   IS_INITIAL_CLOUD_LOAD = true;
   let loadedCount = 0;
@@ -1349,7 +1359,8 @@ function enterFactory(factory) {
 function exitToFactoryScreen() {
   stopFactorySync();
   CURRENT_FACTORY = null;
-  EFFECTIVE_OWNER_UID = CURRENT_USER?.uid;
+  // Restore the correct owner UID: workers/partners keep pointing to their employer's namespace
+  EFFECTIVE_OWNER_UID = WORKER_OWNER_UID || CURRENT_USER?.uid;
 
   document.getElementById('app-wrapper').style.display = 'none';
   const screen = document.getElementById('factory-screen');
