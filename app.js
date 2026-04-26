@@ -32,6 +32,7 @@ fs.enablePersistence({ synchronizeTabs: true }).catch(err => {
 let CURRENT_USER = null;  // Firebase user object
 let CURRENT_ROLE = null;  // 'owner' | 'worker' | 'partner'
 let CURRENT_USER_NAME = '';
+let _paymentStatus = 'paid'; // 'paid' | 'unpaid' — tracks daily form payment toggle
 // Hashed versions of the secret codes
 const ADMIN_SECRET_HASH = '2cad27b2e9406f8248c1806c048b3c51671db8e65888f418e93c74e185553686';
 const DEV_SECRET_HASH = 'f2eb032f911a094ab44ac20b7603f57ef37523c3b96a49c4d0b3496595c8b0ad';
@@ -1668,6 +1669,21 @@ function initDailyForm() {
   document.getElementById('add-advance-row').addEventListener('click', addAdvanceRow);
 }
 
+function setPaymentStatus(status) {
+  _paymentStatus = status;
+  document.getElementById('btn-paid-status')?.classList.toggle('active', status === 'paid');
+  document.getElementById('btn-unpaid-status')?.classList.toggle('active', status === 'unpaid');
+  const section = document.getElementById('farsimon-section');
+  if (section) section.style.display = status === 'unpaid' ? 'block' : 'none';
+  if (status === 'paid') {
+    const inp = document.getElementById('inp-farsimon');
+    if (inp) inp.value = '';
+    const cl = document.getElementById('inp-sale-client');
+    if (cl) cl.value = '';
+  }
+  updateDailyCalc();
+}
+
 function updateDailyCalc() {
   const produced = Number(document.getElementById('inp-produced').value) || 0;
   const broken = Number(document.getElementById('inp-broken').value) || 0;
@@ -1733,6 +1749,19 @@ function updateDailyCalc() {
   document.getElementById('prev-sold-groups').textContent = soldTotal > 0 ? fmt(soldGroups) + ' كرطون' : '—';
   document.getElementById('prev-sold-single').textContent = soldTotal > 0 ? fmt(soldSingle) + ' بلاكة' : '—';
   document.getElementById('prev-income').textContent = fmt(income, 'دج');
+
+  // Farsimon / payment preview
+  const farsimon = _paymentStatus === 'unpaid' ? (Number(document.getElementById('inp-farsimon')?.value) || 0) : 0;
+  const creditAmount = _paymentStatus === 'unpaid' ? Math.max(0, income - farsimon) : 0;
+  const farsimonRow = document.getElementById('prev-farsimon-row');
+  const creditRow = document.getElementById('prev-credit-row');
+  if (farsimonRow) farsimonRow.style.display = _paymentStatus === 'unpaid' && income > 0 ? 'flex' : 'none';
+  if (creditRow) creditRow.style.display = _paymentStatus === 'unpaid' && creditAmount > 0 ? 'flex' : 'none';
+  const farsimonEl = document.getElementById('prev-farsimon');
+  if (farsimonEl) farsimonEl.textContent = fmt(farsimon, 'دج');
+  const creditEl = document.getElementById('prev-credit-amount');
+  if (creditEl) creditEl.textContent = fmt(creditAmount, 'دج');
+
   document.getElementById('prev-feed').textContent = fmt(feedBal, 'كغ');
   document.getElementById('prev-feed-cost').textContent = feedPrice > 0 ? fmt(feedCost, 'دج') : '—';
 
@@ -1839,6 +1868,9 @@ function saveDayData() {
   const specialSingles = Number(document.getElementById('inp-special-singles')?.value) || 0;
   const specialPrice = Number(document.getElementById('inp-special-price')?.value) || 0;
   const specialIncome = specialPlates * specialPrice + specialSingles * (specialPrice / 12);
+  const isPaid = _paymentStatus === 'paid';
+  const farsimon = isPaid ? 0 : (Number(document.getElementById('inp-farsimon')?.value) || 0);
+  const saleClient = isPaid ? '' : (document.getElementById('inp-sale-client')?.value.trim() || '');
 
   if (!date) { showToast('يرجى تحديد التاريخ', 'error'); return; }
 
@@ -1901,6 +1933,7 @@ function saveDayData() {
     expenses: 0, ownerAdvance, baseProfit, profit, partnerExpenses,
     specialPlates, specialSingles, specialPrice, specialIncome,
     dustAdvances: dustWorkerAdvancesToday,
+    isPaid, farsimon, saleClient,
     enteredBy: CURRENT_USER_NAME || '',
     enteredByUid: CURRENT_USER ? CURRENT_USER.uid : ''
   };
@@ -1921,11 +1954,51 @@ function saveDayData() {
     DB.set('workers', workers);
   }
 
+  // Auto-add credit for unpaid remainder
+  if (!isPaid && income > 0) {
+    const creditAmt = Math.max(0, income - farsimon);
+    if (creditAmt > 0) {
+      const credits = DB.get('credits') || [];
+      credits.push({
+        id: Date.now(),
+        date,
+        clientName: saleClient || 'مشتري غير محدد',
+        description: `بيع ${soldGroups} كرطون${soldSingle > 0 ? ' + ' + soldSingle + ' بلاكة' : ''} — فارسمون: ${fmt(farsimon, 'دج')}`,
+        amount: creditAmt
+      });
+      DB.set('credits', credits);
+      addActivity(`كريديت تلقائي: ${saleClient || 'مشتري'} — الباقي: ${fmt(creditAmt, 'دج')}`, '💳');
+    }
+  }
+
   const totalDayIncome = income + specialIncome;
   addActivity(`تم حفظ بيانات يوم ${fmtDate(date)} — مدخول: ${fmt(income, 'دج')}${specialIncome > 0 ? ' + خاص: '+fmt(specialIncome, 'دج') : ''} — فائدة: ${fmt(log.profit, 'دج')}`, '📅');
   showToast('✅ تم حفظ بيانات اليوم بنجاح!');
   renderDailyReportOutput(log);
+  if (!isPaid && income > 0) showSaleReceipt(log);
   updateDailyCalc();
+}
+
+function showSaleReceipt(log) {
+  const modal = document.getElementById('sale-receipt-modal');
+  if (!modal) return;
+  const factoryName = CURRENT_FACTORY?.name || '';
+  document.getElementById('receipt-factory-name').textContent = factoryName;
+  const creditAmt = Math.max(0, (log.income || 0) - (log.farsimon || 0));
+  document.getElementById('receipt-body').innerHTML = `
+    <div class="receipt-row"><span>التاريخ</span><span>${fmtDate(log.date)}</span></div>
+    <div class="receipt-row"><span>المشتري</span><span><strong>${log.saleClient || '—'}</strong></span></div>
+    <div class="receipt-divider"></div>
+    <div class="receipt-row"><span>الكرطونات المباعة</span><span>${fmt(log.soldGroups)} كرطون</span></div>
+    ${log.soldSingle > 0 ? `<div class="receipt-row"><span>الفردي المباع</span><span>${fmt(log.soldSingle)} بلاكة</span></div>` : ''}
+    <div class="receipt-row"><span>سعر البلاكة</span><span>${fmt(log.price, 'دج')}</span></div>
+    <div class="receipt-divider"></div>
+    <div class="receipt-row receipt-total"><span>المبلغ الكلي</span><span>${fmt(log.income, 'دج')}</span></div>
+    <div class="receipt-row" style="color:var(--blue)"><span>الفارسمون (المدفوع)</span><span><strong>${fmt(log.farsimon || 0, 'دج')}</strong></span></div>
+    <div class="receipt-row receipt-credit"><span>الباقي (كريديت)</span><span><strong>${fmt(creditAmt, 'دج')}</strong></span></div>
+    <div class="receipt-note">تم تسجيل الباقي تلقائياً في الكريديات</div>
+  `;
+  modal.style.display = 'flex';
 }
 
 function renderDailyReportOutput(log) {
@@ -2115,9 +2188,11 @@ window.addEventListener('click', (e) => {
 });
 
 function clearDailyForm() {
+  setPaymentStatus('paid');
   ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates',
     'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-dead', 'inp-water-cost', 'inp-manure-income',
-    'inp-owner-advance', 'inp-notes', 'inp-special-plates', 'inp-special-singles', 'inp-special-price'].forEach(id => {
+    'inp-owner-advance', 'inp-notes', 'inp-special-plates', 'inp-special-singles', 'inp-special-price',
+    'inp-farsimon', 'inp-sale-client'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
