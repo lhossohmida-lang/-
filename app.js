@@ -2136,7 +2136,7 @@ function showSaleReceipt(log) {
     <div class="receipt-divider no-print"></div>
     <div class="receipt-row receipt-total no-print"><span>المبلغ الكلي</span><span>${fmt(log.income, 'دج')}</span></div>
     <div class="receipt-row" style="color:var(--blue)"><span>الفارسمون (المدفوع)</span><span><strong>${fmt(log.farsimon || 0, 'دج')}</strong></span></div>
-    <div class="receipt-row receipt-credit no-print"><span>الباقي (كريديت)</span><span><strong>${fmt(creditAmt, 'دج')}</strong></span></div>
+    <div class="receipt-row receipt-credit"><span>الباقي (دين)</span><span><strong>${fmt(creditAmt, 'دج')}</strong></span></div>
     <div class="receipt-note no-print">تم تسجيل الباقي تلقائياً في الكريديات</div>
   `;
   modal.style.display = 'flex';
