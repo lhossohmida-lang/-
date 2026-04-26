@@ -375,17 +375,18 @@ function applyRoleToUI(role, name) {
   if (roleEl) {
     if (role === 'owner')   roleEl.textContent = '👔 صاحب العمل';
     else if (role === 'partner') roleEl.textContent = '🤝 شريك';
-    else                    roleEl.textContent = '👷 عامل';
+    else                    roleEl.textContent = '✍️ كاتب';
   }
 
   // Banner in daily page
   const banners = document.querySelectorAll('.worker-mode-banner');
+  const hasWriter = workers.length > 0;
   banners.forEach(b => {
     if (role === 'worker') {
-      b.textContent = `👷 أنت مسجل دخول كعامل (${name}) — يمكنك إدخال بيانات اليوم`;
+      b.textContent = `✍️ أنت مسجل دخول ككاتب (${name}) — يمكنك إدخال بيانات اليوم`;
       b.style.cssText = 'display:block;background:rgba(72,187,120,0.1);border:1px solid rgba(72,187,120,0.3);border-radius:8px;padding:10px 14px;margin-bottom:12px;color:#68d391;font-size:0.88rem';
-    } else if (role === 'owner') {
-      b.textContent = `👔 أنت مسجل دخول كصاحب عمل (${name}) — لديك صلاحية كاملة`;
+    } else if (role === 'owner' && hasWriter) {
+      b.textContent = `👁️ وضع المراقبة — الكاتب يتولى إدخال البيانات (${name})`;
       b.style.cssText = 'display:block;background:rgba(212,160,23,0.1);border:1px solid rgba(212,160,23,0.3);border-radius:8px;padding:10px 14px;margin-bottom:12px;color:#d4a017;font-size:0.88rem';
     } else {
       b.style.display = 'none';
@@ -657,14 +658,14 @@ async function createWorkerAccount() {
     document.getElementById('wa-password').value = '';
 
     okEl.textContent = `✅ تم إنشاء حساب العامل "${name}" بنجاح! يمكنه الآن تسجيل الدخول.`;
-    addActivity(`تم إنشاء حساب للعامل ${name}`, '👷');
+    addActivity(`تم إنشاء حساب للكاتب ${name}`, '✍️');
     showToast(`✅ حساب العامل ${name} جاهز`);
   } catch(e) {
     errEl.textContent = translateAuthError(e.code);
     errEl.classList.add('visible');
   } finally {
     if (secondApp) { try { await secondApp.delete(); } catch(_) {} }
-    btn.disabled = false; btn.textContent = '➕ إنشاء حساب عامل';
+    btn.disabled = false; btn.textContent = '➕ إنشاء حساب كاتب';
   }
 }
 
