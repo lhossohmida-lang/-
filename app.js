@@ -2445,6 +2445,52 @@ function renderSalesTable() {
       deleteLogById(logId);
     });
   });
+
+  renderMonthlySalesTable(logs);
+}
+
+function renderMonthlySalesTable(logs) {
+  const tbody = document.getElementById('monthly-sales-tbody');
+  if (!tbody) return;
+  
+  if (!logs || !logs.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">لا توجد مبيعات شهرية</td></tr>';
+    return;
+  }
+  
+  const monthly = {};
+  logs.forEach(log => {
+    if (!log.date) return;
+    const dateObj = new Date(log.date);
+    const y = dateObj.getFullYear();
+    const m = dateObj.getMonth();
+    const key = `${y}-${m}`;
+    const arMonth = new Intl.DateTimeFormat('ar-DZ', { month: 'long', year: 'numeric' }).format(dateObj);
+    
+    if (!monthly[key]) {
+      monthly[key] = { label: arMonth, sortDate: new Date(y, m, 1), groups: 0, singles: 0, income: 0, profit: 0 };
+    }
+    monthly[key].groups += Number(log.soldGroups) || 0;
+    monthly[key].singles += Number(log.soldSingle) || 0;
+    monthly[key].income += (Number(log.income) || 0) + (Number(log.specialIncome) || 0);
+    monthly[key].profit += Number(log.profit) || 0;
+  });
+  
+  const sorted = Object.values(monthly).sort((a, b) => b.sortDate - a.sortDate);
+  tbody.innerHTML = '';
+  
+  sorted.forEach(m => {
+    const profitColor = m.profit >= 0 ? 'var(--green)' : 'var(--red)';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${m.label}</strong></td>
+      <td>${fmt(m.groups)}</td>
+      <td>${fmt(m.singles)}</td>
+      <td><strong style="color:var(--green)">${fmt(m.income, 'دج')}</strong></td>
+      <td><strong style="color:${profitColor};font-size:1rem">${fmt(m.profit, 'دج')}</strong></td>
+    `;
+    tbody.appendChild(tr);
+  });
 }
 
 /* ===================== CREDITS (DEBTS) ===================== */
