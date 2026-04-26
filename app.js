@@ -224,13 +224,14 @@ async function doRegister() {
     // Process any pending partner invitations for this email BEFORE syncing
     try {
       const regInviteRes = await fs.collection('app_data')
-        .where('type', '==', 'partner_invite')
         .where('email', '==', email.toLowerCase())
         .get();
       
-      if (!regInviteRes.empty) {
-        console.log('[Register] Found', regInviteRes.size, 'pending partner invitations');
-        for (const invDoc of regInviteRes.docs) {
+      const inviteDocs = regInviteRes.docs.filter(d => d.data().type === 'partner_invite');
+
+      if (inviteDocs.length > 0) {
+        console.log('[Register] Found', inviteDocs.length, 'pending partner invitations');
+        for (const invDoc of inviteDocs) {
           const inv = invDoc.data();
           if (!CURRENT_LINKED_OWNERS.includes(inv.ownerUid)) {
             CURRENT_LINKED_OWNERS.push(inv.ownerUid);
@@ -464,16 +465,18 @@ function initAuthListener() {
       CURRENT_LINKED_OWNERS = data.linkedOwners || [];
 
       // 2a. Self-process queued partner_link docs (cross-user-safe path)
+      // Single-field query (partnerUid only) — avoids needing a composite index.
+      // Filter `type === 'partner_link'` in code.
       try {
         const linkRes = await fs.collection('app_data')
-          .where('type', '==', 'partner_link')
           .where('partnerUid', '==', user.uid)
           .get();
 
-        if (!linkRes.empty) {
-          console.log('[Auth] Found', linkRes.size, 'pending partner_link docs');
+        const linkDocs = linkRes.docs.filter(d => d.data().type === 'partner_link');
+        if (linkDocs.length > 0) {
+          console.log('[Auth] Found', linkDocs.length, 'pending partner_link docs');
           let linkAdded = false;
-          for (const lDoc of linkRes.docs) {
+          for (const lDoc of linkDocs) {
             const ln = lDoc.data();
             if (ln.ownerUid && !CURRENT_LINKED_OWNERS.includes(ln.ownerUid)) {
               CURRENT_LINKED_OWNERS.push(ln.ownerUid);
@@ -521,13 +524,14 @@ function initAuthListener() {
       // 2b. Check for partner_invite (legacy + new-account path)
       try {
         const inviteRes = await fs.collection('app_data')
-          .where('type', '==', 'partner_invite')
           .where('email', '==', userEmail)
           .get();
 
-        if (!inviteRes.empty) {
+        const inviteDocs = inviteRes.docs.filter(d => d.data().type === 'partner_invite');
+
+        if (inviteDocs.length > 0) {
           let hasNewLink = false;
-          for (const invDoc of inviteRes.docs) {
+          for (const invDoc of inviteDocs) {
             const inv = invDoc.data();
             if (!CURRENT_LINKED_OWNERS.includes(inv.ownerUid)) {
               CURRENT_LINKED_OWNERS.push(inv.ownerUid);
@@ -987,15 +991,16 @@ async function initGlobalSync() {
   // added by an owner while this partner is currently online. When triggered, we
   // self-process the link (add ownerUid to linkedOwners + ensure factory list contains us)
   // and re-run initGlobalSync so the factory appears immediately.
+  // Single-field where() avoids needing a composite Firestore index — filter type in code.
   try {
     const linkUnsub = fs.collection('app_data')
-      .where('type', '==', 'partner_link')
       .where('partnerUid', '==', CURRENT_USER.uid)
       .onSnapshot(async (snap) => {
         if (snap.empty) return;
         let needsResync = false;
         for (const lDoc of snap.docs) {
           const ln = lDoc.data();
+          if (ln.type !== 'partner_link') continue;
           if (ln.ownerUid && !CURRENT_LINKED_OWNERS.includes(ln.ownerUid)) {
             CURRENT_LINKED_OWNERS.push(ln.ownerUid);
             needsResync = true;
@@ -1529,12 +1534,137 @@ function exitToFactoryScreen() {
   const screen = document.getElementById('factory-screen');
   screen.style.display = 'flex';
 
-  // Refresh the screen to show latest stats
+  // Render from cache immediately so the UI shows something fast
   renderFactoryScreen();
+
+  // Then force a fresh sync so any newly-shared factories from partners show up.
+  // Run async in background — don't block the UI. Error handling is inside the function.
+  refreshFactoriesFromCloud({ silent: true }).catch(e => {
+    console.error('[exitToFactoryScreen] Refresh failed (non-fatal):', e);
+  });
 
   // Close mobile sidebar if open
   document.getElementById('sidebar')?.classList.remove('open');
   document.getElementById('sidebar-overlay')?.classList.remove('open');
+}
+
+/**
+ * Force a re-sync of the factory list from cloud.
+ * Simple & safe: fetch factories_list_<uid> for self + all linked owners, update localStorage, re-render.
+ *
+ * Triggered by the "🔄 تحديث" button or implicitly on factory screen entry.
+ */
+async function refreshFactoriesFromCloud({ silent = false } = {}) {
+  if (!CURRENT_USER || !auth.currentUser) {
+    console.warn('[Refresh] No current user');
+    return;
+  }
+
+  const btn = document.getElementById('btn-refresh-factories');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري التحديث...'; }
+
+  try {
+    // STEP 1: Re-fetch the user doc from server to get latest linkedOwners
+    try {
+      const userDoc = await fs.collection('users').doc(CURRENT_USER.uid).get({ source: 'server' });
+      if (userDoc.exists) {
+        const freshLinked = userDoc.data().linkedOwners || [];
+        CURRENT_LINKED_OWNERS = freshLinked;
+        console.log('[Refresh] linkedOwners from cloud:', CURRENT_LINKED_OWNERS);
+      }
+    } catch (e) {
+      console.warn('[Refresh] could not update linkedOwners:', e);
+    }
+
+    // STEP 2: Process any pending partner_link docs for this user (single-field query)
+    try {
+      const linkRes = await fs.collection('app_data')
+        .where('partnerUid', '==', CURRENT_USER.uid)
+        .get({ source: 'server' });
+
+      const linkDocs = linkRes.docs.filter(d => d.data().type === 'partner_link');
+      console.log('[Refresh] pending partner_link docs found:', linkDocs.length);
+
+      let newLinked = false;
+      for (const lDoc of linkDocs) {
+        const ln = lDoc.data();
+        if (ln.ownerUid && !CURRENT_LINKED_OWNERS.includes(ln.ownerUid)) {
+          CURRENT_LINKED_OWNERS.push(ln.ownerUid);
+          newLinked = true;
+          console.log('[Refresh] new owner linked:', ln.ownerUid, 'factory:', ln.factoryId);
+        }
+        // Ensure partnerUids on the factory list
+        try {
+          const fListDoc = await fs.collection('app_data').doc(`factories_list_${ln.ownerUid}`).get({ source: 'server' });
+          if (fListDoc.exists) {
+            const list = fListDoc.data().data || [];
+            let updated = false;
+            list.forEach(factory => {
+              if (!ln.factoryId || factory.id === ln.factoryId) {
+                factory.partnerUids = factory.partnerUids || [];
+                if (!factory.partnerUids.includes(CURRENT_USER.uid)) {
+                  factory.partnerUids.push(CURRENT_USER.uid);
+                  updated = true;
+                }
+                if (ln.sharePercent) {
+                  factory.partnerShares = factory.partnerShares || {};
+                  factory.partnerShares[CURRENT_USER.uid] = ln.sharePercent;
+                  updated = true;
+                }
+              }
+            });
+            if (updated) {
+              await fs.collection('app_data').doc(`factories_list_${ln.ownerUid}`).update({ data: list });
+              console.log('[Refresh] patched partnerUids on owner factory list:', ln.ownerUid);
+            }
+          }
+        } catch (e2) {
+          console.warn('[Refresh] could not patch factory list:', e2);
+        }
+      }
+      if (newLinked) {
+        try {
+          await fs.collection('users').doc(CURRENT_USER.uid).update({ linkedOwners: CURRENT_LINKED_OWNERS });
+          console.log('[Refresh] linkedOwners persisted:', CURRENT_LINKED_OWNERS);
+        } catch (_) {}
+      }
+    } catch (e) {
+      console.warn('[Refresh] partner_link processing error:', e);
+    }
+
+    // Fetch factories_list_<uid> for self + all linked owners from server
+    const ownersSet = new Set([CURRENT_USER.uid, ...CURRENT_LINKED_OWNERS]);
+    if (WORKER_OWNER_UID && WORKER_OWNER_UID !== CURRENT_USER.uid) ownersSet.add(WORKER_OWNER_UID);
+
+    let totalFactoriesFound = 0;
+    for (const uid of ownersSet) {
+      try {
+        const docId = `factories_list_${uid}`;
+        const doc = await fs.collection('app_data').doc(docId).get({ source: 'server' });
+        if (doc.exists) {
+          const cloudList = doc.data().data || [];
+          localStorage.setItem(`zohir_factories_${uid}`, JSON.stringify(cloudList));
+          totalFactoriesFound += cloudList.length;
+          console.log('[Refresh] fetched', cloudList.length, 'factories for owner', uid);
+        }
+      } catch (e) {
+        console.warn('[Refresh] could not fetch factories for', uid + ':', e?.message);
+      }
+    }
+
+    // Re-render the factory grid
+    renderFactoryScreen();
+
+    console.log('[Refresh] complete. Total factories:', totalFactoriesFound);
+    if (!silent && totalFactoriesFound >= 0) {
+      showToast(`✅ تم تحديث القائمة (${totalFactoriesFound} مصنع)`);
+    }
+  } catch (err) {
+    console.error('[Refresh] unexpected error:', err);
+    if (!silent) showToast('⚠️ حدث خطأ أثناء التحديث', 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 تحديث القائمة من السحابة'; }
+  }
 }
 
 function initFactoryScreen() {
@@ -1579,6 +1709,9 @@ function initFactoryScreen() {
   // Factory switcher buttons
   document.getElementById('btn-switch-factory').addEventListener('click', exitToFactoryScreen);
   document.getElementById('topbar-switch-btn').addEventListener('click', exitToFactoryScreen);
+
+  // Refresh factories from cloud (manual trigger on factory selection screen)
+  document.getElementById('btn-refresh-factories')?.addEventListener('click', () => refreshFactoriesFromCloud());
 }
 
 function openAddFactoryModal() {
@@ -2644,7 +2777,7 @@ async function addPartner() {
   if (isReadOnlyUser()) {
     showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error'); return;
   }
-  // This can be called from Settings or the new Team page
+  // This can be called from Settings, the Team page, or the share-factory modal
   const nameFromSettings = document.getElementById('new-partner-name')?.value.trim();
   const shareFromSettingsRaw = document.getElementById('new-partner-share')?.value;
   const shareFromSettings = shareFromSettingsRaw !== '' ? parseFloat(shareFromSettingsRaw) : 0;
@@ -2652,16 +2785,27 @@ async function addPartner() {
   const emailFromTeam = document.getElementById('new-team-partner-email')?.value.trim();
   const shareFromTeamRaw = document.getElementById('new-team-partner-share')?.value;
   const shareFromTeam = shareFromTeamRaw !== '' ? parseFloat(shareFromTeamRaw) : 0;
+  const nameFromModal = document.getElementById('share-partner-name')?.value.trim();
+  const emailFromModal = document.getElementById('share-partner-email')?.value.trim();
+  const shareFromModalRaw = document.getElementById('share-partner-share')?.value;
+  const shareFromModal = shareFromModalRaw !== '' ? parseFloat(shareFromModalRaw) : 0;
 
-  const name = nameFromSettings || nameFromTeam;
-  const share = shareFromSettings || shareFromTeam;
-  const email = emailFromTeam || '';
+  const name = nameFromSettings || nameFromTeam || nameFromModal;
+  const share = shareFromSettings || shareFromTeam || shareFromModal;
+  const email = emailFromTeam || emailFromModal || '';
 
   if (!name) { showToast('يرجى إدخال اسم الشريك', 'error'); return; }
   if (isNaN(share) || share <= 0 || share > 100) { showToast('نسبة غير صحيحة (1-100)', 'error'); return; }
-  
-  const btn = document.getElementById('btn-add-team-partner');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ جاري الإضافة...'; }
+  if (!CURRENT_FACTORY) { showToast('⚠️ افتح المصنع أولاً', 'error'); return; }
+
+  const teamBtn = document.getElementById('btn-add-team-partner');
+  const shareBtn = document.getElementById('btn-confirm-share-factory');
+  const btn = teamBtn;
+  const setBtnState = (busy) => {
+    if (teamBtn)  { teamBtn.disabled  = busy; teamBtn.textContent  = busy ? '⏳ جاري الإضافة...' : 'إضافة'; }
+    if (shareBtn) { shareBtn.disabled = busy; shareBtn.textContent = busy ? '⏳ جاري الإرسال...' : '🤝 إرسال المصنع'; }
+  };
+  setBtnState(true);
 
   try {
     const settings = DB.get('settings') || defaultSettings();
@@ -2715,17 +2859,18 @@ async function addPartner() {
           }
         } else {
           // USER NOT FOUND: Store a cloud invitation so they link automatically when they register
-          const inviteId = `invite_${emailLc.replace(/[^a-zA-Z0-9]/g, '_')}_${CURRENT_USER.uid}`;
+          // Scoped to THIS factory only
+          const inviteId = `invite_${emailLc.replace(/[^a-zA-Z0-9]/g, '_')}_${CURRENT_USER.uid}_${CURRENT_FACTORY.id}`;
           await fs.collection('app_data').doc(inviteId).set({
             type: 'partner_invite',
             email: emailLc,
             name: name,
             sharePercent: share,
             ownerUid: CURRENT_USER.uid,
-            factoryId: null,  // null = link to ALL owner factories
+            factoryId: CURRENT_FACTORY.id,
             timestamp: Date.now()
           });
-          showToast('⚠️ الحساب بهذا البريد غير موجود حالياً — سيتم الربط تلقائياً عند تسجيله', 'warning');
+          showToast('⚠️ الحساب بهذا البريد غير موجود حالياً — سيتم ربط هذا المصنع تلقائياً عند تسجيله', 'warning');
         }
       } catch (queryErr) {
         console.error('Firestore email query failed:', queryErr);
@@ -2738,40 +2883,38 @@ async function addPartner() {
     DB.set('settings', settings);
 
     // ── ORDER OF OPERATIONS ──
-    // 1) Update factory list (partnerUids/partnerShares) FIRST on ALL factories
-    //    so the partner sees every factory of this owner — and await cloud write.
-    // 2) Try fast-path: update partner's linkedOwners directly (works if rules allow).
-    // 3) ALWAYS write a partner_link queue doc — the partner picks it up on next login
-    //    and processes it themselves (works even when cross-user write is blocked).
+    // 1) Update CURRENT_FACTORY only (partnerUids/partnerShares) and await cloud write.
+    // 2) Always queue a partner_link doc scoped to THIS factory — reliable path.
+    // 3) Try fast-path: update partner's linkedOwners directly (works if rules allow).
     if (partnerUid) {
       const factories = FactoryDB.getFactories();
-      factories.forEach(f => {
+      const fIdx = factories.findIndex(f => f.id === CURRENT_FACTORY.id);
+      if (fIdx !== -1) {
+        const f = factories[fIdx];
         f.partnerUids = f.partnerUids || [];
         if (!f.partnerUids.includes(partnerUid)) f.partnerUids.push(partnerUid);
         f.partnerShares = f.partnerShares || {};
         f.partnerShares[partnerUid] = share;
         if (!f.ownerUid) f.ownerUid = CURRENT_USER.uid;
-      });
+      }
       localStorage.setItem(FactoryDB.listKey, JSON.stringify(factories));
       try {
         await fs.collection('app_data').doc(FactoryDB.cloudDocId).set({
           data: factories, lastUpdated: new Date().toISOString()
         });
-        console.log('[Partnership] Factory list (all', factories.length, 'factories) updated on cloud with partner UID', partnerUid);
+        console.log('[Partnership] Factory', CURRENT_FACTORY.id, 'updated on cloud with partner UID', partnerUid);
       } catch (cloudErr) {
         console.error('[Partnership] Cloud factory list write failed:', cloudErr);
       }
 
-      // Always queue a partner_link doc — reliable path even when cross-user
-      // writes are blocked. The partner self-processes on login. Idempotent by ID.
-      // factoryId: null = link to ALL owner factories.
+      // Queue a partner_link doc scoped to THIS factory. Idempotent by doc ID.
       try {
-        const linkDocId = `link_${partnerUid}_${CURRENT_USER.uid}_all`;
+        const linkDocId = `link_${partnerUid}_${CURRENT_USER.uid}_${CURRENT_FACTORY.id}`;
         await fs.collection('app_data').doc(linkDocId).set({
           type: 'partner_link',
           partnerUid: partnerUid,
           ownerUid: CURRENT_USER.uid,
-          factoryId: null,
+          factoryId: CURRENT_FACTORY.id,
           sharePercent: share,
           name: name,
           email: emailLc,
@@ -2804,18 +2947,120 @@ async function addPartner() {
     if (document.getElementById('new-team-partner-name')) document.getElementById('new-team-partner-name').value = '';
     if (document.getElementById('new-team-partner-email')) document.getElementById('new-team-partner-email').value = '';
     if (document.getElementById('new-team-partner-share')) document.getElementById('new-team-partner-share').value = '';
+    if (document.getElementById('share-partner-name')) document.getElementById('share-partner-name').value = '';
+    if (document.getElementById('share-partner-email')) document.getElementById('share-partner-email').value = '';
+    if (document.getElementById('share-partner-share')) document.getElementById('share-partner-share').value = '';
+    closeShareFactoryModal();
 
     renderPartnersSettings();
-    renderWorkersPage(); 
+    renderWorkersPage();
     renderPartnerExpensesInForm();
-    addActivity(`تم إضافة الشريك ${name} (حصة ${share}%)`, '🤝');
-    showToast(`✅ تمت إضافة ${name} — سيظهر المصنع في حسابه فور تسجيل الدخول`);
+    addActivity(`تم إضافة الشريك ${name} (حصة ${share}%) إلى ${CURRENT_FACTORY.name}`, '🤝');
+    showToast(`✅ تمت إضافة ${name} — سيظهر هذا المصنع في حسابه فور تسجيل الدخول`);
   } catch (err) {
     console.error('Add Partner Error:', err);
     showToast('❌ حدث خطأ أثناء إضافة الشريك', 'error');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'إضافة'; }
+    setBtnState(false);
   }
+}
+
+/* ===================== SHARE FACTORY MODAL ===================== */
+function openShareFactoryModal() {
+  if (isReadOnlyUser()) {
+    showToast('🔒 وضع المشاهدة فقط — لا يمكنك مشاركة المصنع', 'error'); return;
+  }
+  if (!CURRENT_FACTORY) {
+    showToast('⚠️ افتح المصنع أولاً', 'error'); return;
+  }
+  const modal = document.getElementById('modal-share-factory');
+  if (!modal) return;
+  // Reset fields each time so stale values don't leak across opens
+  ['share-partner-name', 'share-partner-email', 'share-partner-share'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  renderShareExistingPartners();
+  modal.classList.add('open');
+  setTimeout(() => document.getElementById('share-partner-name')?.focus(), 200);
+}
+
+function closeShareFactoryModal() {
+  document.getElementById('modal-share-factory')?.classList.remove('open');
+}
+
+function submitShareFactoryFromModal() {
+  // addPartner reads from share-partner-* fields when present
+  addPartner();
+}
+
+/* Render the existing partners list inside the share modal so the user
+ * can re-send the factory link to a partner already in their list. */
+function renderShareExistingPartners() {
+  const section = document.getElementById('share-existing-partners-section');
+  const listEl = document.getElementById('share-existing-partners-list');
+  if (!section || !listEl) return;
+
+  const settings = DB.get('settings') || defaultSettings();
+  const partners = settings.partners || [];
+  const factories = FactoryDB.getFactories();
+  const currentFactory = factories.find(f => f.id === CURRENT_FACTORY.id) || {};
+  const linkedUids = currentFactory.partnerUids || [];
+
+  if (!partners.length) {
+    section.style.display = 'none';
+    listEl.innerHTML = '';
+    return;
+  }
+  section.style.display = '';
+
+  listEl.innerHTML = partners.map(p => {
+    const isLinked = p.uid && linkedUids.includes(p.uid);
+    const hasEmail = !!p.email;
+    const statusBadge = isLinked
+      ? '<span style="background:rgba(34,197,94,0.15);color:#22c55e;font-size:0.72rem;padding:2px 8px;border-radius:10px;font-weight:700">✓ مُشارَك</span>'
+      : '<span style="background:rgba(239,68,68,0.12);color:#ef4444;font-size:0.72rem;padding:2px 8px;border-radius:10px;font-weight:700">— غير مرتبط</span>';
+    const actionBtn = hasEmail
+      ? `<button class="btn btn-outline btn-resend-partner" data-pid="${p.id}" style="padding:6px 12px;font-size:0.78rem">${isLinked ? '🔁 إعادة الإرسال' : '📤 إرسال الآن'}</button>`
+      : '<span style="color:var(--text-muted);font-size:0.75rem">لا يوجد بريد</span>';
+
+    return `
+      <div style="background:var(--bg-card-2,rgba(255,255,255,0.03));border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:160px">
+          <div style="font-weight:700;font-size:0.92rem">${escapeHtml(p.name)} <span style="color:var(--text-muted);font-weight:400">(${p.sharePercent}%)</span></div>
+          <div style="font-size:0.78rem;color:var(--text-secondary);margin-top:2px">${p.email ? escapeHtml(p.email) : '—'}</div>
+          <div style="margin-top:4px">${statusBadge}</div>
+        </div>
+        ${actionBtn}
+      </div>
+    `;
+  }).join('');
+
+  listEl.querySelectorAll('.btn-resend-partner').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const pid = Number(btn.dataset.pid);
+      btn.disabled = true;
+      btn.textContent = '⏳ جاري الإرسال...';
+      try {
+        await resyncPartnerLink(pid);
+        renderShareExistingPartners();
+      } catch (e) {
+        console.error('Resend partner error:', e);
+        btn.disabled = false;
+        btn.textContent = '📤 إرسال الآن';
+      }
+    });
+  });
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function deletePartner(id) {
@@ -2829,24 +3074,39 @@ function deletePartner(id) {
   settings.partners = partners;
   DB.set('settings', settings);
 
-  // Remove partner UID from ALL factories' partnerUids and partnerShares
-  if (partnerToDelete?.uid) {
+  // Remove partner UID from THIS factory only — they may still be a partner
+  // in other factories owned by the same owner.
+  if (partnerToDelete?.uid && CURRENT_FACTORY) {
     const factories = FactoryDB.getFactories();
-    factories.forEach(f => {
+    const fIdx = factories.findIndex(f => f.id === CURRENT_FACTORY.id);
+    if (fIdx !== -1) {
+      const f = factories[fIdx];
       if (f.partnerUids) f.partnerUids = f.partnerUids.filter(uid => uid !== partnerToDelete.uid);
       if (f.partnerShares) delete f.partnerShares[partnerToDelete.uid];
-    });
+    }
     FactoryDB.saveFactories(factories);
 
-    // Remove current owner from ex-partner's linkedOwners in Firestore
-    fs.collection('users').doc(partnerToDelete.uid).get()
-      .then(doc => {
-        if (doc.exists) {
-          const linked = (doc.data().linkedOwners || []).filter(uid => uid !== CURRENT_USER.uid);
-          return fs.collection('users').doc(partnerToDelete.uid).update({ linkedOwners: linked });
-        }
-      })
-      .catch(e => console.warn('[Partnership] Could not remove linkedOwner on deletion:', e));
+    // Remove the queued partner_link for THIS factory so it can't re-link the partner later.
+    try {
+      const linkDocId = `link_${partnerToDelete.uid}_${CURRENT_USER.uid}_${CURRENT_FACTORY.id}`;
+      fs.collection('app_data').doc(linkDocId).delete().catch(() => {});
+    } catch (_) {}
+
+    // Only strip the owner from the partner's linkedOwners if they no longer
+    // appear in ANY of this owner's factories.
+    const stillPartnerSomewhere = factories.some(f =>
+      (f.partnerUids || []).includes(partnerToDelete.uid)
+    );
+    if (!stillPartnerSomewhere) {
+      fs.collection('users').doc(partnerToDelete.uid).get()
+        .then(doc => {
+          if (doc.exists) {
+            const linked = (doc.data().linkedOwners || []).filter(uid => uid !== CURRENT_USER.uid);
+            return fs.collection('users').doc(partnerToDelete.uid).update({ linkedOwners: linked });
+          }
+        })
+        .catch(e => console.warn('[Partnership] Could not remove linkedOwner on deletion:', e));
+    }
   }
 
   renderPartnersSettings();
@@ -3971,6 +4231,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Partners settings events
   document.getElementById('btn-add-partner')?.addEventListener('click', addPartner);
+
+  // Dashboard "share this factory" button + modal
+  document.getElementById('btn-share-this-factory')?.addEventListener('click', openShareFactoryModal);
+  document.getElementById('btn-confirm-share-factory')?.addEventListener('click', submitShareFactoryFromModal);
+  document.getElementById('btn-cancel-share-factory')?.addEventListener('click', closeShareFactoryModal);
+  document.getElementById('modal-share-factory')?.addEventListener('click', (e) => {
+    if (e.target.id === 'modal-share-factory') closeShareFactoryModal();
+  });
 
   // Sales page tabs
   document.querySelectorAll('#sales-page-tabs .page-tab').forEach(btn => {

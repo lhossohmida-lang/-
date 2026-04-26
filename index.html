@@ -121,6 +121,7 @@
         </div>
       </div>
       <p class="factory-screen-tagline">اختر المصنع الذي تريد إدارته</p>
+      <button class="btn btn-outline" id="btn-refresh-factories" style="margin-top:10px;font-size:0.85rem;padding:8px 16px">🔄 تحديث القائمة من السحابة</button>
     </div>
 
     <div class="factory-cards-grid" id="factory-cards-grid">
@@ -158,6 +159,41 @@
     <div class="modal-actions">
       <button class="btn btn-primary" id="btn-confirm-add-factory">إضافة</button>
       <button class="btn btn-outline" id="btn-cancel-add-factory">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SHARE FACTORY WITH PARTNER MODAL ===== -->
+<div class="modal-overlay" id="modal-share-factory">
+  <div class="modal-box" style="max-width:480px;max-height:88vh;overflow-y:auto">
+    <div class="modal-title">🤝 شارك هذا المصنع مع شريك</div>
+
+    <!-- Existing partners section (rendered by JS) -->
+    <div id="share-existing-partners-section" style="margin-bottom:18px">
+      <div style="font-size:0.9rem;font-weight:700;color:var(--text-secondary);margin-bottom:8px">الشركاء الحاليون</div>
+      <div id="share-existing-partners-list"></div>
+    </div>
+
+    <div style="text-align:center;color:var(--text-muted);font-size:0.8rem;margin:14px 0;position:relative">
+      <span style="background:var(--bg-card);padding:0 12px;position:relative;z-index:1">أو أضف شريكاً جديداً</span>
+      <div style="position:absolute;top:50%;left:0;right:0;height:1px;background:var(--border)"></div>
+    </div>
+
+    <div class="form-group">
+      <label>اسم الشريك</label>
+      <input type="text" id="share-partner-name" placeholder="مثال: أحمد" />
+    </div>
+    <div class="form-group">
+      <label>البريد الإلكتروني للشريك</label>
+      <input type="email" id="share-partner-email" placeholder="partner@example.com" />
+    </div>
+    <div class="form-group">
+      <label>نسبة المشاركة %</label>
+      <input type="number" id="share-partner-share" placeholder="مثال: 30" min="1" max="100" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btn-confirm-share-factory">🤝 إرسال المصنع</button>
+      <button class="btn btn-outline" id="btn-cancel-share-factory">إغلاق</button>
     </div>
   </div>
 </div>
@@ -273,9 +309,12 @@
 
   <!-- ========== DASHBOARD PAGE ========== -->
   <section class="page active" id="page-dashboard">
-    <div class="page-header">
-      <h1>لوحة التحكم</h1>
-      <p>نظرة عامة على المصنع</p>
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+      <div>
+        <h1>لوحة التحكم</h1>
+        <p>نظرة عامة على المصنع</p>
+      </div>
+      <button class="btn btn-primary restricted-edit" id="btn-share-this-factory" style="white-space:nowrap">🤝 شارك هذا المصنع</button>
     </div>
 
     <div class="kpi-grid" id="kpi-grid">

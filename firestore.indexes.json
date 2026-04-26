@@ -7,6 +7,14 @@
         { "fieldPath": "type", "mode": "ASCENDING" },
         { "fieldPath": "email", "mode": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "app_data",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "type", "mode": "ASCENDING" },
+        { "fieldPath": "partnerUid", "mode": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
