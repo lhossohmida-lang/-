@@ -2392,33 +2392,27 @@ body.role-partner #btn-switch-factory {
 /* =============================================
    ADMIN-ONLY VISIBILITY
    ============================================= */
-/* .admin-only = inline delete buttons in tables.
-   Hidden for OWNER only when workers exist — workers CAN delete records */
-body.has-workers.role-owner .admin-only,
-body.role-owner #btn-add-factory,
+/* .admin-only = inline delete buttons in tables. Partners only. */
 body.role-partner .admin-only {
   display: none !important;
 }
 
-/* Factory-level management hidden for owner and partner only */
-body.role-owner #btn-add-factory,
-body.role-owner .factory-card-delete,
+/* Factory-level management hidden for partner only — owners CAN add/delete factories */
 body.role-partner #btn-add-factory,
 body.role-partner .factory-card-delete {
   display: none !important;
 }
 
-/* Owner role: read-only when workers exist — hide all edit controls */
+/* Owner WITH workers: only the daily-entry write controls are hidden.
+   Administrative tasks (add worker/partner/factory, delete credit, etc.)
+   stay available — owners always manage their own team. */
 body.has-workers.role-owner #btn-save-day,
 body.has-workers.role-owner #btn-clear-form,
 body.has-workers.role-owner #add-advance-row,
-body.has-workers.role-owner #btn-add-worker,
-body.has-workers.role-owner .btn-delete-log,
-body.has-workers.role-owner .btn-delete-log-rep,
-body.has-workers.role-owner .btn-delete-log-feed,
-body.has-workers.role-owner .btn-remove-adv,
-body.has-workers.role-owner .btn-delete-credit,
-body.has-workers.role-owner .worker-actions,
+body.has-workers.role-owner #page-daily .btn-delete-log,
+body.has-workers.role-owner #page-daily .btn-delete-log-rep,
+body.has-workers.role-owner #page-daily .btn-delete-log-feed,
+body.has-workers.role-owner #page-daily .btn-remove-adv,
 /* Partner remains read-only for admin cards */
 body.role-partner .admin-only-card,
 body.role-partner .restricted-edit {
@@ -2933,7 +2927,6 @@ body.role-partner .admin-only-card input {
    ============================================= */
 
 /* Hide admin-only columns/cells for owner (with workers) and partner (read-only roles) */
-body.has-workers.role-owner .admin-only,
 body.role-partner .admin-only {
   display: none !important;
 }

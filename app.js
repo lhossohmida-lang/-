@@ -51,11 +51,15 @@ let _isRegistering = false;
 
 /* ===================== PERMISSION HELPER ===================== */
 /**
- * Returns true when the current user is in READ-ONLY mode.
- *   'partner'             → always read-only
- *   'worker'              → always read-write
- *   'owner' (no workers)  → read-write — owner manages the factory himself
- *   'owner' (has workers) → read-only  — workers handle daily data entry
+ * Returns true for users who cannot edit ANYTHING in the current factory:
+ *   - 'partner' role (always)
+ *   - 'owner' viewing another owner's factory (acting as partner)
+ *
+ * NOTE: Owners WITH workers can still manage partners, factories, settings,
+ * and other administrative tasks. Only the daily data entry form is
+ * restricted for them — that restriction is enforced by CSS
+ * (body.has-workers.role-owner hides the form controls), and by an explicit
+ * check inside saveDayData().
  */
 function isReadOnlyUser() {
   if (CURRENT_ROLE === 'partner') return true;
@@ -63,10 +67,17 @@ function isReadOnlyUser() {
   if (CURRENT_ROLE === 'owner') {
     // Owner is read-only when viewing a factory owned by someone else (as a partner)
     if (EFFECTIVE_OWNER_UID && CURRENT_USER && EFFECTIVE_OWNER_UID !== CURRENT_USER.uid) return true;
-    // Owner is read-only when workers exist (workers handle daily entry)
+    return false;
+  }
+  return false;
+}
+
+/** Owner with workers cannot enter daily data — workers handle that. */
+function cannotDoDailyEntry() {
+  if (isReadOnlyUser()) return true;
+  if (CURRENT_ROLE === 'owner') {
     const workers = DB.get('workers') || [];
     if (workers.length > 0) return true;
-    return false;
   }
   return false;
 }
@@ -382,7 +393,7 @@ function applyRoleToUI(role, name) {
   });
 
   // Owner / Partner notice in daily page (orange — read-only)
-  const isReadOnly = isReadOnlyUser();
+  const isReadOnly = cannotDoDailyEntry();
   let ownerNotice = document.getElementById('entry-readonly-notice');
   if (isReadOnly) {
     if (!ownerNotice) {
@@ -1986,7 +1997,7 @@ function populateWorkerSelects() {
 }
 
 function saveDayData() {
-  if (isReadOnlyUser()) {
+  if (cannotDoDailyEntry()) {
     showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error');
     return;
   }
