@@ -1028,14 +1028,17 @@ textarea::placeholder { color: var(--text-muted); }
 }
 
 @media print {
+  body > *:not(#sale-receipt-modal) { display: none !important; }
   #sale-receipt-modal > *:not(.receipt-paper) { display: none !important; }
   #sale-receipt-modal {
     position: static !important;
     background: none !important;
     display: block !important;
   }
-  .receipt-paper { border: none; color: #000; background: #fff; }
-  .receipt-footer { display: none !important; }
+  .receipt-paper { border: none; color: #000; background: #fff; box-shadow: none; }
+  .receipt-paper * { color: #000 !important; }
+  .receipt-footer,
+  .receipt-paper .no-print { display: none !important; }
 }
 
 /* ======= BUTTONS ======= */

@@ -2127,17 +2127,17 @@ function showSaleReceipt(log) {
   document.getElementById('receipt-factory-name').textContent = factoryName;
   const creditAmt = Math.max(0, (log.income || 0) - (log.farsimon || 0));
   document.getElementById('receipt-body').innerHTML = `
-    <div class="receipt-row"><span>التاريخ</span><span>${fmtDate(log.date)}</span></div>
+    <div class="receipt-row no-print"><span>التاريخ</span><span>${fmtDate(log.date)}</span></div>
     <div class="receipt-row"><span>المشتري</span><span><strong>${log.saleClient || '—'}</strong></span></div>
     <div class="receipt-divider"></div>
     <div class="receipt-row"><span>الكرطونات المباعة</span><span>${fmt(log.soldGroups)} كرطون</span></div>
     ${log.soldSingle > 0 ? `<div class="receipt-row"><span>الفردي المباع</span><span>${fmt(log.soldSingle)} بلاكة</span></div>` : ''}
-    <div class="receipt-row"><span>سعر البلاكة</span><span>${fmt(log.price, 'دج')}</span></div>
-    <div class="receipt-divider"></div>
-    <div class="receipt-row receipt-total"><span>المبلغ الكلي</span><span>${fmt(log.income, 'دج')}</span></div>
+    <div class="receipt-row no-print"><span>سعر البلاكة</span><span>${fmt(log.price, 'دج')}</span></div>
+    <div class="receipt-divider no-print"></div>
+    <div class="receipt-row receipt-total no-print"><span>المبلغ الكلي</span><span>${fmt(log.income, 'دج')}</span></div>
     <div class="receipt-row" style="color:var(--blue)"><span>الفارسمون (المدفوع)</span><span><strong>${fmt(log.farsimon || 0, 'دج')}</strong></span></div>
-    <div class="receipt-row receipt-credit"><span>الباقي (كريديت)</span><span><strong>${fmt(creditAmt, 'دج')}</strong></span></div>
-    <div class="receipt-note">تم تسجيل الباقي تلقائياً في الكريديات</div>
+    <div class="receipt-row receipt-credit no-print"><span>الباقي (كريديت)</span><span><strong>${fmt(creditAmt, 'دج')}</strong></span></div>
+    <div class="receipt-note no-print">تم تسجيل الباقي تلقائياً في الكريديات</div>
   `;
   modal.style.display = 'flex';
 }
