@@ -405,6 +405,27 @@
           <input type="number" id="inp-sold-total" placeholder="0" min="0" />
           <div class="field-note">📝 أدخل مجموع كل البلاكات المباعة — سيتم احتساب الكرطونات (12×) والفردي الباقي تلقائياً</div>
         </div>
+
+        <div class="form-group">
+          <label>حالة الدفع</label>
+          <div class="payment-toggle">
+            <button type="button" class="pay-btn active" id="btn-paid-status" onclick="setPaymentStatus('paid')">✅ خالصة</button>
+            <button type="button" class="pay-btn" id="btn-unpaid-status" onclick="setPaymentStatus('unpaid')">📋 غير خالصة</button>
+          </div>
+        </div>
+
+        <div id="farsimon-section" style="display:none">
+          <div class="form-group">
+            <label>اسم المشتري</label>
+            <input type="text" id="inp-sale-client" placeholder="اسم الزبون / المشتري" />
+          </div>
+          <div class="form-group">
+            <label>فارسمون (الدفعة المسبقة) — دج</label>
+            <input type="number" id="inp-farsimon" placeholder="0" min="0" oninput="updateDailyCalc()" />
+            <div class="field-note">💡 المبلغ المدفوع الآن — الباقي يضاف تلقائياً للكريديات</div>
+          </div>
+        </div>
+
         <div class="form-group">
           <label>بلاكات مجانية (استهلاك / عمال)</label>
           <input type="number" id="inp-free-plates" placeholder="0" min="0" />
@@ -413,7 +434,9 @@
         <div class="calc-preview">
           <div class="calc-row"><span>الكرطونات المباعة:</span><strong id="prev-sold-groups">—</strong></div>
           <div class="calc-row"><span>الفردي المباع:</span><strong id="prev-sold-single">—</strong></div>
-          <div class="calc-row" style="border-top:1px solid rgba(255,255,255,0.08);margin-top:4px;padding-top:6px"><span>المدخول:</span><strong id="prev-income" style="color:var(--green)">—</strong></div>
+          <div class="calc-row" style="border-top:1px solid rgba(255,255,255,0.08);margin-top:4px;padding-top:6px"><span>المدخول الكلي:</span><strong id="prev-income" style="color:var(--green)">—</strong></div>
+          <div class="calc-row" id="prev-farsimon-row" style="display:none"><span>الفارسمون (مدفوع):</span><strong id="prev-farsimon" style="color:var(--blue)">—</strong></div>
+          <div class="calc-row" id="prev-credit-row" style="display:none"><span>الباقي → كريديت:</span><strong id="prev-credit-amount" style="color:var(--red)">—</strong></div>
         </div>
       </div>
 
@@ -935,5 +958,21 @@
     });
   }
 </script>
+
+<!-- Sale Receipt Modal -->
+<div id="sale-receipt-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;">
+  <div class="receipt-paper">
+    <div class="receipt-header">
+      <div class="receipt-logo">🐔</div>
+      <div id="receipt-factory-name" class="receipt-factory"></div>
+      <div class="receipt-title">قسيمة بيع</div>
+    </div>
+    <div class="receipt-body" id="receipt-body"></div>
+    <div class="receipt-footer">
+      <button class="btn btn-primary" onclick="window.print()">🖨️ طباعة</button>
+      <button class="btn" onclick="document.getElementById('sale-receipt-modal').style.display='none'" style="background:rgba(255,255,255,0.1)">إغلاق</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
