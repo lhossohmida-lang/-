@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(node --check \"D:/program/anis 2/app.js\")"
+      "Bash(node --check \"D:/program/anis 2/app.js\")",
+      "Bash(grep -n \"link_\\\\${\")",
+      "Bash(node -e \"require\\('fs'\\).readFileSync\\('app.js','utf8'\\)\")",
+      "Bash(node --input-type=module)",
+      "Bash(node -c app.js)",
+      "Bash(node -e \"try { eval\\(require\\('fs'\\).readFileSync\\('app.js','utf8'\\)\\); console.log\\('OK'\\); } catch\\(e\\){ console.error\\(e.message\\); }\")",
+      "Bash(firebase deploy *)"
     ]
   }
 }

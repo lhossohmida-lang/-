@@ -473,6 +473,16 @@ function initAuthListener() {
           .get();
 
         const linkDocs = linkRes.docs.filter(d => d.data().type === 'partner_link');
+        cachePartnerLinks(linkDocs.map(d => {
+          const data = d.data();
+          return {
+            id: d.id,
+            ownerUid: data.ownerUid || null,
+            factoryId: data.factoryId || null,
+            partnerUid: data.partnerUid || null,
+            sharePercent: data.sharePercent || 0
+          };
+        }), user.uid);
         if (linkDocs.length > 0) {
           console.log('[Auth] Found', linkDocs.length, 'pending partner_link docs');
           let linkAdded = false;
@@ -620,6 +630,11 @@ function initAuthListener() {
         console.log('[Auth] Triggering global sync. linkedChanged:', linkedChanged, 'isInitial:', IS_INITIAL_CLOUD_LOAD);
         initGlobalSync();
       }
+
+      // 5. Owners: silently repair any broken partner links in background
+      if (CURRENT_ROLE === 'owner' && IS_INITIAL_CLOUD_LOAD) {
+        setTimeout(() => repairPartnerLinks(), 3000);
+      }
     });
 
     GLOBAL_SYNC_UNSUBS.push(unsub);
@@ -688,6 +703,44 @@ let EFFECTIVE_OWNER_UID = null;
 let WORKER_OWNER_UID = null;  // owner UID for workers/partner-role users — persists across factory enter/exit
 
 const CARD_COLORS = ['gold', 'blue', 'green', 'purple', 'teal', 'orange', 'red', 'pink'];
+
+function getPartnerLinksCacheKey(uid = CURRENT_USER?.uid) {
+  return `zohir_partner_links_${uid || 'default'}`;
+}
+
+function getCachedPartnerLinks(uid = CURRENT_USER?.uid) {
+  try { return JSON.parse(localStorage.getItem(getPartnerLinksCacheKey(uid))) || []; }
+  catch { return []; }
+}
+
+function cachePartnerLinks(links, uid = CURRENT_USER?.uid) {
+  if (!uid) return;
+  try { localStorage.setItem(getPartnerLinksCacheKey(uid), JSON.stringify(links || [])); }
+  catch (_) {}
+}
+
+function hasDirectPartnerLink(ownerUid, factoryId, partnerUid = CURRENT_USER?.uid) {
+  if (!ownerUid || !partnerUid) return false;
+  return getCachedPartnerLinks(partnerUid).some(link =>
+    link.ownerUid === ownerUid && (!link.factoryId || link.factoryId === factoryId)
+  );
+}
+
+async function upsertPartnerInvite({ email, name, sharePercent, ownerUid, factoryId }) {
+  const emailLc = (email || '').trim().toLowerCase();
+  if (!emailLc || !ownerUid || !factoryId) return null;
+  const inviteId = `invite_${emailLc.replace(/[^a-zA-Z0-9]/g, '_')}_${ownerUid}_${factoryId}`;
+  await fs.collection('app_data').doc(inviteId).set({
+    type: 'partner_invite',
+    email: emailLc,
+    name: name || '',
+    sharePercent: Number(sharePercent) || 0,
+    ownerUid,
+    factoryId,
+    timestamp: Date.now()
+  });
+  return inviteId;
+}
 
 /* ===================== FACTORY DB ===================== */
 const FactoryDB = {
@@ -892,6 +945,74 @@ function initCloudSync() {
   setTimeout(() => hideGlobalLoader(), 6000);
 }
 
+/**
+ * Re-creates partner_link docs and updates linkedOwners for every partner in every factory.
+ * Runs silently in background on owner login to repair broken/missing links.
+ */
+async function repairPartnerLinks() {
+  if (!CURRENT_USER || CURRENT_ROLE !== 'owner') return;
+  try {
+    const factories = FactoryDB.getFactories();
+    if (!factories.length) return;
+
+    for (const factory of factories) {
+      const partnerUids = factory.partnerUids || [];
+      if (!partnerUids.length) continue;
+
+      for (const partnerUid of partnerUids) {
+        if (!partnerUid || partnerUid === CURRENT_USER.uid) continue;
+
+        // Ensure partner_link doc exists (idempotent set)
+        try {
+          const linkDocId = `link_${partnerUid}_${CURRENT_USER.uid}_${factory.id}`;
+          const sharePercent = (factory.partnerShares || {})[partnerUid] || 0;
+          await fs.collection('app_data').doc(linkDocId).set({
+            type: 'partner_link',
+            partnerUid: partnerUid,
+            ownerUid: CURRENT_USER.uid,
+            factoryId: factory.id,
+            sharePercent: sharePercent,
+            timestamp: Date.now()
+          }, { merge: true });
+        } catch (e) {
+          console.warn('[RepairLinks] Could not write partner_link for', partnerUid, ':', e?.message);
+        }
+
+        // Ensure factory ownerUid is set
+        if (!factory.ownerUid) {
+          factory.ownerUid = CURRENT_USER.uid;
+        }
+
+        // Fast-path: update partner's linkedOwners
+        try {
+          const partnerDoc = await fs.collection('users').doc(partnerUid).get();
+          if (partnerDoc.exists) {
+            const linked = partnerDoc.data().linkedOwners || [];
+            if (!linked.includes(CURRENT_USER.uid)) {
+              linked.push(CURRENT_USER.uid);
+              await fs.collection('users').doc(partnerUid).update({ linkedOwners: linked });
+              console.log('[RepairLinks] Fixed linkedOwners for partner', partnerUid);
+            }
+          }
+        } catch (e) {
+          // Rules may block cross-user write — partner_link doc is the fallback
+          console.warn('[RepairLinks] linkedOwners update blocked (fallback ok):', e?.message);
+        }
+      }
+    }
+
+    // Save factories back if ownerUid was missing on any
+    const needsSave = factories.some(f => !f.ownerUid);
+    if (needsSave) {
+      factories.forEach(f => { if (!f.ownerUid) f.ownerUid = CURRENT_USER.uid; });
+      FactoryDB.saveFactories(factories);
+    }
+    console.log('[RepairLinks] Done.');
+  } catch (e) {
+    console.warn('[RepairLinks] Error:', e);
+  }
+}
+
 /* One-time migration: copy old global factories_list → per-owner doc (original owner only) */
 async function migrateFactoriesIfNeeded() {
   if (!EFFECTIVE_OWNER_UID || !CURRENT_USER) return;
@@ -996,6 +1117,20 @@ async function initGlobalSync() {
     const linkUnsub = fs.collection('app_data')
       .where('partnerUid', '==', CURRENT_USER.uid)
       .onSnapshot(async (snap) => {
+        cachePartnerLinks(
+          snap.docs
+            .filter(d => d.data().type === 'partner_link')
+            .map(d => {
+              const data = d.data();
+              return {
+                id: d.id,
+                ownerUid: data.ownerUid || null,
+                factoryId: data.factoryId || null,
+                partnerUid: data.partnerUid || null,
+                sharePercent: data.sharePercent || 0
+              };
+            })
+        );
         if (snap.empty) return;
         let needsResync = false;
         for (const lDoc of snap.docs) {
@@ -1071,7 +1206,33 @@ function showGlobalLoader(msg) {
 }
 
 function checkAutoEnter() {
-  const factories = FactoryDB.getFactories();
+  const ownFactories = (() => {
+    try { return JSON.parse(localStorage.getItem(`zohir_factories_${CURRENT_USER?.uid}`)) || []; }
+    catch { return []; }
+  })();
+  const accessibleFactories = [...ownFactories];
+  const seenIds = new Set(accessibleFactories.map(f => f.id));
+  const linkedOwnerUids = [...new Set([...(CURRENT_LINKED_OWNERS || []), WORKER_OWNER_UID].filter(Boolean))];
+
+  linkedOwnerUids.forEach(uid => {
+    if (uid === CURRENT_USER?.uid) return;
+    try {
+      const list = JSON.parse(localStorage.getItem(`zohir_factories_${uid}`)) || [];
+      list.forEach(factory => {
+        const isSharedWithMe =
+          (factory.partnerUids || []).includes(CURRENT_USER?.uid) ||
+          uid === WORKER_OWNER_UID ||
+          hasDirectPartnerLink(uid, factory.id);
+        const isNotMine = (factory.ownerUid || uid) !== CURRENT_USER?.uid;
+        if (!seenIds.has(factory.id) && isNotMine && isSharedWithMe) {
+          seenIds.add(factory.id);
+          accessibleFactories.push(factory);
+        }
+      });
+    } catch (_) {}
+  });
+
+  const factories = accessibleFactories;
   if (factories.length === 1 && !CURRENT_FACTORY) {
     enterFactory(factories[0]);
   } else if (factories.length === 0 && !CURRENT_FACTORY) {
@@ -1370,119 +1531,212 @@ function renderCurrentPage() {
 
 /* ===================== FACTORY SELECTION SCREEN ===================== */
 function renderFactoryScreen() {
-  const grid = document.getElementById('factory-cards-grid');
-  grid.innerHTML = '';
+  const myGrid    = document.getElementById('factory-cards-grid');
+  const sharedGrid = document.getElementById('shared-factory-cards-grid');
+  const sharedSection = document.getElementById('section-shared-factories');
+  const myHeader  = document.getElementById('my-factories-header');
+  myGrid.innerHTML = '';
+  if (sharedGrid) sharedGrid.innerHTML = '';
 
-  // Get own factories (factories owned by the current user)
-  let allFactories = [...FactoryDB.getFactories()];
+  // Read lists directly from each owner's cache so the screen never depends on
+  // whichever owner namespace happened to be active before opening it.
+  const readFactoriesForOwner = (uid) => {
+    if (!uid) return [];
+    try { return JSON.parse(localStorage.getItem(`zohir_factories_${uid}`)) || []; }
+    catch { return []; }
+  };
 
-  // Also fetch factories from all linked owners (people who added me as partner)
-  // This works for both 'owner' users who are partners in another owner's factory
-  const allLinkedUids = [...(CURRENT_LINKED_OWNERS || [])];
-  
-  allLinkedUids.forEach(uid => {
+  // ── مصانعي (المملوكة لي) ──
+  const myFactories = readFactoriesForOwner(CURRENT_USER?.uid).filter(f =>
+    !f.ownerUid || f.ownerUid === CURRENT_USER?.uid
+  );
+
+  // ── المصانع المشاركة (من ملاك آخرين) ──
+  // فقط المصانع التي:
+  // 1. المالك الحقيقي ≠ أنا
+  // 2. أنا في قائمة partnerUids
+  const seenIds = new Set(myFactories.map(f => f.id));
+  const sharedFactories = [];
+  const linkedOwnerUids = [...new Set([...(CURRENT_LINKED_OWNERS || []), WORKER_OWNER_UID].filter(Boolean))];
+  linkedOwnerUids.forEach(uid => {
+    if (uid === CURRENT_USER?.uid) return;
     try {
-      const cloudListKey = `zohir_factories_${uid}`;
-      const cloudList = JSON.parse(localStorage.getItem(cloudListKey)) || [];
-      // Show factories where I am explicitly listed as a partner UID
-      const partnered = cloudList.filter(f =>
-        (f.partnerUids && f.partnerUids.includes(CURRENT_USER?.uid))
-      );
-      allFactories = [...allFactories, ...partnered];
-    } catch (e) {
-      console.warn(`Error loading partnered factories for owner ${uid}:`, e);
-    }
+      const list = readFactoriesForOwner(uid);
+      list.forEach(f => {
+        const isSharedWithMe =
+          (f.partnerUids || []).includes(CURRENT_USER?.uid) ||
+          uid === WORKER_OWNER_UID ||
+          hasDirectPartnerLink(uid, f.id);
+        const trueOwnerUid = f.ownerUid || uid;
+        const isNotMine = trueOwnerUid !== CURRENT_USER?.uid;
+        if (!seenIds.has(f.id) && isNotMine && isSharedWithMe) {
+          if (!f.ownerUid) f.ownerUid = uid;
+          seenIds.add(f.id);
+          sharedFactories.push(f);
+        }
+      });
+    } catch (e) { console.warn('Error loading shared factories for', uid, e); }
   });
 
-  // Remove potential duplicates by ID
-  const uniqueFactories = [];
-  const seenIds = new Set();
-  allFactories.forEach(f => {
-    if (!seenIds.has(f.id)) {
-      uniqueFactories.push(f);
-      seenIds.add(f.id);
-    }
-  });
+  // حالة التحميل أو الفراغ لقسم مصانعي
+  if (!myFactories.length) {
+    myGrid.innerHTML = IS_INITIAL_CLOUD_LOAD
+      ? `<div style="grid-column:1/-1;text-align:center;padding:80px 0;color:var(--text-muted)">
+           <div class="loader" style="margin:0 auto 20px"></div>
+           <p style="font-size:1rem;animation:pulse 1.5s infinite">جاري البحث عن مصانعك...</p>
+         </div>`
+      : `<div style="grid-column:1/-1;text-align:center;padding:60px 0;color:var(--text-muted)">
+           <div style="font-size:3rem;margin-bottom:14px;filter:grayscale(1);opacity:0.4">🏭</div>
+           <p style="font-size:1rem;color:var(--text-primary)">لا توجد مصانع خاصة بك</p>
+           <p style="font-size:0.85rem;margin-top:6px">اضغط "إضافة مصنع جديد" للبدء</p>
+         </div>`;
+  }
 
-  if (!uniqueFactories.length) {
-    if (IS_INITIAL_CLOUD_LOAD) {
-      grid.innerHTML = `
-        <div style="grid-column:1/-1;text-align:center;padding:100px 0;color:var(--text-muted)">
-          <div class="loader" style="margin: 0 auto 20px;"></div>
-          <p style="font-size:1rem; animation: pulse 1.5s infinite">جاري البحث عن مصانعك في السحابة...</p>
-        </div>`;
+  // عنوان "مصانعي" يظهر دائماً
+  if (myHeader) myHeader.style.display = '';
+
+  // رسم بطاقات مصانعي
+  myFactories.forEach((factory, idx) => buildFactoryCard(factory, idx, true, myGrid));
+
+  // قسم المصانع المشاركة — يظهر دائماً
+  if (sharedSection) {
+    sharedSection.style.display = '';
+    if (sharedFactories.length) {
+      sharedFactories.forEach((factory, idx) => buildFactoryCard(factory, idx, false, sharedGrid));
     } else {
-      grid.innerHTML = `
-        <div style="grid-column:1/-1;text-align:center;padding:100px 0;color:var(--text-muted)">
-          <div style="font-size:3.5rem;margin-bottom:20px; filter: grayscale(1); opacity: 0.5;">🏭</div>
-          <p style="font-size:1.1rem; color: var(--text-primary)">لا توجد مصانع للآن</p>
-          <p style="font-size:0.9rem; margin-top:8px">ابدأ بإضافة مصنعك الأول لتنظيم أعمالك</p>
-        </div>`;
+      sharedGrid.innerHTML = IS_INITIAL_CLOUD_LOAD
+        ? `<div class="shared-factories-empty">
+             <div class="loader" style="margin:0 auto 12px;width:28px;height:28px"></div>
+             <p>جاري البحث...</p>
+           </div>`
+        : `<div class="shared-factories-empty">
+             <div style="font-size:2.2rem;margin-bottom:10px;opacity:0.4">🤝</div>
+             <p>لا توجد مصانع مشاركة معك حالياً</p>
+             <p style="font-size:0.82rem;margin-top:6px;color:var(--text-muted)">اطلب من المالك مشاركة المصنع معك، ثم اضغط "تحديث"</p>
+           </div>`;
     }
+  }
+}
+
+function buildFactoryCard(factory, idx, isPrimaryOwner, container) {
+  const logs = (() => {
+    try { return JSON.parse(localStorage.getItem(`zohir_${factory.id}_daily_logs`)) || []; }
+    catch { return []; }
+  })();
+  const todayLog = logs.find(l => l.date === todayStr());
+  const myShareRaw = (factory.partnerShares || {})[CURRENT_USER?.uid] || null;
+
+  const card = document.createElement('div');
+  card.className = 'factory-card';
+  card.setAttribute('data-color', factory.color || 'gold');
+  card.setAttribute('data-id', factory.id);
+  card.style.animationDelay = `${idx * 0.07}s`;
+
+  const canDelete = isPrimaryOwner && !isReadOnlyUser();
+
+  card.innerHTML = `
+    ${canDelete ? `<button class="factory-card-delete" data-id="${factory.id}" title="حذف المصنع">✕</button>` : ''}
+    <span class="factory-card-icon">${factory.icon || '🐔'}</span>
+    <div class="factory-card-name">${factory.name}</div>
+    <div class="factory-card-meta">${isPrimaryOwner ? '👔 تملك هذا المصنع' : `🤝 شريك${myShareRaw ? ' — حصتك ' + myShareRaw + '%' : ''}`}</div>
+    <div class="factory-card-stat">
+      <span class="label">مدخول اليوم</span>
+      <span class="value">${todayLog ? fmt(todayLog.income, 'دج') : '—'}</span>
+    </div>
+  `;
+
+  card.addEventListener('click', (e) => {
+    if (e.target.classList.contains('factory-card-delete') || e.target.closest('.factory-card-delete')) return;
+    enterFactory(factory, card);
+  });
+
+  const delBtn = card.querySelector('.factory-card-delete');
+  if (delBtn) {
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const fname = factory.name;
+      if (!confirm('هل تريد حذف مصنع "' + fname + '"؟')) return;
+      if (!confirm('تأكيد نهائي: سيتم حذف جميع بيانات "' + fname + '" من السحابة بشكل دائم. متأكد؟')) return;
+      stopGlobalSync();
+      FactoryDB.deleteFactory(factory.id);
+      renderFactoryScreen();
+      showToast('✅ تم حذف المصنع نهائياً', 'warning');
+      setTimeout(() => initGlobalSync(), 800);
+    });
+  }
+
+  container.appendChild(card);
+}
+function ensureFactoryEntryBurst() {
+  let burst = document.getElementById('factory-entry-burst');
+  if (burst) return burst;
+
+  burst = document.createElement('div');
+  burst.id = 'factory-entry-burst';
+  burst.className = 'factory-entry-burst';
+  burst.innerHTML = `
+    <div class="factory-entry-burst-ring">
+      <div class="factory-entry-burst-core">
+        <span class="factory-entry-burst-icon"></span>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(burst);
+  return burst;
+}
+
+function playFactoryEntryTransition(factory, sourceCard, onDone) {
+  const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const ring = sourceCard?.querySelector('.factory-card-icon');
+  if (reduceMotion || !ring) {
+    onDone();
     return;
   }
 
-  uniqueFactories.forEach((factory, idx) => {
-    // Get today's income from local data for quick stats
-    const logs = (() => {
-      try { return JSON.parse(localStorage.getItem(`zohir_${factory.id}_daily_logs`)) || []; }
-      catch { return []; }
-    })();
-    const today = todayStr();
-    const todayLog = logs.find(l => l.date === today);
+  const rect = ring.getBoundingClientRect();
+  const burst = ensureFactoryEntryBurst();
+  const iconEl = burst.querySelector('.factory-entry-burst-icon');
+  const screen = document.getElementById('factory-screen');
+  const centerX = rect.left + (rect.width / 2);
+  const centerY = rect.top + (rect.height / 2);
+  const targetX = (window.innerWidth / 2) - centerX;
+  const targetY = Math.max(110, window.innerHeight * 0.28) - centerY;
 
-    const card = document.createElement('div');
-    card.className = 'factory-card';
-    card.setAttribute('data-color', factory.color || 'gold');
-    card.setAttribute('data-id', factory.id);
-    card.style.animationDelay = `${idx * 0.07}s`;
+  burst.className = 'factory-entry-burst';
+  burst.setAttribute('data-color', factory.color || 'gold');
+  burst.style.width = `${rect.width}px`;
+  burst.style.height = `${rect.height}px`;
+  burst.style.left = `${rect.left}px`;
+  burst.style.top = `${rect.top}px`;
+  burst.style.transform = 'translate3d(0, 0, 0) scale(0.94)';
+  if (iconEl) iconEl.textContent = factory.icon || '🐔';
+  if (iconEl) iconEl.textContent = factory.icon || '🐔';
 
-    // Only actual owner of THIS factory can delete it
-    const isPrimaryOwner = factory.ownerUid === CURRENT_USER?.uid;
-    const canDelete = !isReadOnlyUser() && isPrimaryOwner;
-    
-    // Find my share in this factory
-    const myShareRaw = (factory.partnerShares && factory.partnerShares[CURRENT_USER?.uid]) || null;
-    const shareSuffix = myShareRaw ? ` (حصتك: ${myShareRaw}%)` : '';
+  sourceCard.classList.add('factory-card-active');
+  screen?.classList.add('is-transitioning');
 
-    card.innerHTML = `
-      ${canDelete ? `<button class="factory-card-delete" data-id="${factory.id}" title="حذف المصنع">✕</button>` : ''}
-      <span class="factory-card-icon">${factory.icon || '🐔'}</span>
-      <div class="factory-card-name">${factory.name}</div>
-      <div class="factory-card-meta">${isPrimaryOwner ? '👔 تملك هذا المصنع' : '🤝 شريك في هذا المصنع' + shareSuffix}</div>
-      <div class="factory-card-stat">
-        <span class="label">مدخول اليوم</span>
-        <span class="value">${todayLog ? fmt(todayLog.income, 'دج') : '—'}</span>
-      </div>
-    `;
-
-    // Main card click → enter factory
-    card.addEventListener('click', (e) => {
-      if (e.target.classList.contains('factory-card-delete') || e.target.closest('.factory-card-delete')) return;
-      enterFactory(factory);
-    });
-
-    // Delete button
-    const delBtn = card.querySelector('.factory-card-delete');
-    if (delBtn) {
-      delBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const fname = factory.name;
-        if (!confirm('هل تريد حذف مصنع "' + fname + '"؟')) return;
-        if (!confirm('تأكيد نهائي: سيتم حذف جميع بيانات "' + fname + '" من السحابة بشكل دائم. متأكد؟')) return;
-        stopGlobalSync();
-        FactoryDB.deleteFactory(factory.id);
-        renderFactoryScreen();
-        showToast('✅ تم حذف المصنع نهائياً', 'warning');
-        setTimeout(() => initGlobalSync(), 800);
-      });
-    }
-
-    grid.appendChild(card);
+  requestAnimationFrame(() => {
+    burst.classList.add('is-visible');
+    burst.style.transform = `translate3d(${targetX}px, ${targetY}px, 0) scale(2.15)`;
   });
+
+  setTimeout(() => {
+    burst.classList.add('is-fading');
+    onDone();
+    const appWrapper = document.getElementById('app-wrapper');
+    appWrapper?.classList.add('entering-dashboard');
+    setTimeout(() => appWrapper?.classList.remove('entering-dashboard'), 520);
+  }, 320);
+
+  setTimeout(() => {
+    burst.className = 'factory-entry-burst';
+    burst.style.transform = '';
+    sourceCard.classList.remove('factory-card-active');
+    screen?.classList.remove('is-transitioning');
+  }, 760);
 }
 
-function enterFactory(factory) {
+function enterFactoryLegacy(factory, sourceCard = null) {
   // The factory's true owner UID determines where data lives in Firestore
   const factoryOwnerUid = factory.ownerUid || CURRENT_USER?.uid;
   EFFECTIVE_OWNER_UID = factoryOwnerUid;
@@ -1522,6 +1776,38 @@ function enterFactory(factory) {
 
   // Populate worker selects
   populateWorkerSelects();
+}
+
+function enterFactory(factory, sourceCard = null) {
+  const factoryOwnerUid = factory.ownerUid || CURRENT_USER?.uid;
+  EFFECTIVE_OWNER_UID = factoryOwnerUid;
+  CURRENT_FACTORY = factory;
+
+  const isSharedFactory = factoryOwnerUid !== CURRENT_USER?.uid;
+
+  const continueEnter = () => {
+    showGlobalLoader(`جاري تحميل بيانات "${factory.name}"...`);
+
+    document.getElementById('sidebar-factory-icon').textContent = factory.icon || '🐔';
+    document.getElementById('sidebar-factory-name').textContent = factory.name;
+    document.getElementById('sidebar-factory-sub').textContent = isSharedFactory ? '(شراكة)' : '';
+    document.getElementById('topbar-factory-name').textContent = `deku — ${factory.name}${isSharedFactory ? ' (شراكة)' : ''}`;
+
+    initFactoryData();
+    applyRoleToUI(CURRENT_ROLE, CURRENT_USER_NAME);
+    renderPartnerExpensesInForm();
+
+    document.getElementById('factory-screen').style.display = 'none';
+    const appWrapper = document.getElementById('app-wrapper');
+    appWrapper.style.display = 'flex';
+
+    showPage('dashboard');
+    updateLiveDate();
+    initCloudSync();
+    populateWorkerSelects();
+  };
+
+  playFactoryEntryTransition(factory, sourceCard, continueEnter);
 }
 
 function exitToFactoryScreen() {
@@ -1583,6 +1869,16 @@ async function refreshFactoriesFromCloud({ silent = false } = {}) {
         .get({ source: 'server' });
 
       const linkDocs = linkRes.docs.filter(d => d.data().type === 'partner_link');
+      cachePartnerLinks(linkDocs.map(d => {
+        const data = d.data();
+        return {
+          id: d.id,
+          ownerUid: data.ownerUid || null,
+          factoryId: data.factoryId || null,
+          partnerUid: data.partnerUid || null,
+          sharePercent: data.sharePercent || 0
+        };
+      }));
       console.log('[Refresh] pending partner_link docs found:', linkDocs.length);
 
       let newLinked = false;
@@ -1632,6 +1928,34 @@ async function refreshFactoriesFromCloud({ silent = false } = {}) {
       console.warn('[Refresh] partner_link processing error:', e);
     }
 
+    // STEP 3: Scan partner_invite docs for this user's email as extra fallback
+    // (covers cases where linkedOwners was cleared but invites still exist)
+    try {
+      const userEmail = (CURRENT_USER.email || '').toLowerCase();
+      if (userEmail) {
+        const invRes = await fs.collection('app_data')
+          .where('email', '==', userEmail)
+          .get({ source: 'server' });
+        const invDocs = invRes.docs.filter(d =>
+          d.data().type === 'partner_invite' && d.data().ownerUid
+        );
+        for (const invDoc of invDocs) {
+          const inv = invDoc.data();
+          if (!CURRENT_LINKED_OWNERS.includes(inv.ownerUid)) {
+            CURRENT_LINKED_OWNERS.push(inv.ownerUid);
+            console.log('[Refresh] recovered linkedOwner from invite:', inv.ownerUid);
+          }
+        }
+        if (invDocs.length > 0) {
+          try {
+            await fs.collection('users').doc(CURRENT_USER.uid).update({ linkedOwners: CURRENT_LINKED_OWNERS });
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      console.warn('[Refresh] invite scan error:', e);
+    }
+
     // Fetch factories_list_<uid> for self + all linked owners from server
     const ownersSet = new Set([CURRENT_USER.uid, ...CURRENT_LINKED_OWNERS]);
     if (WORKER_OWNER_UID && WORKER_OWNER_UID !== CURRENT_USER.uid) ownersSet.add(WORKER_OWNER_UID);
@@ -1664,6 +1988,162 @@ async function refreshFactoriesFromCloud({ silent = false } = {}) {
     if (!silent) showToast('⚠️ حدث خطأ أثناء التحديث', 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔄 تحديث القائمة من السحابة'; }
+  }
+}
+
+/* ===================== DIAGNOSE SHARES ===================== */
+async function diagnoseShares() {
+  const out = document.getElementById('diagnose-output');
+  const modal = document.getElementById('modal-diagnose');
+  if (!out || !modal) return;
+  modal.classList.add('open');
+  out.textContent = '⏳ جاري الفحص...';
+
+  const lines = [];
+  const log = (...args) => { lines.push(args.join(' ')); out.textContent = lines.join('\n'); };
+
+  try {
+    log('UID:        ', CURRENT_USER?.uid);
+    log('Email:      ', CURRENT_USER?.email);
+    log('Role:       ', CURRENT_ROLE);
+    log('LinkedOwners (memory):', JSON.stringify(CURRENT_LINKED_OWNERS));
+    log('');
+
+    log('--- Cloud user doc ---');
+    const userDoc = await fs.collection('users').doc(CURRENT_USER.uid).get({source:'server'});
+    if (userDoc.exists) {
+      const d = userDoc.data();
+      log('exists: yes');
+      log('linkedOwners:', JSON.stringify(d.linkedOwners || []));
+      log('role:       ', d.role);
+      log('email:      ', d.email);
+    } else {
+      log('exists: NO ❌');
+    }
+    log('');
+
+    log('--- partner_link docs (by my UID) ---');
+    const linkRes = await fs.collection('app_data')
+      .where('partnerUid', '==', CURRENT_USER.uid)
+      .get({source:'server'});
+    const linkDocs = linkRes.docs.filter(d => d.data().type === 'partner_link');
+    log('count:', linkDocs.length);
+    linkDocs.forEach(d => {
+      const data = d.data();
+      log(`  • ${d.id}`);
+      log(`    ownerUid: ${data.ownerUid}`);
+      log(`    factoryId: ${data.factoryId}`);
+      log(`    share%:   ${data.sharePercent || 0}`);
+    });
+    log('');
+
+    log('--- partner_invite docs (by email) ---');
+    const userEmail = (CURRENT_USER.email || '').toLowerCase();
+    const invRes = await fs.collection('app_data').where('email','==',userEmail).get({source:'server'});
+    const invDocs = invRes.docs.filter(d => d.data().type === 'partner_invite');
+    log('count:', invDocs.length);
+    invDocs.forEach(d => {
+      const data = d.data();
+      log(`  • ${d.id}`);
+      log(`    ownerUid: ${data.ownerUid}`);
+      log(`    factoryId: ${data.factoryId}`);
+    });
+    log('');
+
+    log('--- Factories from linked owners ---');
+    const allOwners = new Set([...(userDoc.data()?.linkedOwners || []), ...linkDocs.map(d => d.data().ownerUid)]);
+    if (!allOwners.size) {
+      log('(no linked owners found)');
+    }
+    for (const uid of allOwners) {
+      log(`Owner: ${uid}`);
+      const fDoc = await fs.collection('app_data').doc(`factories_list_${uid}`).get({source:'server'});
+      if (!fDoc.exists) { log('  ❌ no factories_list doc'); continue; }
+      const list = fDoc.data().data || [];
+      list.forEach(f => {
+        const isMine = (f.partnerUids || []).includes(CURRENT_USER.uid);
+        log(`  ${isMine?'✅':'❌'} ${f.name} (id=${f.id})`);
+        log(`     partnerUids: ${JSON.stringify(f.partnerUids||[])}`);
+      });
+    }
+  } catch (e) {
+    log('');
+    log('❌ ERROR:', e.message);
+  }
+}
+
+async function diagnoseFix() {
+  const out = document.getElementById('diagnose-output');
+  if (!out) return;
+  const lines = [out.textContent, '', '--- 🔧 محاولة الإصلاح ---'];
+  const log = (...args) => { lines.push(args.join(' ')); out.textContent = lines.join('\n'); };
+
+  try {
+    // 1. Find all owners that should be linked (from partner_link OR partner_invite)
+    const linkRes = await fs.collection('app_data')
+      .where('partnerUid', '==', CURRENT_USER.uid)
+      .get({source:'server'});
+    const linkDocs = linkRes.docs.filter(d => d.data().type === 'partner_link');
+
+    const userEmail = (CURRENT_USER.email || '').toLowerCase();
+    const invRes = await fs.collection('app_data').where('email','==',userEmail).get({source:'server'});
+    const invDocs = invRes.docs.filter(d => d.data().type === 'partner_invite');
+
+    const ownersToLink = new Set();
+    linkDocs.forEach(d => { if (d.data().ownerUid) ownersToLink.add(d.data().ownerUid); });
+    invDocs.forEach(d => { if (d.data().ownerUid) ownersToLink.add(d.data().ownerUid); });
+
+    log('Found', ownersToLink.size, 'owner(s) to link');
+
+    // 2. Build new linkedOwners and patch partnerUids on each factory
+    const newLinked = [...ownersToLink];
+    for (const ownerUid of ownersToLink) {
+      try {
+        const fDoc = await fs.collection('app_data').doc(`factories_list_${ownerUid}`).get({source:'server'});
+        if (!fDoc.exists) { log(`❌ owner ${ownerUid} has no factories doc`); continue; }
+        const list = fDoc.data().data || [];
+        let updated = false;
+        list.forEach(f => {
+          // Find the matching partner_link/invite to know which factory(ies) to patch
+          const myLinks = [...linkDocs, ...invDocs].filter(d => d.data().ownerUid === ownerUid);
+          const allowedFactoryIds = myLinks.map(d => d.data().factoryId).filter(Boolean);
+          const matches = allowedFactoryIds.length === 0 || allowedFactoryIds.includes(f.id);
+          if (matches) {
+            f.partnerUids = f.partnerUids || [];
+            if (!f.partnerUids.includes(CURRENT_USER.uid)) {
+              f.partnerUids.push(CURRENT_USER.uid);
+              updated = true;
+              log(`  + patched factory "${f.name}"`);
+            }
+          }
+        });
+        if (updated) {
+          await fs.collection('app_data').doc(`factories_list_${ownerUid}`).update({ data: list });
+        }
+        // Save to localStorage
+        localStorage.setItem(`zohir_factories_${ownerUid}`, JSON.stringify(list));
+      } catch (e) {
+        log(`❌ patch failed for ${ownerUid}:`, e.message);
+      }
+    }
+
+    // 3. Update my linkedOwners
+    if (newLinked.length) {
+      try {
+        await fs.collection('users').doc(CURRENT_USER.uid).update({ linkedOwners: newLinked });
+        CURRENT_LINKED_OWNERS = newLinked;
+        log('✅ linkedOwners updated:', JSON.stringify(newLinked));
+      } catch (e) {
+        log('❌ linkedOwners update failed:', e.message);
+      }
+    }
+
+    // 4. Re-render
+    renderFactoryScreen();
+    log('');
+    log('✅ تم — أغلق هذه النافذة وستجد المصانع المشاركة');
+  } catch (e) {
+    log('❌ FIX ERROR:', e.message);
   }
 }
 
@@ -1712,6 +2192,11 @@ function initFactoryScreen() {
 
   // Refresh factories from cloud (manual trigger on factory selection screen)
   document.getElementById('btn-refresh-factories')?.addEventListener('click', () => refreshFactoriesFromCloud());
+  document.getElementById('btn-diagnose-shares')?.addEventListener('click', diagnoseShares);
+  document.getElementById('btn-diagnose-fix')?.addEventListener('click', diagnoseFix);
+  document.getElementById('btn-diagnose-close')?.addEventListener('click', () => {
+    document.getElementById('modal-diagnose')?.classList.remove('open');
+  });
 }
 
 function openAddFactoryModal() {
@@ -2627,6 +3112,11 @@ function renderSalesTable() {
 function renderMonthlySalesTable(logs) {
   const tbody = document.getElementById('monthly-sales-tbody');
   if (!tbody) return;
+  ensureMonthlySalesUI();
+  if (!logs || !logs.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-cell">لا توجد مبيعات شهرية</td></tr>';
+    return;
+  }
   
   if (!logs || !logs.length) {
     tbody.innerHTML = '<tr><td colspan="5" class="empty-cell">لا توجد مبيعات شهرية</td></tr>';
@@ -2643,12 +3133,13 @@ function renderMonthlySalesTable(logs) {
     const arMonth = new Intl.DateTimeFormat('ar-DZ', { month: 'long', year: 'numeric' }).format(dateObj);
     
     if (!monthly[key]) {
-      monthly[key] = { label: arMonth, sortDate: new Date(y, m, 1), groups: 0, singles: 0, income: 0, profit: 0 };
+      monthly[key] = { key, year: y, month: m, label: arMonth, sortDate: new Date(y, m, 1), groups: 0, singles: 0, income: 0, profit: 0, logs: [] };
     }
     monthly[key].groups += Number(log.soldGroups) || 0;
     monthly[key].singles += Number(log.soldSingle) || 0;
     monthly[key].income += (Number(log.income) || 0) + (Number(log.specialIncome) || 0);
     monthly[key].profit += Number(log.profit) || 0;
+    monthly[key].logs.push(log);
   });
   
   const sorted = Object.values(monthly).sort((a, b) => b.sortDate - a.sortDate);
@@ -2664,8 +3155,167 @@ function renderMonthlySalesTable(logs) {
       <td><strong style="color:var(--green)">${fmt(m.income, 'دج')}</strong></td>
       <td><strong style="color:${profitColor};font-size:1rem">${fmt(m.profit, 'دج')}</strong></td>
     `;
+    const actionTd = document.createElement('td');
+    actionTd.innerHTML = `
+      <button class="btn btn-outline btn-sm btn-view-monthly-sales" data-month-key="${m.key}" style="margin-left:4px">تفاصيل</button>
+      <button class="btn btn-outline btn-sm btn-print-monthly-sales" data-month-key="${m.key}">طباعة</button>
+    `;
+    tr.appendChild(actionTd);
     tbody.appendChild(tr);
   });
+  tbody.querySelectorAll('.btn-view-monthly-sales').forEach(btn => {
+    btn.addEventListener('click', () => showMonthlySalesDetails(btn.dataset.monthKey));
+  });
+  tbody.querySelectorAll('.btn-print-monthly-sales').forEach(btn => {
+    btn.addEventListener('click', () => printMonthlySalesDetails(btn.dataset.monthKey));
+  });
+}
+
+function ensureMonthlySalesUI() {
+  const monthlyTable = document.getElementById('monthly-sales-table');
+  const headRow = monthlyTable?.querySelector('thead tr');
+  if (headRow && !headRow.querySelector('.monthly-sales-actions-head')) {
+    const th = document.createElement('th');
+    th.className = 'monthly-sales-actions-head';
+    th.textContent = 'إجراءات';
+    headRow.appendChild(th);
+  }
+
+  if (document.getElementById('monthly-details-modal')) return;
+
+  const modal = document.createElement('div');
+  modal.id = 'monthly-details-modal';
+  modal.className = 'modal';
+  modal.style.cssText = 'display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); z-index:1000; justify-content:center; align-items:center; backdrop-filter:blur(5px);';
+  modal.innerHTML = `
+    <div class="modal-content section-card" style="position:relative; width:92%; max-width:820px; max-height:90vh; overflow-y:auto; padding:20px; background:var(--bg-card); border-radius:var(--radius); border:1px solid var(--border); box-shadow:var(--shadow-glow);">
+      <div style="position:absolute; top:15px; left:15px; display:flex; gap:15px; align-items:center;">
+        <button id="btn-print-monthly-details" style="background:transparent; border:none; font-size:1.3rem; cursor:pointer;" title="طباعة">🖨️</button>
+        <button id="btn-close-monthly-details" style="background:transparent; border:none; color:var(--text-secondary); font-size:1.6rem; cursor:pointer; line-height:1;" title="إغلاق">&times;</button>
+      </div>
+      <div class="section-title" id="monthly-details-title" style="margin-bottom:15px; font-size:1.2rem; color:var(--text-primary);">تفاصيل الشهر</div>
+      <div id="monthly-details-body"></div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  document.getElementById('btn-close-monthly-details')?.addEventListener('click', () => {
+    document.getElementById('monthly-details-modal').style.display = 'none';
+  });
+  document.getElementById('btn-print-monthly-details')?.addEventListener('click', () => {
+    printMonthlySalesDetails();
+  });
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) modal.style.display = 'none';
+  });
+}
+
+function buildMonthlySalesMap(logs = DB.get('daily_logs') || []) {
+  const monthly = {};
+  logs.forEach(log => {
+    if (!log.date) return;
+    const dateObj = new Date(log.date);
+    const y = dateObj.getFullYear();
+    const m = dateObj.getMonth();
+    const key = `${y}-${m}`;
+    const arMonth = new Intl.DateTimeFormat('ar-DZ', { month: 'long', year: 'numeric' }).format(dateObj);
+    if (!monthly[key]) {
+      monthly[key] = { key, year: y, month: m, label: arMonth, sortDate: new Date(y, m, 1), groups: 0, singles: 0, income: 0, profit: 0, logs: [] };
+    }
+    monthly[key].groups += Number(log.soldGroups) || 0;
+    monthly[key].singles += Number(log.soldSingle) || 0;
+    monthly[key].income += (Number(log.income) || 0) + (Number(log.specialIncome) || 0);
+    monthly[key].profit += Number(log.profit) || 0;
+    monthly[key].logs.push(log);
+  });
+  return monthly;
+}
+
+function showMonthlySalesDetails(monthKey) {
+  ensureMonthlySalesUI();
+  const monthData = buildMonthlySalesMap()[monthKey];
+  if (!monthData) return;
+
+  const modal = document.getElementById('monthly-details-modal');
+  const titleEl = document.getElementById('monthly-details-title');
+  const bodyEl = document.getElementById('monthly-details-body');
+  titleEl.textContent = `تفاصيل شهر ${monthData.label}`;
+
+  const sortedLogs = [...monthData.logs].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const rows = sortedLogs.map(log => {
+    const totalIncome = (Number(log.income) || 0) + (Number(log.specialIncome) || 0);
+    const profit = Number(log.profit) || 0;
+    return `
+      <div class="report-row">
+        <span>${fmtDate(log.date)}</span>
+        <strong>${fmt(log.soldGroups)} ك / ${fmt(log.soldSingle)} ف</strong>
+      </div>
+      <div class="report-row">
+        <span>الإجمالي</span>
+        <strong class="positive">${fmt(totalIncome, 'دج')}</strong>
+      </div>
+      <div class="report-row">
+        <span>الربح</span>
+        <strong class="${profit >= 0 ? 'positive' : 'negative'}">${fmt(profit, 'دج')}</strong>
+      </div>
+    `;
+  }).join('');
+
+  bodyEl.innerHTML = `
+    <div class="report-grid" style="margin-bottom:16px">
+      <div class="report-stat"><div class="rs-val">${fmt(monthData.groups)}</div><div class="rs-lbl">إجمالي الكرطونات</div></div>
+      <div class="report-stat"><div class="rs-val">${fmt(monthData.singles)}</div><div class="rs-lbl">إجمالي الفردي</div></div>
+      <div class="report-stat"><div class="rs-val">${fmt(monthData.income, 'دج')}</div><div class="rs-lbl">المدخول الإجمالي</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:${monthData.profit >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(monthData.profit, 'دج')}</div><div class="rs-lbl">الربح الأساسي</div></div>
+    </div>
+    <div class="report-block">
+      <div class="report-block-title">الأيام المسجلة داخل هذا الشهر</div>
+      ${rows || '<div class="report-row"><span>لا توجد أيام مسجلة</span><strong>—</strong></div>'}
+    </div>
+  `;
+  modal.style.display = 'flex';
+}
+
+function printMonthlySalesDetails(monthKey = null) {
+  if (monthKey) showMonthlySalesDetails(monthKey);
+  const bodyEl = document.getElementById('monthly-details-body');
+  const titleEl = document.getElementById('monthly-details-title');
+  if (!bodyEl || !titleEl) return;
+
+  const content = bodyEl.innerHTML;
+  const title = titleEl.textContent;
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(`
+    <html dir="rtl" lang="ar">
+      <head>
+        <title>${title}</title>
+        <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap" rel="stylesheet" />
+        <style>
+          body { font-family: 'Cairo', sans-serif; padding: 20px; color: #000; background: #fff; direction: rtl; }
+          h2 { text-align: center; margin-bottom: 20px; border-bottom: 2px solid #000; padding-bottom: 10px; }
+          .report-grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; margin-bottom:20px; }
+          .report-stat { border:1px solid #000; border-radius:8px; padding:14px; text-align:center; }
+          .rs-val { font-size:1.2rem; font-weight:700; }
+          .rs-lbl { margin-top:4px; font-size:0.85rem; }
+          .report-block { margin-bottom: 20px; border: 1px solid #000; padding: 15px; border-radius: 8px; page-break-inside: avoid; }
+          .report-block-title { font-weight: bold; font-size: 1.05rem; margin-bottom: 10px; border-bottom: 1px solid #000; padding-bottom: 5px; }
+          .report-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 15px; border-bottom: 1px dashed #ccc; padding-bottom: 4px; }
+          .report-row:last-child { border-bottom: none; }
+          .negative, .positive, .warn { font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <h2>${title}</h2>
+        ${content}
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  setTimeout(() => {
+    printWindow.print();
+    printWindow.close();
+  }, 500);
 }
 
 /* ===================== CREDITS (DEBTS) ===================== */
@@ -2832,6 +3482,14 @@ async function addPartner() {
     const emailLc = email.toLowerCase();
     if (email) {
       try {
+        await upsertPartnerInvite({
+          email: emailLc,
+          name,
+          sharePercent: share,
+          ownerUid: CURRENT_USER.uid,
+          factoryId: CURRENT_FACTORY.id
+        });
+
         // Try multiple query strategies to handle case variations stored in legacy docs
         let userDoc = null;
         // 1. Lowercased email (new canonical)
@@ -2858,23 +3516,12 @@ async function addPartner() {
             return;
           }
         } else {
-          // USER NOT FOUND: Store a cloud invitation so they link automatically when they register
-          // Scoped to THIS factory only
-          const inviteId = `invite_${emailLc.replace(/[^a-zA-Z0-9]/g, '_')}_${CURRENT_USER.uid}_${CURRENT_FACTORY.id}`;
-          await fs.collection('app_data').doc(inviteId).set({
-            type: 'partner_invite',
-            email: emailLc,
-            name: name,
-            sharePercent: share,
-            ownerUid: CURRENT_USER.uid,
-            factoryId: CURRENT_FACTORY.id,
-            timestamp: Date.now()
-          });
+          // USER NOT FOUND: the invite is already queued above and will link on login/register.
           showToast('⚠️ الحساب بهذا البريد غير موجود حالياً — سيتم ربط هذا المصنع تلقائياً عند تسجيله', 'warning');
         }
       } catch (queryErr) {
         console.error('Firestore email query failed:', queryErr);
-        showToast('⚠️ تعذر البحث عن حساب الشريك حالياً', 'warning');
+        showToast('⚠️ تعذر البحث عن حساب الشريك حالياً، لكن تم حفظ الدعوة وسيظهر المصنع عند دخوله', 'warning');
       }
     }
 
@@ -2897,11 +3544,8 @@ async function addPartner() {
         f.partnerShares[partnerUid] = share;
         if (!f.ownerUid) f.ownerUid = CURRENT_USER.uid;
       }
-      localStorage.setItem(FactoryDB.listKey, JSON.stringify(factories));
       try {
-        await fs.collection('app_data').doc(FactoryDB.cloudDocId).set({
-          data: factories, lastUpdated: new Date().toISOString()
-        });
+        FactoryDB.saveFactories(factories);
         console.log('[Partnership] Factory', CURRENT_FACTORY.id, 'updated on cloud with partner UID', partnerUid);
       } catch (cloudErr) {
         console.error('[Partnership] Cloud factory list write failed:', cloudErr);
@@ -3157,15 +3801,12 @@ async function resyncPartnerLink(partnerId) {
 
     if (!userDoc) {
       // No account yet — re-create invitation
-      const inviteId = `invite_${emailLc.replace(/[^a-zA-Z0-9]/g, '_')}_${CURRENT_USER.uid}`;
-      await fs.collection('app_data').doc(inviteId).set({
-        type: 'partner_invite',
+      await upsertPartnerInvite({
         email: emailLc,
         name: p.name,
         sharePercent: p.sharePercent,
         ownerUid: CURRENT_USER.uid,
-        factoryId: CURRENT_FACTORY.id,
-        timestamp: Date.now()
+        factoryId: CURRENT_FACTORY.id
       });
       showToast('⚠️ لا يوجد حساب بهذا البريد — أُعيد إرسال الدعوة، ستُربط تلقائياً عند تسجيله', 'warning');
       return;
@@ -3191,11 +3832,8 @@ async function resyncPartnerLink(partnerId) {
       factories[fIdx].partnerShares = factories[fIdx].partnerShares || {};
       factories[fIdx].partnerShares[partnerUid] = p.sharePercent;
       if (!factories[fIdx].ownerUid) factories[fIdx].ownerUid = CURRENT_USER.uid;
-      localStorage.setItem(FactoryDB.listKey, JSON.stringify(factories));
       try {
-        await fs.collection('app_data').doc(FactoryDB.cloudDocId).set({
-          data: factories, lastUpdated: new Date().toISOString()
-        });
+        FactoryDB.saveFactories(factories);
       } catch (e) {
         console.error('[Resync] Cloud factory list write failed:', e);
       }
@@ -3203,6 +3841,13 @@ async function resyncPartnerLink(partnerId) {
 
     // 4) Queue a partner_link doc (the partner self-processes it on next login or live)
     try {
+      await upsertPartnerInvite({
+        email: emailLc,
+        name: p.name,
+        sharePercent: p.sharePercent,
+        ownerUid: CURRENT_USER.uid,
+        factoryId: CURRENT_FACTORY.id
+      });
       const linkDocId = `link_${partnerUid}_${CURRENT_USER.uid}_${CURRENT_FACTORY.id}`;
       await fs.collection('app_data').doc(linkDocId).set({
         type: 'partner_link',
