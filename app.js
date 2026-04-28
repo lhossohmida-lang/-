@@ -2351,7 +2351,7 @@ function showPage(pageId) {
   };
   if (refreshers[pageId]) refreshers[pageId]();
   // Close mobile sidebar — delay on mobile so nav animation stays visible
-  const sidebarDelay = window.innerWidth <= 768 ? 520 : 0;
+  const sidebarDelay = window.innerWidth <= 768 ? 1520 : 0;
   setTimeout(() => {
     document.getElementById('sidebar')?.classList.remove('open');
     document.getElementById('sidebar-overlay')?.classList.remove('open');
