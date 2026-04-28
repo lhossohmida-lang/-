@@ -2327,7 +2327,7 @@ function triggerNavAnimation(clickedBtn) {
   clickedBtn.classList.remove('nav-item--click');
   void clickedBtn.offsetWidth;
   clickedBtn.classList.add('nav-item--click');
-  setTimeout(() => clickedBtn.classList.remove('nav-item--click'), 480);
+  setTimeout(() => clickedBtn.classList.remove('nav-item--click'), 1550);
 }
 
 function showPage(pageId) {
