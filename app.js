@@ -1581,11 +1581,11 @@ function renderFactoryScreen() {
   // حالة التحميل أو الفراغ لقسم مصانعي
   if (!myFactories.length) {
     myGrid.innerHTML = IS_INITIAL_CLOUD_LOAD
-      ? `<div style="grid-column:1/-1;text-align:center;padding:80px 0;color:var(--text-muted)">
+      ? `<div style="width:100%;text-align:center;padding:80px 0;color:var(--text-muted)">
            <div class="loader" style="margin:0 auto 20px"></div>
            <p style="font-size:1rem;animation:pulse 1.5s infinite">جاري البحث عن مصانعك...</p>
          </div>`
-      : `<div style="grid-column:1/-1;text-align:center;padding:60px 0;color:var(--text-muted)">
+      : `<div style="width:100%;text-align:center;padding:60px 0;color:var(--text-muted)">
            <div style="font-size:3rem;margin-bottom:14px;filter:grayscale(1);opacity:0.4">🏭</div>
            <p style="font-size:1rem;color:var(--text-primary)">لا توجد مصانع خاصة بك</p>
            <p style="font-size:0.85rem;margin-top:6px">اضغط "إضافة مصنع جديد" للبدء</p>
@@ -1650,6 +1650,29 @@ function buildFactoryCard(factory, idx, isPrimaryOwner, container) {
     enterFactory(factory, card);
   });
 
+  // Neighbor ripple: pulse adjacent cards when this one is hovered
+  card.addEventListener('mouseenter', () => {
+    const grid = card.parentElement;
+    if (!grid) return;
+    const siblings = [...grid.children].filter(el => el.classList.contains('factory-card'));
+    const myIdx = siblings.indexOf(card);
+    siblings.forEach((sibling, i) => {
+      if (sibling === card) return;
+      const dist = Math.abs(i - myIdx);
+      if (dist <= 2) {
+        sibling.classList.remove('is-neighbor');
+        void sibling.offsetWidth;
+        sibling.classList.add('is-neighbor');
+      }
+    });
+  });
+
+  card.addEventListener('mouseleave', () => {
+    const grid = card.parentElement;
+    if (!grid) return;
+    grid.querySelectorAll('.factory-card.is-neighbor').forEach(s => s.classList.remove('is-neighbor'));
+  });
+
   const delBtn = card.querySelector('.factory-card-delete');
   if (delBtn) {
     delBtn.addEventListener('click', (e) => {
@@ -1700,7 +1723,11 @@ function playFactoryEntryTransition(factory, sourceCard, onDone) {
   const centerX = rect.left + (rect.width / 2);
   const centerY = rect.top + (rect.height / 2);
   const targetX = (window.innerWidth / 2) - centerX;
-  const targetY = Math.max(110, window.innerHeight * 0.28) - centerY;
+  const targetY = (window.innerHeight / 2) - centerY;
+
+  // Scale burst to fill entire viewport (diagonal = maximum distance)
+  const diagonal = Math.hypot(window.innerWidth, window.innerHeight);
+  const fillScale = (diagonal / rect.width) * 1.1;
 
   burst.className = 'factory-entry-burst';
   burst.setAttribute('data-color', factory.color || 'gold');
@@ -1710,14 +1737,17 @@ function playFactoryEntryTransition(factory, sourceCard, onDone) {
   burst.style.top = `${rect.top}px`;
   burst.style.transform = 'translate3d(0, 0, 0) scale(0.94)';
   if (iconEl) iconEl.textContent = factory.icon || '🐔';
-  if (iconEl) iconEl.textContent = factory.icon || '🐔';
 
+  // Trigger melt on the source icon
+  ring.classList.add('is-melting');
   sourceCard.classList.add('factory-card-active');
   screen?.classList.add('is-transitioning');
 
   requestAnimationFrame(() => {
-    burst.classList.add('is-visible');
-    burst.style.transform = `translate3d(${targetX}px, ${targetY}px, 0) scale(2.15)`;
+    requestAnimationFrame(() => {
+      burst.classList.add('is-visible');
+      burst.style.transform = `translate3d(${targetX}px, ${targetY}px, 0) scale(${fillScale})`;
+    });
   });
 
   setTimeout(() => {
@@ -1726,14 +1756,15 @@ function playFactoryEntryTransition(factory, sourceCard, onDone) {
     const appWrapper = document.getElementById('app-wrapper');
     appWrapper?.classList.add('entering-dashboard');
     setTimeout(() => appWrapper?.classList.remove('entering-dashboard'), 520);
-  }, 320);
+  }, 380);
 
   setTimeout(() => {
     burst.className = 'factory-entry-burst';
     burst.style.transform = '';
+    ring.classList.remove('is-melting');
     sourceCard.classList.remove('factory-card-active');
     screen?.classList.remove('is-transitioning');
-  }, 760);
+  }, 860);
 }
 
 function enterFactoryLegacy(factory, sourceCard = null) {

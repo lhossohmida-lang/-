@@ -232,24 +232,27 @@ body {
 }
 
 .shared-factories-empty {
-  grid-column: 1 / -1;
+  width: 100%;
   text-align: center;
   padding: 36px 20px;
   color: var(--text-secondary);
   border: 1.5px dashed var(--border);
   border-radius: 14px;
   font-size: 0.92rem;
+  box-sizing: border-box;
 }
 
 .factory-cards-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
   gap: 28px 18px;
   margin-bottom: 32px;
-  justify-content: center;
   max-width: 980px;
   margin-left: auto;
   margin-right: auto;
+  width: 100%;
 }
 
 .factory-card {
@@ -264,6 +267,8 @@ body {
   -webkit-tap-highlight-color: transparent;
   user-select: none;
   text-align: center;
+  width: 160px;
+  flex-shrink: 0;
 }
 
 .factory-card:nth-child(1) { animation-delay: 0.05s; }
@@ -273,9 +278,47 @@ body {
 .factory-card:nth-child(5) { animation-delay: 0.25s; }
 .factory-card:nth-child(6) { animation-delay: 0.30s; }
 
+/* Staggered float offsets so icons bob at different phases */
+.factory-card:nth-child(1) .factory-card-icon { animation-delay:  0.0s; }
+.factory-card:nth-child(2) .factory-card-icon { animation-delay: -0.7s; }
+.factory-card:nth-child(3) .factory-card-icon { animation-delay: -1.4s; }
+.factory-card:nth-child(4) .factory-card-icon { animation-delay: -2.1s; }
+.factory-card:nth-child(5) .factory-card-icon { animation-delay: -2.8s; }
+.factory-card:nth-child(6) .factory-card-icon { animation-delay: -3.5s; }
+
 @keyframes cardSlideIn {
   from { opacity: 0; transform: translateY(24px) scale(0.95); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes circleFloat {
+  0%, 100% { translate: 0 0px; }
+  50%       { translate: 0 -7px; }
+}
+
+@keyframes liquidHover {
+  0%, 100% { border-radius: 50%; }
+  15%  { border-radius: 46% 54% 56% 44% / 52% 48% 52% 48%; }
+  30%  { border-radius: 55% 45% 44% 56% / 46% 54% 46% 54%; }
+  45%  { border-radius: 50% 50% 52% 48% / 56% 44% 48% 52%; }
+  60%  { border-radius: 44% 56% 50% 50% / 50% 50% 56% 44%; }
+  75%  { border-radius: 52% 48% 46% 54% / 46% 54% 50% 50%; }
+  90%  { border-radius: 49% 51% 55% 45% / 44% 56% 52% 48%; }
+}
+
+@keyframes circleMelt {
+  0%   { transform: scale(1.08); border-radius: 50%; filter: blur(0) brightness(1.2) saturate(1.3); opacity: 1; }
+  20%  { border-radius: 44% 56% 52% 48% / 56% 44% 52% 48%; transform: scale(1.16) rotate(4deg); filter: blur(1px) brightness(1.6) saturate(1.5); }
+  42%  { border-radius: 35% 65% 45% 55% / 62% 38% 58% 42%; transform: scale(1.3) rotate(-2deg); filter: blur(4px) brightness(2.2) saturate(1.8); }
+  65%  { border-radius: 28% 72% 38% 62% / 65% 35% 65% 35%; transform: scale(1.5); filter: blur(10px) brightness(3) saturate(2.2); opacity: 0.55; }
+  100% { transform: scale(2); filter: blur(24px) brightness(4.5) saturate(3); opacity: 0; border-radius: 42% 58% 38% 62% / 56% 44% 62% 38%; }
+}
+
+@keyframes neighborPulse {
+  0%   { transform: translateY(0) scale(1); }
+  35%  { transform: translateY(-4px) scale(1.04); }
+  65%  { transform: translateY(-2px) scale(1.02); }
+  100% { transform: translateY(0) scale(1); }
 }
 
 .factory-card::after {
@@ -329,17 +372,31 @@ body {
     0 16px 40px rgba(0,0,0,0.38),
     0 0 0 3px rgba(255,255,255,0.08) inset,
     0 0 0 7px rgba(255,255,255,0.03);
-  transition: transform 0.35s ease, box-shadow 0.35s ease, filter 0.35s ease;
+  transition: transform 0.35s ease, box-shadow 0.35s ease, filter 0.35s ease, translate 0.4s ease;
   transform-origin: center center;
   position: relative;
   z-index: 1;
+  animation: circleFloat 3.5s ease-in-out infinite;
 }
 .factory-card:hover .factory-card-icon {
+  translate: 0 0;
   transform: scale(1.08);
+  animation: liquidHover 1.4s ease-in-out infinite;
   box-shadow:
     0 24px 56px rgba(0,0,0,0.46),
     0 0 0 3px rgba(255,255,255,0.1) inset,
     0 0 36px color-mix(in srgb, var(--card-color-a, #f5c518) 28%, transparent);
+}
+
+/* Melt/dissolve animation triggered on click */
+.factory-card-icon.is-melting {
+  translate: 0 0 !important;
+  animation: circleMelt 0.65s cubic-bezier(0.4, 0, 1, 1) forwards !important;
+}
+
+/* Neighbor ripple effect when a sibling is hovered */
+.factory-card.is-neighbor .factory-card-icon {
+  animation: neighborPulse 0.55s cubic-bezier(0.4, 0, 0.2, 1) forwards !important;
 }
 
 .factory-card-name {
@@ -374,21 +431,14 @@ body {
 .factory-card-stat .value { color: var(--gold); font-weight: 700; }
 
 .factory-screen.is-transitioning .factory-card:not(.factory-card-active) {
-  opacity: 0.16;
-  transform: translateY(14px) scale(0.94);
-  filter: blur(2px);
+  opacity: 0.08;
+  transform: translateY(18px) scale(0.9);
+  filter: blur(4px) grayscale(0.4);
+  transition: all 0.35s ease;
 }
 
 .factory-screen.is-transitioning .factory-card-active {
   z-index: 3;
-}
-
-.factory-screen.is-transitioning .factory-card-active .factory-card-icon {
-  transform: translateY(-10px) scale(1.08);
-  box-shadow:
-    0 26px 70px rgba(0,0,0,0.46),
-    0 0 0 3px rgba(255,255,255,0.12) inset,
-    0 0 44px color-mix(in srgb, var(--card-color-a, #f5c518) 34%, transparent);
 }
 
 .factory-entry-burst {
@@ -399,9 +449,9 @@ body {
   opacity: 0;
   transform: translate3d(0, 0, 0) scale(0.94);
   transition:
-    transform 0.56s cubic-bezier(0.22, 0.8, 0.2, 1),
+    transform 0.52s cubic-bezier(0.3, 0, 0.15, 1),
     opacity 0.28s ease,
-    filter 0.42s ease;
+    filter 0.44s ease;
   filter: saturate(1) blur(0);
 }
 
@@ -411,7 +461,8 @@ body {
 
 .factory-entry-burst.is-fading {
   opacity: 0;
-  filter: saturate(1.2) blur(10px);
+  filter: saturate(2) blur(32px);
+  transition: opacity 0.38s ease, filter 0.32s ease;
 }
 
 .factory-entry-burst-ring,
@@ -1498,8 +1549,8 @@ textarea::placeholder { color: var(--text-muted); }
   .factory-logo-wrap { padding: 12px 20px; }
   .factory-logo-icon { font-size: 2.4rem; }
   .factory-logo-title { font-size: 1.7rem; }
-  .factory-cards-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 10px; }
-  .factory-card { padding: 6px 4px 0; }
+  .factory-cards-grid { gap: 20px 10px; }
+  .factory-card { width: 140px; padding: 6px 4px 0; }
   .factory-card-icon { width: 104px; height: 104px; font-size: 2.7rem; }
   .factory-card-name { font-size: 0.92rem; min-height: 2.4em; }
   .factory-card-stat { width: min(100%, 138px); }
@@ -1508,7 +1559,8 @@ textarea::placeholder { color: var(--text-muted); }
 }
 
 @media (max-width: 400px) {
-  .factory-cards-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 8px; }
+  .factory-cards-grid { gap: 18px 8px; }
+  .factory-card { width: 128px; }
   .factory-card-icon { width: 96px; height: 96px; font-size: 2.4rem; }
 }
 
