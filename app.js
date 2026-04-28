@@ -2350,9 +2350,12 @@ function showPage(pageId) {
     settings: loadSettingsForm
   };
   if (refreshers[pageId]) refreshers[pageId]();
-  // Close mobile sidebar
-  document.getElementById('sidebar')?.classList.remove('open');
-  document.getElementById('sidebar-overlay')?.classList.remove('open');
+  // Close mobile sidebar — delay on mobile so nav animation stays visible
+  const sidebarDelay = window.innerWidth <= 768 ? 520 : 0;
+  setTimeout(() => {
+    document.getElementById('sidebar')?.classList.remove('open');
+    document.getElementById('sidebar-overlay')?.classList.remove('open');
+  }, sidebarDelay);
 }
 
 /* ===================== LIVE DATE ===================== */
