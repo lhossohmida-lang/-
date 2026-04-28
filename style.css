@@ -465,6 +465,28 @@ body {
   transition: opacity 0.38s ease, filter 0.32s ease;
 }
 
+/* ======= SHATTER EFFECT ======= */
+.factory-shard {
+  position: fixed;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 9999;
+  animation: shardFly var(--dur, 0.55s) cubic-bezier(0.2, 0.6, 0.4, 1) var(--delay, 0ms) both;
+}
+
+@keyframes shardFly {
+  0%   { opacity: 1; transform: translate(0, 0) rotate(0deg) scale(1);    filter: brightness(1.4) blur(0); }
+  12%  { opacity: 1;                                                        filter: brightness(2.2) blur(0); }
+  55%  { opacity: 0.75; transform: translate(calc(var(--fx)*0.55), calc(var(--fy)*0.55)) rotate(calc(var(--fr)*0.55)) scale(0.78); }
+  100% { opacity: 0;    transform: translate(var(--fx), var(--fy))         rotate(var(--fr)) scale(0.22); filter: brightness(3) blur(4px); }
+}
+
+@keyframes iconCrackFlash {
+  0%   { transform: scale(1);    filter: brightness(1); }
+  40%  { transform: scale(1.14); filter: brightness(2.8) saturate(1.6); }
+  100% { transform: scale(1.2);  filter: brightness(3.5) saturate(2) blur(2px); opacity: 0; }
+}
+
 .factory-entry-burst-ring,
 .factory-entry-burst-core {
   width: 100%;

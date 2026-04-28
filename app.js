@@ -1647,7 +1647,19 @@ function buildFactoryCard(factory, idx, isPrimaryOwner, container) {
 
   card.addEventListener('click', (e) => {
     if (e.target.classList.contains('factory-card-delete') || e.target.closest('.factory-card-delete')) return;
-    enterFactory(factory, card);
+
+    const screen = document.getElementById('factory-screen');
+    card.classList.add('factory-card-active');
+    screen?.classList.add('is-transitioning');
+
+    playShatterEffect(card, factory.color || 'gold', () => {
+      screen?.classList.remove('is-transitioning');
+      card.classList.remove('factory-card-active');
+      const appWrapper = document.getElementById('app-wrapper');
+      appWrapper?.classList.add('entering-dashboard');
+      setTimeout(() => appWrapper?.classList.remove('entering-dashboard'), 520);
+      enterFactory(factory, null);
+    });
   });
 
   // Neighbor ripple: pulse adjacent cards when this one is hovered
@@ -1706,6 +1718,78 @@ function ensureFactoryEntryBurst() {
   `;
   document.body.appendChild(burst);
   return burst;
+}
+
+function playShatterEffect(sourceCard, color, onDone) {
+  const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const icon = sourceCard.querySelector('.factory-card-icon');
+  if (reduceMotion || !icon) { onDone(); return; }
+
+  const colorMap = {
+    gold:   ['#f5c518','#f0a500'], blue:   ['#63b3ed','#2b6cb0'],
+    green:  ['#48bb78','#276749'], purple: ['#b794f4','#6b46c1'],
+    red:    ['#fc8181','#c53030'], teal:   ['#4fd1c5','#285e61'],
+    orange: ['#f6ad55','#c05621'], pink:   ['#f687b3','#97266d'],
+  };
+  const [colorA, colorB] = colorMap[color] || colorMap.gold;
+
+  const rect = icon.getBoundingClientRect();
+  const N = 10;
+  const r = rect.width / 2;
+  const shards = [];
+
+  // Phase 1: crack flash on the icon itself
+  icon.style.animation = 'iconCrackFlash 0.18s cubic-bezier(0.4,0,1,1) forwards';
+
+  setTimeout(() => {
+    // Phase 2: hide icon, spawn shards
+    icon.style.opacity = '0';
+
+    for (let i = 0; i < N; i++) {
+      const angleStart = (i / N) * Math.PI * 2 - Math.PI / 2;
+      const angleEnd   = ((i + 1) / N) * Math.PI * 2 - Math.PI / 2;
+      const midAngle   = (angleStart + angleEnd) / 2 + (Math.random() - 0.5) * 0.35;
+
+      const flyDist = r * (1.4 + Math.random() * 1.6);
+      const flyX    = Math.cos(midAngle) * flyDist;
+      const flyY    = Math.sin(midAngle) * flyDist;
+      const rot     = (Math.random() - 0.5) * 260;
+      const delay   = Math.random() * 50;
+      const dur     = 0.48 + Math.random() * 0.12;
+
+      // Build wedge polygon with slight edge irregularity
+      const pts = [];
+      const steps = 5;
+      for (let s = 0; s <= steps; s++) {
+        const a = angleStart + (angleEnd - angleStart) * (s / steps);
+        const v = 0.82 + Math.random() * 0.36;
+        pts.push(`${50 + 50 * Math.cos(a) * v}% ${50 + 50 * Math.sin(a) * v}%`);
+      }
+      const clipPath = `polygon(50% 50%, ${pts.join(', ')})`;
+      const grad = `linear-gradient(${midAngle.toFixed(2)}rad, ${colorA}, ${colorB})`;
+
+      const shard = document.createElement('div');
+      shard.className = 'factory-shard';
+      shard.style.cssText = `
+        left:${rect.left}px; top:${rect.top}px;
+        width:${rect.width}px; height:${rect.height}px;
+        background:${grad};
+        clip-path:${clipPath};
+        --fx:${flyX.toFixed(1)}px; --fy:${flyY.toFixed(1)}px;
+        --fr:${rot.toFixed(1)}deg; --delay:${delay.toFixed(0)}ms; --dur:${dur.toFixed(2)}s;
+        box-shadow:0 0 12px ${colorA}88;
+      `;
+      document.body.appendChild(shard);
+      shards.push(shard);
+    }
+
+    setTimeout(() => {
+      shards.forEach(s => s.remove());
+      icon.style.opacity = '';
+      icon.style.animation = '';
+      onDone();
+    }, 640);
+  }, 140);
 }
 
 function playFactoryEntryTransition(factory, sourceCard, onDone) {
