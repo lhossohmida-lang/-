@@ -1540,9 +1540,9 @@ textarea::placeholder { color: var(--text-muted); }
   .sidebar-overlay.open { display: block; }
   .main-content {
     margin-right: 0 !important;
-    padding: 74px 14px calc(var(--bottom-nav-h) + 24px);
+    padding: 74px 14px 24px;
   }
-  .bottom-nav { display: flex; }
+  .bottom-nav { display: none; }
   
   .section-card {
     padding: 16px;
