@@ -2323,6 +2323,28 @@ function closeAddFactoryModal() {
 }
 
 /* ===================== NAVIGATION ===================== */
+function triggerNavAnimation(clickedBtn, selector, clickClass, waveClass) {
+  const all = [...document.querySelectorAll(selector)];
+  const myIdx = all.indexOf(clickedBtn);
+
+  // Animate the clicked item
+  clickedBtn.classList.remove(clickClass);
+  void clickedBtn.offsetWidth;
+  clickedBtn.classList.add(clickClass);
+  setTimeout(() => clickedBtn.classList.remove(clickClass), 500);
+
+  // Cascade wave on every other item
+  all.forEach((other, i) => {
+    if (other === clickedBtn) return;
+    const delay = Math.abs(i - myIdx) * 55 + 25;
+    other.style.setProperty('--wave-delay', `${delay}ms`);
+    other.classList.remove(waveClass);
+    void other.offsetWidth;
+    other.classList.add(waveClass);
+    setTimeout(() => other.classList.remove(waveClass), delay + 440);
+  });
+}
+
 function showPage(pageId) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -4970,11 +4992,18 @@ document.addEventListener('DOMContentLoaded', () => {
   initMobileSidebar();
 
   document.querySelectorAll('.nav-item').forEach(btn => {
-    btn.addEventListener('click', () => showPage(btn.dataset.page));
+    btn.addEventListener('click', () => {
+      if (!btn.dataset.page) return;
+      triggerNavAnimation(btn, '.nav-item[data-page]', 'nav-item--click', 'nav-item--wave');
+      showPage(btn.dataset.page);
+    });
   });
 
   document.querySelectorAll('.bottom-nav-item[data-page]').forEach(btn => {
-    btn.addEventListener('click', () => showPage(btn.dataset.page));
+    btn.addEventListener('click', () => {
+      triggerNavAnimation(btn, '.bottom-nav-item[data-page]', 'bottom-nav-item--click', 'bottom-nav-item--wave');
+      showPage(btn.dataset.page);
+    });
   });
 
   document.getElementById('bn-more')?.addEventListener('click', () => {
