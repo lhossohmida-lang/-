@@ -2323,26 +2323,11 @@ function closeAddFactoryModal() {
 }
 
 /* ===================== NAVIGATION ===================== */
-function triggerNavAnimation(clickedBtn, selector, clickClass, waveClass) {
-  const all = [...document.querySelectorAll(selector)];
-  const myIdx = all.indexOf(clickedBtn);
-
-  // Animate the clicked item
-  clickedBtn.classList.remove(clickClass);
+function triggerNavAnimation(clickedBtn) {
+  clickedBtn.classList.remove('nav-item--click');
   void clickedBtn.offsetWidth;
-  clickedBtn.classList.add(clickClass);
-  setTimeout(() => clickedBtn.classList.remove(clickClass), 500);
-
-  // Cascade wave on every other item
-  all.forEach((other, i) => {
-    if (other === clickedBtn) return;
-    const delay = Math.abs(i - myIdx) * 55 + 25;
-    other.style.setProperty('--wave-delay', `${delay}ms`);
-    other.classList.remove(waveClass);
-    void other.offsetWidth;
-    other.classList.add(waveClass);
-    setTimeout(() => other.classList.remove(waveClass), delay + 440);
-  });
+  clickedBtn.classList.add('nav-item--click');
+  setTimeout(() => clickedBtn.classList.remove('nav-item--click'), 480);
 }
 
 function showPage(pageId) {
@@ -4994,14 +4979,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.nav-item').forEach(btn => {
     btn.addEventListener('click', () => {
       if (!btn.dataset.page) return;
-      triggerNavAnimation(btn, '.nav-item[data-page]', 'nav-item--click', 'nav-item--wave');
+      triggerNavAnimation(btn);
       showPage(btn.dataset.page);
     });
   });
 
   document.querySelectorAll('.bottom-nav-item[data-page]').forEach(btn => {
     btn.addEventListener('click', () => {
-      triggerNavAnimation(btn, '.bottom-nav-item[data-page]', 'bottom-nav-item--click', 'bottom-nav-item--wave');
+      triggerNavAnimation(btn);
       showPage(btn.dataset.page);
     });
   });
