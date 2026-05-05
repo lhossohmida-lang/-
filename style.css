@@ -271,6 +271,30 @@ body {
   flex-shrink: 0;
 }
 
+.factory-card.is-orbiting {
+  pointer-events: none;
+  z-index: 12;
+  animation: none !important;
+  will-change: transform, filter, opacity;
+}
+
+.factory-card.is-orbiting .factory-card-icon {
+  animation: none !important;
+}
+
+.factory-card.is-orbiting .factory-card-name,
+.factory-card.is-orbiting .factory-card-meta,
+.factory-card.is-orbiting .factory-card-stat,
+.factory-card.is-orbiting .factory-type-badge,
+.factory-card.is-orbiting .factory-card-delete {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.factory-card.orbit-settled .factory-card-icon {
+  animation: circleFloat 3.5s ease-in-out infinite;
+}
+
 .factory-card:nth-child(1) { animation-delay: 0.05s; }
 .factory-card:nth-child(2) { animation-delay: 0.10s; }
 .factory-card:nth-child(3) { animation-delay: 0.15s; }
@@ -535,7 +559,7 @@ body {
 .factory-card-delete {
   position: absolute;
   top: 4px;
-  left: 18px;
+  right: 18px;
   width: 34px; height: 34px;
   border-radius: 50%;
   background: rgba(252,129,129,0.2);
@@ -551,6 +575,19 @@ body {
 }
 .factory-card-delete:hover { background: rgba(252,129,129,0.4); transform: scale(1.1); }
 .factory-card-delete:active { transform: scale(0.92); }
+
+#broiler-settings-card {
+  transition: var(--transition);
+}
+
+.form-card > #broiler-settings-card {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  padding: 16px 0 0;
+  margin-top: 16px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+}
 
 /* ======= ADD FACTORY BTN ======= */
 .btn-add-factory {
@@ -2584,8 +2621,6 @@ body.has-workers.role-owner #page-daily textarea {
   color: var(--text-primary) !important;
 }
 
-body.role-partner .btn-primary,
-body.role-partner .btn-danger,
 body.role-partner .btn-delete-log,
 body.role-partner .btn-delete-log-rep,
 body.role-partner .btn-delete-log-feed,
@@ -2599,6 +2634,9 @@ body.role-partner .factory-card-delete,
 body.role-partner #btn-save-day,
 body.role-partner #btn-clear-form,
 body.role-partner #add-advance-row,
+body.role-partner #btn-save-broiler-day,
+body.role-partner #btn-clear-broiler-form,
+body.role-partner #broiler-add-advance-row,
 body.role-partner .credits-add-form,
 body.role-partner #partner-expenses-card,
 body.role-partner #btn-add-partner,
@@ -3155,13 +3193,14 @@ body.role-partner .admin-only {
   display: none !important;
 }
 
-/* Hide daily form save button for owner (with workers) / partner */
+/* Hide daily form save button for owner with workers / partners */
 body.has-workers.role-owner #btn-save-day,
-body.role-partner #btn-save-day {
+body.role-partner #btn-save-day,
+body.role-partner #btn-save-broiler-day {
   display: none !important;
 }
 
-/* Make daily form inputs non-interactive for owner (with workers) / partner */
+/* Make daily form inputs non-interactive for owner with workers / partners */
 body.has-workers.role-owner #page-daily .form-group input,
 body.has-workers.role-owner #page-daily .form-group select,
 body.has-workers.role-owner #page-daily .form-group textarea,
@@ -3171,6 +3210,26 @@ body.role-partner #page-daily .form-group textarea {
   pointer-events: none;
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+body.daily-readonly #page-daily input,
+body.daily-readonly #page-daily select,
+body.daily-readonly #page-daily textarea {
+  pointer-events: none !important;
+  background-color: rgba(255,255,255,0.02) !important;
+  border-color: rgba(255,255,255,0.08) !important;
+  opacity: 0.6 !important;
+  cursor: not-allowed !important;
+}
+
+body.daily-readonly #btn-save-day,
+body.daily-readonly #btn-clear-form,
+body.daily-readonly #add-advance-row,
+body.daily-readonly #btn-save-broiler-day,
+body.daily-readonly #btn-clear-broiler-form,
+body.daily-readonly #broiler-add-advance-row,
+body.daily-readonly #page-daily .btn-remove-adv {
+  display: none !important;
 }
 
 /* Owner/Partner read-only notice in daily entry page */

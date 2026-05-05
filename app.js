@@ -82,6 +82,29 @@ function cannotDoDailyEntry() {
   return false;
 }
 
+function syncDailyReadOnlyState() {
+  const locked = cannotDoDailyEntry();
+  document.body.classList.toggle('daily-readonly', locked);
+  const selector = [
+    '#page-daily input',
+    '#page-daily select',
+    '#page-daily textarea',
+    '#btn-save-day',
+    '#btn-clear-form',
+    '#add-advance-row',
+    '#btn-save-broiler-day',
+    '#btn-clear-broiler-form',
+    '#broiler-add-advance-row',
+    '#page-daily .btn-remove-adv'
+  ].join(',');
+
+  document.querySelectorAll(selector).forEach(el => {
+    el.disabled = locked;
+    if (locked) el.setAttribute('aria-disabled', 'true');
+    else el.removeAttribute('aria-disabled');
+  });
+}
+
 /* ---------- UI helpers ---------- */
 function showAuthScreen() {
   document.getElementById('global-loader').style.display = 'none';
@@ -413,9 +436,11 @@ function applyRoleToUI(role, name) {
   } else if (ownerNotice) {
     ownerNotice.style.display = 'none';
   }
+  syncDailyReadOnlyState();
 }
 
 let CURRENT_LINKED_OWNERS = [];
+let _factoryOrbitIntroLastAt = 0;
 
 /* ---------- Auth State Listener — the master switch ---------- */
 function initAuthListener() {
@@ -775,14 +800,16 @@ const FactoryDB = {
   },
 
   deleteFactory(id) {
-    let list = this.getFactories().filter(f => f.id !== id);
+    const oldList = this.getFactories();
+    const deletedFactory = oldList.find(f => f.id === id);
+    let list = oldList.filter(f => f.id !== id);
     this.saveFactories(list);
-    ['settings', 'workers', 'daily_logs', 'activities'].forEach(k => {
+    getFactorySyncKeys(deletedFactory).forEach(k => {
       localStorage.removeItem(`zohir_${id}_${k}`);
     });
     try {
       const bch = fs.batch();
-      ['settings', 'workers', 'daily_logs', 'activities'].forEach(k => {
+      getFactorySyncKeys(deletedFactory).forEach(k => {
         bch.delete(fs.collection('app_data').doc(`${id}_${k}`));
       });
       bch.commit().catch(e => console.error('Cloud delete error:', e));
@@ -816,6 +843,12 @@ const DB = {
 };
 
 /* ===================== CLOUD SYNC ===================== */
+function getFactorySyncKeys(factory = CURRENT_FACTORY) {
+  const baseKeys = ['settings', 'workers', 'daily_logs', 'activities', 'credits', 'broiler_cycles', 'broiler_logs'];
+  if (factory?.type !== 'broiler') return baseKeys;
+  return [...new Set([...baseKeys, 'broiler_partners', 'broiler_partner_txs', 'broiler_settings', 'broiler_slaughter'])];
+}
+
 function setSyncStatus(status) {
   const dot = document.getElementById('sync-badge')?.querySelector('.sync-dot');
   const txt = document.getElementById('sync-badge')?.querySelector('.sync-text');
@@ -846,7 +879,7 @@ function forceRefreshFromCloud() {
   }
 
   setSyncStatus('syncing');
-  const keys = ['settings', 'workers', 'daily_logs', 'activities', 'credits', 'broiler_cycles', 'broiler_logs'];
+  const keys = getFactorySyncKeys();
   let done = 0;
 
   keys.forEach(key => {
@@ -872,7 +905,7 @@ function initCloudSync() {
   stopFactorySync();
   setSyncStatus('syncing');
 
-  const keys = ['settings', 'workers', 'daily_logs', 'activities', 'credits', 'broiler_cycles', 'broiler_logs'];
+  const keys = getFactorySyncKeys();
   const initialLoaded = new Set();
 
   // 1. Force fetch from server FIRST to guarantee fresh data
@@ -1253,6 +1286,16 @@ function initFactoryData() {
     [`zohir_${fid}_activities`, JSON.stringify([])],
     [`zohir_${fid}_credits`, JSON.stringify([])]
   ];
+  if (CURRENT_FACTORY?.type === 'broiler') {
+    keys.push(
+      [`zohir_${fid}_broiler_cycles`, JSON.stringify([])],
+      [`zohir_${fid}_broiler_logs`, JSON.stringify([])],
+      [`zohir_${fid}_broiler_partners`, JSON.stringify([])],
+      [`zohir_${fid}_broiler_partner_txs`, JSON.stringify([])],
+      [`zohir_${fid}_broiler_settings`, JSON.stringify({})],
+      [`zohir_${fid}_broiler_slaughter`, JSON.stringify([])]
+    );
+  }
   keys.forEach(([k, v]) => {
     if (localStorage.getItem(k) === null) localStorage.setItem(k, v);
   });
@@ -1620,6 +1663,87 @@ function renderFactoryScreen() {
            </div>`;
     }
   }
+  requestAnimationFrame(() => playFactoryOrbitIntro([myGrid, sharedGrid]));
+}
+
+function playFactoryOrbitIntro(grids) {
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+  const now = Date.now();
+  if (now - _factoryOrbitIntroLastAt < 5200) return;
+
+  const liveGrids = (grids || []).filter(Boolean);
+  if (!liveGrids.length) return;
+
+  let played = false;
+  liveGrids.forEach(grid => {
+    const cards = [...grid.querySelectorAll('.factory-card')];
+    if (!cards.length) return;
+    played = true;
+
+    const gridRect = grid.getBoundingClientRect();
+    const centerX = gridRect.left + gridRect.width / 2;
+    const firstRect = cards[0].getBoundingClientRect();
+    const centerY = firstRect.top + firstRect.height / 2;
+    const radius = Math.min(
+      Math.max(72, cards.length * 24),
+      Math.max(88, Math.min(window.innerWidth, 420) * 0.34)
+    );
+    const duration = 7600;
+    const orbitEnd = 0.92;
+    const count = cards.length;
+
+    cards.forEach((card, idx) => {
+      card.getAnimations().forEach(anim => {
+        if (anim.effect?.target === card) anim.cancel();
+      });
+      card.classList.add('is-orbiting');
+      card.classList.remove('orbit-settled');
+      card.style.animation = 'none';
+      card.style.opacity = '1';
+
+      const rect = card.getBoundingClientRect();
+      const finalX = rect.left + rect.width / 2;
+      const finalY = rect.top + rect.height / 2;
+      const baseAngle = (idx / count) * Math.PI * 2 - Math.PI / 2;
+      const orbitAt = (turns, bob = 0) => {
+        const angle = baseAngle + turns * Math.PI * 2;
+        const x = centerX + Math.cos(angle) * radius;
+        const y = centerY + Math.sin(angle) * radius + bob;
+        return `translate(${(x - finalX).toFixed(1)}px, ${(y - finalY).toFixed(1)}px) scale(0.92)`;
+      };
+
+      const animation = card.animate([
+        { offset: 0, transform: orbitAt(0, 0), filter: 'saturate(1.1)' },
+        { offset: 0.2, transform: orbitAt(0.3, -10), filter: 'saturate(1.25)' },
+        { offset: 0.4, transform: orbitAt(0.65, 8), filter: 'saturate(1.18)' },
+        { offset: 0.62, transform: orbitAt(1.0, -8), filter: 'saturate(1.28)' },
+        { offset: orbitEnd, transform: orbitAt(1.35, 6), filter: 'saturate(1.15)' },
+        { offset: 1, transform: 'translate(0, 0) scale(1)', filter: 'saturate(1)' }
+      ], {
+        duration,
+        easing: 'cubic-bezier(0.18, 0.68, 0.16, 1)',
+        fill: 'both'
+      });
+
+      animation.finished
+        .then(() => {
+          card.classList.remove('is-orbiting');
+          card.classList.add('orbit-settled');
+          card.style.opacity = '';
+          card.style.transform = '';
+          card.style.filter = '';
+          setTimeout(() => card.classList.remove('orbit-settled'), 450);
+        })
+        .catch(() => {
+          card.classList.remove('is-orbiting');
+          card.style.opacity = '';
+          card.style.transform = '';
+          card.style.filter = '';
+        });
+    });
+  });
+
+  if (played) _factoryOrbitIntroLastAt = now;
 }
 
 function buildFactoryCard(factory, idx, isPrimaryOwner, container) {
@@ -1995,6 +2119,16 @@ function applyFactoryTypeToUI(type) {
   // P4: Broiler settings card
   const bsc = document.getElementById('broiler-settings-card');
   if (bsc) bsc.style.display = isBroiler ? '' : 'none';
+  if (bsc && isBroiler) {
+    const layerOnlySettings = document.getElementById('layer-only-settings');
+    const factoryInfoCard = layerOnlySettings?.closest('.form-card');
+    const saveSettingsBtn = document.getElementById('btn-save-settings');
+    if (factoryInfoCard && bsc.parentElement !== factoryInfoCard) {
+      factoryInfoCard.insertBefore(bsc, saveSettingsBtn || null);
+    } else if (factoryInfoCard && saveSettingsBtn && bsc.nextElementSibling !== saveSettingsBtn) {
+      factoryInfoCard.insertBefore(bsc, saveSettingsBtn);
+    }
+  }
 
   // P4: Hide layer-only settings cards for broiler
   const psc = document.getElementById('partners-settings-card');
@@ -2471,6 +2605,7 @@ function showPage(pageId) {
   if (pageId === 'daily' && CURRENT_FACTORY?.type === 'broiler') {
     if (typeof initBroilerDailyPage === 'function') initBroilerDailyPage();
   }
+  syncDailyReadOnlyState();
   // Close mobile sidebar — delay on mobile so nav animation stays visible
   const sidebarDelay = window.innerWidth <= 768 ? 1520 : 0;
   setTimeout(() => {
@@ -3670,12 +3805,13 @@ function renderPartnersSettings() {
   }
 }
 
-async function addPartner() {
+async function addPartner(source = 'auto') {
   if (isReadOnlyUser()) {
     showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error'); return;
   }
   // This can be called from Settings, the Team page, or the share-factory modal
   const nameFromSettings = document.getElementById('new-partner-name')?.value.trim();
+  const emailFromSettings = document.getElementById('new-partner-email')?.value.trim();
   const shareFromSettingsRaw = document.getElementById('new-partner-share')?.value;
   const shareFromSettings = shareFromSettingsRaw !== '' ? parseFloat(shareFromSettingsRaw) : 0;
   const nameFromTeam = document.getElementById('new-team-partner-name')?.value.trim();
@@ -3687,18 +3823,44 @@ async function addPartner() {
   const shareFromModalRaw = document.getElementById('share-partner-share')?.value;
   const shareFromModal = shareFromModalRaw !== '' ? parseFloat(shareFromModalRaw) : 0;
 
-  const name = nameFromSettings || nameFromTeam || nameFromModal;
-  const share = shareFromSettings || shareFromTeam || shareFromModal;
-  const email = emailFromTeam || emailFromModal || '';
+  let name = '';
+  let share = 0;
+  let email = '';
+  if (source === 'settings') {
+    name = nameFromSettings || '';
+    share = shareFromSettings;
+    email = emailFromSettings || '';
+  } else if (source === 'team') {
+    name = nameFromTeam || '';
+    share = shareFromTeam;
+    email = emailFromTeam || '';
+  } else if (source === 'modal') {
+    name = nameFromModal || '';
+    share = shareFromModal;
+    email = emailFromModal || '';
+  } else {
+    name = nameFromSettings || nameFromTeam || nameFromModal || '';
+    share = shareFromSettings || shareFromTeam || shareFromModal;
+    email = emailFromSettings || emailFromTeam || emailFromModal || '';
+  }
+
+  if (!email && name && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(name)) {
+    email = name;
+    name = name.split('@')[0];
+  }
 
   if (!name) { showToast('يرجى إدخال اسم الشريك', 'error'); return; }
   if (isNaN(share) || share <= 0 || share > 100) { showToast('نسبة غير صحيحة (1-100)', 'error'); return; }
   if (!CURRENT_FACTORY) { showToast('⚠️ افتح المصنع أولاً', 'error'); return; }
 
+  const settingsAddBtn = document.getElementById('btn-add-partner');
+  const settingsSaveBtn = document.getElementById('btn-save-partner-shares');
   const teamBtn = document.getElementById('btn-add-team-partner');
   const shareBtn = document.getElementById('btn-confirm-share-factory');
   const btn = teamBtn;
   const setBtnState = (busy) => {
+    if (settingsAddBtn)  { settingsAddBtn.disabled  = busy; settingsAddBtn.textContent  = busy ? '⏳ جاري الحفظ...' : '+ إضافة شريك'; }
+    if (settingsSaveBtn) { settingsSaveBtn.disabled = busy; settingsSaveBtn.textContent = busy ? '⏳ جاري الحفظ...' : '💾 تأكيد وحفظ النسبة'; }
     if (teamBtn)  { teamBtn.disabled  = busy; teamBtn.textContent  = busy ? '⏳ جاري الإضافة...' : 'إضافة'; }
     if (shareBtn) { shareBtn.disabled = busy; shareBtn.textContent = busy ? '⏳ جاري الإرسال...' : '🤝 إرسال المصنع'; }
   };
@@ -3834,6 +3996,7 @@ async function addPartner() {
     }
     
     if (document.getElementById('new-partner-name')) document.getElementById('new-partner-name').value = '';
+    if (document.getElementById('new-partner-email')) document.getElementById('new-partner-email').value = '';
     if (document.getElementById('new-partner-share')) document.getElementById('new-partner-share').value = '';
     if (document.getElementById('new-team-partner-name')) document.getElementById('new-team-partner-name').value = '';
     if (document.getElementById('new-team-partner-email')) document.getElementById('new-team-partner-email').value = '';
@@ -3854,6 +4017,54 @@ async function addPartner() {
   } finally {
     setBtnState(false);
   }
+}
+
+async function confirmPartnerSharesFromSettings() {
+  if (isReadOnlyUser()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error');
+    return;
+  }
+
+  const nameEl = document.getElementById('new-partner-name');
+  const emailEl = document.getElementById('new-partner-email');
+  const shareEl = document.getElementById('new-partner-share');
+  const ownerShareEl = document.getElementById('farm-owner-share');
+  const name = nameEl?.value.trim() || '';
+  const email = emailEl?.value.trim() || '';
+  const shareRaw = shareEl?.value || '';
+  const share = shareRaw !== '' ? Number(shareRaw) : NaN;
+
+  if (!name && !email && shareRaw === '') {
+    saveSettings();
+    return;
+  }
+
+  if (!name) { showToast('يرجى إدخال اسم الشريك', 'error'); return; }
+  if (!email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(name)) {
+    showToast('أدخل بريد الشريك حتى يظهر المصنع في حسابه', 'error');
+    return;
+  }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    showToast('البريد الإلكتروني للشريك غير صحيح', 'error');
+    return;
+  }
+  if (isNaN(share) || share <= 0 || share > 100) { showToast('نسبة غير صحيحة (1-100)', 'error'); return; }
+
+  const settings = DB.get('settings') || defaultSettings();
+  const partners = settings.partners || [];
+  const partnersSum = partners.reduce((sum, p) => sum + (Number(p.sharePercent) || 0), 0);
+  let ownerShare = Number(ownerShareEl?.value);
+  if (isNaN(ownerShare)) ownerShare = Number(settings.ownerShare);
+  if (isNaN(ownerShare)) ownerShare = 100;
+
+  if (ownerShare + partnersSum + share > 100 && ownerShareEl && (ownerShareEl.value === '' || ownerShare === 100)) {
+    ownerShare = Math.max(0, 100 - partnersSum - share);
+    ownerShareEl.value = ownerShare;
+  }
+
+  settings.ownerShare = ownerShare;
+  DB.set('settings', settings);
+  await addPartner('settings');
 }
 
 /* ===================== SHARE FACTORY MODAL ===================== */
@@ -3882,7 +4093,7 @@ function closeShareFactoryModal() {
 
 function submitShareFactoryFromModal() {
   // addPartner reads from share-partner-* fields when present
-  addPartner();
+  addPartner('modal');
 }
 
 /* Render the existing partners list inside the share modal so the user
@@ -4906,7 +5117,7 @@ function loadSettingsForm() {
   // Note: we keep the cards visible (admin-only-card) for workers but in read-only mode
   // Only hide the interactive action buttons/forms, not the info cards themselves
   const settingsActionBtns = document.querySelectorAll(
-    '#btn-save-settings, #btn-save-general-settings, #btn-reset-all, #btn-add-partner, #partner-add-form, #btn-create-worker-account'
+    '#btn-save-settings, #btn-save-general-settings, #btn-save-partner-shares, #btn-reset-all, #btn-add-partner, #partner-add-form, #btn-create-worker-account'
   );
   settingsActionBtns.forEach(el => {
     if (el) el.style.display = isReadOnly ? 'none' : '';
@@ -4974,6 +5185,9 @@ function saveSettings() {
   }
 
   DB.set('settings', s);
+  if (CURRENT_FACTORY?.type === 'broiler' && typeof saveBroilerSettings === 'function') {
+    saveBroilerSettings(false);
+  }
   addActivity('تم تحديث إعدادات المصنع', '⚙️');
   showToast('✅ تم حفظ الإعدادات');
 }
@@ -5006,7 +5220,7 @@ function initWorkersPage() {
     showToast(`✅ تمت إضافة ${name}`);
   });
 
-  document.getElementById('btn-add-team-partner')?.addEventListener('click', addPartner);
+  document.getElementById('btn-add-team-partner')?.addEventListener('click', () => addPartner('team'));
 }
 
 /* ===================== MOBILE SIDEBAR ===================== */
@@ -5035,13 +5249,19 @@ function resetAllData() {
 
   showGlobalLoader('جاري إعادة ضبط المصنع...');
 
-  const keys = ['settings', 'workers', 'daily_logs', 'activities', 'credits'];
+  const keys = getFactorySyncKeys();
   const emptyData = {
     settings:   defaultSettings(),
     workers:    [],
     daily_logs: [],
     activities: [],
-    credits:    []
+    credits:    [],
+    broiler_cycles: [],
+    broiler_logs: [],
+    broiler_partners: [],
+    broiler_partner_txs: [],
+    broiler_settings: {},
+    broiler_slaughter: []
   };
 
   // 1. وقف مستمعات المزامنة أولاً لمنع استرجاع البيانات القديمة
@@ -5123,13 +5343,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('btn-save-settings').addEventListener('click', saveSettings);
   document.getElementById('btn-save-general-settings').addEventListener('click', saveSettings);
+  document.getElementById('btn-save-partner-shares')?.addEventListener('click', confirmPartnerSharesFromSettings);
   document.getElementById('btn-reset-all').addEventListener('click', resetAllData);
 
   // Credits tab events
   document.getElementById('btn-add-credit')?.addEventListener('click', addCredit);
 
   // Partners settings events
-  document.getElementById('btn-add-partner')?.addEventListener('click', addPartner);
+  document.getElementById('btn-add-partner')?.addEventListener('click', () => addPartner('settings'));
 
   // Dashboard "share this factory" button + modal
   document.getElementById('btn-share-this-factory')?.addEventListener('click', openShareFactoryModal);
@@ -5626,6 +5847,10 @@ function updateBroilerCalc() {
 }
 
 function saveBroilerDay() {
+  if (cannotDoDailyEntry()) {
+    showToast('🔒 صلاحية محظورة: وضع المشاهدة فقط', 'error');
+    return;
+  }
   const cycle = BroilerDB.getActiveCycle();
   if (!cycle) { showToast('لا توجد دورة نشطة', 'error'); return; }
 
@@ -6324,10 +6549,11 @@ function loadBroilerSettings() {
   if (el('broiler-mort-alert'))     el('broiler-mort-alert').value     = s.mortAlert     ?? 5;
 }
 
-function saveBroilerSettings() {
+function saveBroilerSettings(showMessage = true) {
   const el = id => document.getElementById(id);
+  const existing = DB.get('broiler_settings') || {};
   const s = {
-    ownerShare:    parseFloat(el('broiler-owner-share')?.value)    || 100,
+    ownerShare:    parseFloat(el('broiler-owner-share')?.value)    || existing.ownerShare || 100,
     loyer:         parseFloat(el('broiler-loyer')?.value)          || 0,
     electricity:   parseFloat(el('broiler-electricity')?.value)    || 0,
     misc:          parseFloat(el('broiler-misc')?.value)           || 0,
@@ -6335,7 +6561,7 @@ function saveBroilerSettings() {
     mortAlert:     parseFloat(el('broiler-mort-alert')?.value)     || 5,
   };
   DB.set('broiler_settings', s);
-  showToast('✅ تم حفظ إعدادات اللحم');
+  if (showMessage) showToast('✅ تم حفظ إعدادات اللحم');
 }
 
 /* -------- Sync broiler keys -------- */
