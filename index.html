@@ -166,6 +166,24 @@
 <div class="modal-overlay" id="modal-add-factory">
   <div class="modal-box">
     <div class="modal-title">🏭 إضافة مصنع جديد</div>
+
+    <!-- نوع المصنع -->
+    <div class="form-group">
+      <label>نوع المصنع</label>
+      <div class="factory-type-selector" id="factory-type-selector">
+        <button type="button" class="factory-type-btn selected" data-type="layer">
+          <span class="ftype-icon">🥚</span>
+          <span class="ftype-name">مصنع بيض</span>
+          <span class="ftype-desc">دجاج بياض — إنتاج البيض</span>
+        </button>
+        <button type="button" class="factory-type-btn" data-type="broiler">
+          <span class="ftype-icon">🍗</span>
+          <span class="ftype-name">مصنع لحم</span>
+          <span class="ftype-desc">دجاج اللحم — دورات التربية</span>
+        </button>
+      </div>
+    </div>
+
     <div class="form-group">
       <label>اسم المصنع</label>
       <input type="text" id="new-factory-name" placeholder="مثال: مصنع الشمال" />
@@ -181,6 +199,7 @@
         <span class="icon-opt" data-icon="🦆">🦆</span>
         <span class="icon-opt" data-icon="🌿">🌿</span>
         <span class="icon-opt" data-icon="⭐">⭐</span>
+        <span class="icon-opt" data-icon="🍗">🍗</span>
       </div>
     </div>
     <div class="modal-actions">
@@ -288,6 +307,18 @@
     <button class="nav-item" data-page="daily" id="nav-daily">
       <span class="nav-icon">📅</span><span>إدخال يومي</span>
     </button>
+    <button class="nav-item broiler-only" data-page="cycles" id="nav-cycles" style="display:none">
+      <span class="nav-icon">📋</span><span>الدورات</span>
+    </button>
+    <button class="nav-item broiler-only" data-page="broiler-sales" id="nav-broiler-sales" style="display:none">
+      <span class="nav-icon">🔪</span><span>الذبح والمبيعات</span>
+    </button>
+    <button class="nav-item broiler-only" data-page="broiler-reports" id="nav-broiler-reports" style="display:none">
+      <span class="nav-icon">📈</span><span>التقارير</span>
+    </button>
+    <button class="nav-item broiler-only" data-page="broiler-workers" id="nav-broiler-workers" style="display:none">
+      <span class="nav-icon">👷</span><span>الفريق</span>
+    </button>
     <button class="nav-item" data-page="sales" id="nav-sales">
       <span class="nav-icon">💰</span><span>المبيعات والمخزون</span>
     </button>
@@ -338,10 +369,30 @@
   <section class="page active" id="page-dashboard">
     <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
       <div>
-        <h1>لوحة التحكم</h1>
-        <p>نظرة عامة على المصنع</p>
+        <h1 id="dashboard-title">لوحة التحكم</h1>
+        <p id="dashboard-sub">نظرة عامة على المصنع</p>
       </div>
       <button class="btn btn-primary restricted-edit" id="btn-share-this-factory" style="white-space:nowrap">🤝 شارك هذا المصنع</button>
+    </div>
+
+    <!-- BROILER PLACEHOLDER — hidden for layer factories -->
+    <div id="broiler-dashboard-placeholder" style="display:none">
+      <div class="broiler-coming-soon">
+        <div class="broiler-cs-icon">🍗</div>
+        <div class="broiler-cs-title">مصنع الدجاج اللاحم</div>
+        <div class="broiler-cs-sub">نظام إدارة دورات التربية — دجاج اللحم</div>
+        <div class="broiler-cs-features">
+          <div class="broiler-feature-chip">📋 دورات التربية (Cycles)</div>
+          <div class="broiler-feature-chip">🌱 Starter → Grower → Finisher</div>
+          <div class="broiler-feature-chip">⚖️ عيّنات الوزن اليومية</div>
+          <div class="broiler-feature-chip">💀 متابعة النفوق</div>
+          <div class="broiler-feature-chip">🌾 علف بالأطوار</div>
+          <div class="broiler-feature-chip">🔪 إدارة الذبح والبيع</div>
+          <div class="broiler-feature-chip">📊 FCR ونسبة النفوق</div>
+          <div class="broiler-feature-chip">💰 حصص الشركاء</div>
+        </div>
+        <div class="broiler-cs-badge">⏳ قيد التطوير — المرحلة 2</div>
+      </div>
     </div>
 
     <div class="kpi-grid" id="kpi-grid">
@@ -434,9 +485,160 @@
   <section class="page" id="page-daily">
     <div class="page-header">
       <h1>📅 الإدخال اليومي</h1>
-      <p>سجّل بيانات يوم العمل</p>
+      <p id="daily-page-sub">سجّل بيانات يوم العمل</p>
     </div>
     <div class="worker-mode-banner"></div>
+
+    <!-- ===== BROILER DAILY FORM ===== -->
+    <div id="broiler-daily-wrapper" style="display:none">
+      <div id="broiler-no-cycle-banner" class="broiler-info-banner" style="display:none">
+        <span>⚠️ لا توجد دورة نشطة — ابدأ دورة جديدة أولاً</span>
+        <button class="btn btn-primary btn-sm" onclick="showPage('cycles')">📋 الدورات</button>
+      </div>
+      <div id="broiler-daily-form-inner">
+        <!-- Day info bar -->
+        <div class="broiler-day-bar" id="broiler-day-bar">
+          <div class="bday-info">
+            <span class="bday-num" id="bday-num">اليوم —</span>
+            <span class="bday-phase" id="bday-phase">—</span>
+          </div>
+          <div class="bday-cycle-name" id="bday-cycle-name">—</div>
+        </div>
+
+        <div class="form-grid">
+          <!-- التاريخ -->
+          <div class="form-card">
+            <div class="form-card-title">📅 التاريخ</div>
+            <div class="form-group">
+              <label>تاريخ اليوم</label>
+              <input type="date" id="binp-date" />
+            </div>
+          </div>
+
+          <!-- النفوق -->
+          <div class="form-card">
+            <div class="form-card-title">💀 النفوق</div>
+            <div class="form-group">
+              <label>عدد النافق اليوم</label>
+              <input type="number" id="binp-dead" placeholder="0" min="0" oninput="updateBroilerCalc()" />
+            </div>
+            <div class="calc-preview">
+              <div class="calc-row"><span>المتبقي:</span><strong id="bprev-remaining">—</strong></div>
+              <div class="calc-row"><span>نسبة النفوق الكلية:</span><strong id="bprev-mort-rate">—</strong></div>
+            </div>
+          </div>
+
+          <!-- العلف -->
+          <div class="form-card">
+            <div class="form-card-title">🌾 العلف</div>
+            <div class="form-group">
+              <label>نوع العلف</label>
+              <select id="binp-feed-type">
+                <option value="starter">Starter (ابتدائي)</option>
+                <option value="grower">Grower (نمو)</option>
+                <option value="finisher">Finisher (تسمين)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>الكمية المستهلكة (كغ)</label>
+              <input type="number" id="binp-feed-kg" placeholder="0" min="0" oninput="updateBroilerCalc()" />
+            </div>
+            <div class="form-group">
+              <label>سعر العلف (دج/كغ)</label>
+              <input type="number" id="binp-feed-price" placeholder="0" min="0" step="0.01" oninput="updateBroilerCalc()" />
+            </div>
+            <div class="calc-preview">
+              <div class="calc-row"><span>تكلفة العلف اليوم:</span><strong id="bprev-feed-cost" style="color:var(--orange)">—</strong></div>
+              <div class="calc-row"><span>إجمالي العلف (الدورة):</span><strong id="bprev-total-feed">—</strong></div>
+            </div>
+          </div>
+
+          <!-- عيّنة الوزن -->
+          <div class="form-card">
+            <div class="form-card-title">⚖️ عيّنة الوزن</div>
+            <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px">تُؤخذ كل 5 أيام تقريباً</p>
+            <div class="form-group">
+              <label>متوسط الوزن (غ)</label>
+              <input type="number" id="binp-avg-weight" placeholder="0" min="0" oninput="updateBroilerCalc()" />
+            </div>
+            <div class="form-group">
+              <label>عدد الدجاج المَزون</label>
+              <input type="number" id="binp-weighed-count" placeholder="0" min="0" />
+            </div>
+            <div class="calc-preview">
+              <div class="calc-row"><span>الوزن الإجمالي المتوقع (كغ):</span><strong id="bprev-total-weight">—</strong></div>
+              <div class="calc-row"><span>FCR:</span><strong id="bprev-fcr">—</strong></div>
+            </div>
+          </div>
+
+          <!-- مصاريف اليوم -->
+          <div class="form-card">
+            <div class="form-card-title">💧 مصاريف أخرى</div>
+            <div class="form-group">
+              <label>الماء (دج)</label>
+              <input type="number" id="binp-water" placeholder="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label>أدوية / لقاح (دج)</label>
+              <input type="number" id="binp-meds" placeholder="0" min="0" />
+            </div>
+          </div>
+
+          <!-- سلفيات العمال -->
+          <div class="form-card form-card-wide restricted-edit">
+            <div class="form-card-title">👷 سلفيات العمال اليوم</div>
+            <div id="broiler-advance-entries">
+              <div class="advance-row" data-idx="0">
+                <select class="adv-worker-select">
+                  <option value="">— اختر عاملاً —</option>
+                </select>
+                <input type="number" class="adv-amount" placeholder="المبلغ (دج)" min="0" />
+                <button class="btn-remove-adv" title="حذف">✕</button>
+              </div>
+            </div>
+            <button class="btn btn-outline btn-sm" id="broiler-add-advance-row">+ إضافة سلفية</button>
+          </div>
+
+          <!-- ملاحظات -->
+          <div class="form-card form-card-wide">
+            <div class="form-card-title">📝 ملاحظات</div>
+            <textarea id="binp-notes" placeholder="أي ملاحظات لهذا اليوم..." rows="3"></textarea>
+          </div>
+        </div>
+
+        <div class="form-actions">
+          <button class="btn btn-primary btn-lg" id="btn-save-broiler-day">💾 حفظ بيانات اليوم</button>
+          <button class="btn btn-outline" id="btn-clear-broiler-form">🗑 مسح</button>
+        </div>
+
+        <!-- آخر 7 أيام -->
+        <div class="section-card" style="margin-top:20px">
+          <div class="section-title">📜 آخر 7 أيام</div>
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>التاريخ</th>
+                  <th>اليوم</th>
+                  <th>الطور</th>
+                  <th>النافق</th>
+                  <th>العلف (كغ)</th>
+                  <th>متوسط الوزن (غ)</th>
+                  <th>ملاحظة</th>
+                  <th class="admin-only">حذف</th>
+                </tr>
+              </thead>
+              <tbody id="broiler-daily-tbody">
+                <tr><td colspan="8" class="empty-cell">لا توجد سجلات</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== LAYER DAILY FORM (existing) ===== -->
+    <div id="layer-daily-wrapper">
 
     <div class="form-grid">
       <div class="form-card">
@@ -609,6 +811,120 @@
     <div class="section-card" id="daily-report-output" style="display:none">
       <div class="section-title">✅ تقرير اليوم المحفوظ</div>
       <div id="daily-report-content"></div>
+    </div>
+    </div><!-- end layer-daily-wrapper -->
+  </section>
+
+  <!-- ========== CYCLES PAGE (broiler only) ========== -->
+  <section class="page" id="page-cycles">
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+      <div>
+        <h1>📋 الدورات</h1>
+        <p>إدارة دورات تربية الدجاج اللاحم</p>
+      </div>
+      <button class="btn btn-primary restricted-edit" id="btn-new-cycle">➕ دورة جديدة</button>
+    </div>
+
+    <!-- Active cycle hero card -->
+    <div id="cycle-hero-card" style="display:none" class="broiler-hero-card">
+      <div class="bhero-top">
+        <div>
+          <div class="bhero-title" id="bhero-title">الدورة النشطة</div>
+          <div class="bhero-sub" id="bhero-sub">—</div>
+        </div>
+        <div class="bhero-badge" id="bhero-phase-badge">—</div>
+      </div>
+      <div class="bhero-kpis" id="bhero-kpis"></div>
+      <div class="bhero-actions">
+        <button class="btn btn-outline btn-sm" id="btn-cycle-costs">💊 تحديث التكاليف</button>
+        <button class="btn btn-danger btn-sm restricted-edit" id="btn-complete-cycle">🏁 إنهاء الدورة</button>
+      </div>
+    </div>
+
+    <!-- Filter tabs -->
+    <div class="page-tabs" id="cycles-tabs">
+      <button class="page-tab active" data-tab="tab-cycles-active" onclick="switchCyclesTab('active',this)">🟢 النشطة</button>
+      <button class="page-tab" data-tab="tab-cycles-done" onclick="switchCyclesTab('done',this)">✅ المنتهية</button>
+      <button class="page-tab" data-tab="tab-cycles-all" onclick="switchCyclesTab('all',this)">📋 الكل</button>
+    </div>
+
+    <div id="cycles-list-container">
+      <div class="empty-state">
+        <div class="empty-icon">🐣</div>
+        <p>لا توجد دورات بعد. ابدأ أولى دوراتك!</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== BROILER SALES PAGE ========== -->
+  <section class="page" id="page-broiler-sales">
+    <div class="page-header" style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+      <div>
+        <h1>🔪 الذبح والمبيعات</h1>
+        <p>تسجيل دفعات الذبح والمبيعات</p>
+      </div>
+      <button class="btn btn-primary restricted-edit" id="btn-add-slaughter">➕ إضافة دفعة ذبح</button>
+    </div>
+
+    <div class="kpi-grid" style="margin-bottom:16px">
+      <div class="kpi-card">
+        <div class="kpi-icon">📊</div>
+        <div class="kpi-info">
+          <span class="kpi-value" id="bs-total-slaughtered">0</span>
+          <span class="kpi-label">إجمالي المذبوح</span>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon">💰</div>
+        <div class="kpi-info">
+          <span class="kpi-value" id="bs-total-income">0 دج</span>
+          <span class="kpi-label">إجمالي المدخول</span>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon">💸</div>
+        <div class="kpi-info">
+          <span class="kpi-value" id="bs-total-cost">0 دج</span>
+          <span class="kpi-label">إجمالي التكاليف</span>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-icon">💹</div>
+        <div class="kpi-info">
+          <span class="kpi-value" id="bs-total-profit">0 دج</span>
+          <span class="kpi-label">الفائدة الإجمالية</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">🔪 سجل الذبح</div>
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>التاريخ</th>
+              <th>العدد</th>
+              <th>الوزن الحي (غ)</th>
+              <th>المشتري</th>
+              <th>السعر/كغ</th>
+              <th>المدخول</th>
+              <th>الحالة</th>
+              <th class="admin-only">حذف</th>
+            </tr>
+          </thead>
+          <tbody id="slaughter-tbody">
+            <tr><td colspan="8" class="empty-cell">لا توجد دفعات مسجلة</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">📋 الكريديات المعلقة</div>
+      <div id="broiler-credits-list">
+        <div class="empty-state"><p>لا توجد كريديات</p></div>
+      </div>
     </div>
   </section>
 
@@ -898,6 +1214,92 @@
     </div>
   </section>
 
+  <!-- ========== BROILER WORKERS & PARTNERS PAGE ========== -->
+  <section class="page" id="page-broiler-workers">
+    <div class="page-header">
+      <h1>👷 الفريق</h1>
+      <p>إدارة الشركاء والعمال</p>
+    </div>
+
+    <div class="page-tabs" id="broiler-team-tabs">
+      <button class="page-tab active" onclick="switchBroilerTeamTab('partners',this)">🤝 الشركاء</button>
+      <button class="page-tab" onclick="switchBroilerTeamTab('workers',this)">👷 العمال</button>
+    </div>
+
+    <!-- PARTNERS TAB -->
+    <div id="bteam-tab-partners">
+      <div class="section-card restricted-edit">
+        <div class="section-title">➕ إضافة شريك</div>
+        <div class="inline-form">
+          <input type="text"   id="bp-name"  placeholder="اسم الشريك" />
+          <input type="number" id="bp-share" placeholder="نسبة المشاركة %" min="1" max="100" />
+          <button class="btn btn-primary" id="btn-add-broiler-partner">إضافة</button>
+        </div>
+      </div>
+      <div id="broiler-partners-list">
+        <div class="empty-state"><div class="empty-icon">🤝</div><p>لا يوجد شركاء بعد</p></div>
+      </div>
+    </div>
+
+    <!-- WORKERS TAB -->
+    <div id="bteam-tab-workers" style="display:none">
+      <div class="section-card restricted-edit">
+        <div class="section-title">➕ إضافة عامل</div>
+        <div class="inline-form">
+          <input type="text"   id="bw-name"   placeholder="اسم العامل" />
+          <input type="number" id="bw-salary" placeholder="الراتب الشهري (دج)" min="0" />
+          <button class="btn btn-primary" id="btn-add-broiler-worker">إضافة</button>
+        </div>
+      </div>
+      <div id="broiler-workers-list">
+        <div class="empty-state"><div class="empty-icon">👤</div><p>لا يوجد عمال بعد</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========== BROILER REPORTS PAGE ========== -->
+  <section class="page" id="page-broiler-reports">
+    <div class="page-header">
+      <h1>📈 تقارير الدورة</h1>
+      <p>تحليل شامل لأداء الدورة الحالية</p>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">📊 ملخص الأداء</div>
+      <div id="broiler-report-summary" class="report-grid"></div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">💰 الحساب المالي</div>
+      <div id="broiler-report-financials" style="padding:14px;background:rgba(255,255,255,0.03);border-radius:10px"></div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">🤝 حصص الشركاء</div>
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>الشريك</th>
+              <th>النسبة %</th>
+              <th>الحصة من الفائدة</th>
+              <th>المسحوبات</th>
+              <th>الصافي المستحق</th>
+            </tr>
+          </thead>
+          <tbody id="broiler-partners-tbody">
+            <tr><td colspan="5" class="empty-cell">لا يوجد شركاء</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section-card">
+      <div class="section-title">🌾 استهلاك العلف</div>
+      <div id="broiler-report-feed"></div>
+    </div>
+  </section>
+
   <!-- ========== SETTINGS PAGE ========== -->
   <section class="page" id="page-settings">
     <div class="page-header">
@@ -915,41 +1317,44 @@
           <label>صاحب المصنع</label>
           <input type="text" id="farm-owner" placeholder="الاسم الكامل" />
         </div>
-        <div class="form-group">
-          <label>عدد الدجاج الابتدائي</label>
-          <input type="number" id="farm-chickens" placeholder="0" min="0" />
-        </div>
-        <div class="form-group">
-          <label>رصيد الشعير الابتدائي (كغ)</label>
-          <input type="number" id="farm-feed-init" placeholder="0" min="0" />
-        </div>
-        <div class="form-group">
-          <label>سعر شراء الدجاجة (دج)</label>
-          <input type="number" id="farm-chicken-price" placeholder="0" min="0" />
-        </div>
-        <div class="form-group">
-          <label>سعر شراء الشعير الأساسي (دج/كغ)</label>
-          <input type="number" id="farm-feed-price" placeholder="0" min="0" />
-        </div>
-        <div class="form-group">
-          <label>🏠 الكراء (دج) — تكلفة إجمالية ثابتة</label>
-          <input type="number" id="farm-loyer" placeholder="0" min="0" />
-          <div class="field-note">📌 تُخصم مرة واحدة من الفائدة الإجمالية</div>
-        </div>
-        <div class="form-group">
-          <label>⚡ الكهرباء الشهرية (دج)</label>
-          <input type="number" id="farm-electricity" placeholder="0" min="0" />
-          <div class="field-note">📅 تُحسب تلقائياً × عدد الأشهر منذ بداية المصنع</div>
-        </div>
-        <div class="form-group">
-          <label>🔧 ريباراسيون الكراء (دج)</label>
-          <input type="number" id="farm-repair-loyer" placeholder="0" min="0" />
-          <div class="field-note">📌 تُطرح من الكراء — تخفّض ما يُدفع للإيجار</div>
-        </div>
-        <div class="form-group">
-          <label>🔨 ريباراسيون الفائدة (دج)</label>
-          <input type="number" id="farm-repair-total" placeholder="0" min="0" />
-          <div class="field-note">💸 تُطرح مباشرةً من الفائدة الإجمالية الصافية</div>
+        <!-- 🥚 إعدادات خاصة بمصنع البيض فقط -->
+        <div id="layer-only-settings">
+          <div class="form-group">
+            <label>عدد الدجاج الابتدائي</label>
+            <input type="number" id="farm-chickens" placeholder="0" min="0" />
+          </div>
+          <div class="form-group">
+            <label>رصيد الشعير الابتدائي (كغ)</label>
+            <input type="number" id="farm-feed-init" placeholder="0" min="0" />
+          </div>
+          <div class="form-group">
+            <label>سعر شراء الدجاجة (دج)</label>
+            <input type="number" id="farm-chicken-price" placeholder="0" min="0" />
+          </div>
+          <div class="form-group">
+            <label>سعر شراء الشعير الأساسي (دج/كغ)</label>
+            <input type="number" id="farm-feed-price" placeholder="0" min="0" />
+          </div>
+          <div class="form-group">
+            <label>🏠 الكراء (دج) — تكلفة إجمالية ثابتة</label>
+            <input type="number" id="farm-loyer" placeholder="0" min="0" />
+            <div class="field-note">📌 تُخصم مرة واحدة من الفائدة الإجمالية</div>
+          </div>
+          <div class="form-group">
+            <label>⚡ الكهرباء الشهرية (دج)</label>
+            <input type="number" id="farm-electricity" placeholder="0" min="0" />
+            <div class="field-note">📅 تُحسب تلقائياً × عدد الأشهر منذ بداية المصنع</div>
+          </div>
+          <div class="form-group">
+            <label>🔧 ريباراسيون الكراء (دج)</label>
+            <input type="number" id="farm-repair-loyer" placeholder="0" min="0" />
+            <div class="field-note">📌 تُطرح من الكراء — تخفّض ما يُدفع للإيجار</div>
+          </div>
+          <div class="form-group">
+            <label>🔨 ريباراسيون الفائدة (دج)</label>
+            <input type="number" id="farm-repair-total" placeholder="0" min="0" />
+            <div class="field-note">💸 تُطرح مباشرةً من الفائدة الإجمالية الصافية</div>
+          </div>
         </div>
         <button class="btn btn-primary" id="btn-save-settings">💾 حفظ الإعدادات</button>
       </div>
@@ -1006,6 +1411,48 @@
         <hr style="border-color:#ffffff1a; margin:1rem 0"/>
         <button class="btn btn-danger" id="btn-reset-all">🗑 إعادة تعيين بيانات هذا المصنع</button>
       </div>
+
+      <!-- BROILER-ONLY settings card -->
+      <div class="form-card broiler-only-card" id="broiler-settings-card" style="display:none">
+        <div class="form-card-title">🍗 إعدادات مصنع اللحم</div>
+
+        <div class="form-group">
+          <label>👔 نسبة صاحب العمل (%)</label>
+          <input type="number" id="broiler-owner-share" placeholder="100" min="0" max="100" />
+          <div class="field-note">📊 حصة صاحب العمل من الفائدة الصافية</div>
+        </div>
+
+        <div style="border-top:1px solid rgba(255,255,255,0.07);margin:14px 0;padding-top:14px">
+          <div style="font-size:0.85rem;font-weight:700;color:var(--text-secondary);margin-bottom:10px">🏠 التكاليف الثابتة للدورة</div>
+          <div class="form-group">
+            <label>الكراء (دج)</label>
+            <input type="number" id="broiler-loyer" placeholder="0" min="0" />
+          </div>
+          <div class="form-group">
+            <label>الكهرباء (دج)</label>
+            <input type="number" id="broiler-electricity" placeholder="0" min="0" />
+          </div>
+          <div class="form-group">
+            <label>مصاريف أخرى (دج)</label>
+            <input type="number" id="broiler-misc" placeholder="0" min="0" />
+          </div>
+        </div>
+
+        <div style="border-top:1px solid rgba(255,255,255,0.07);margin:14px 0;padding-top:14px">
+          <div class="form-group">
+            <label>🔐 كلمة سر إنهاء الدورة</label>
+            <input type="password" id="broiler-cycle-password" placeholder="1234" />
+            <div class="field-note">تُستخدم عند الضغط على "إنهاء الدورة"</div>
+          </div>
+          <div class="form-group">
+            <label>⚠️ حد تنبيه النفوق (%)</label>
+            <input type="number" id="broiler-mort-alert" placeholder="5" min="0" max="100" />
+            <div class="field-note">يُنبّهك عند تجاوز نسبة النفوق هذه القيمة</div>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" id="btn-save-broiler-settings">💾 حفظ إعدادات اللحم</button>
+      </div>
     </div>
   </section>
 
@@ -1026,6 +1473,166 @@
 
 <!-- ===== TOAST NOTIFICATION ===== -->
 <div class="toast" id="toast"></div>
+
+<!-- ===== MODAL: NEW BROILER CYCLE ===== -->
+<div class="modal-overlay" id="modal-new-cycle">
+  <div class="modal-box" style="max-width:500px;max-height:90vh;overflow-y:auto">
+    <div class="modal-title">🐣 بدء دورة تربية جديدة</div>
+    <div class="form-group">
+      <label>اسم / رقم الدورة</label>
+      <input type="text" id="nc-name" placeholder="مثال: الدورة الأولى — مايو 2026" />
+    </div>
+    <div class="form-group">
+      <label>تاريخ البداية</label>
+      <input type="date" id="nc-start-date" />
+    </div>
+    <div class="form-group">
+      <label>عدد الكتاكيت المُدخَلة</label>
+      <input type="number" id="nc-chicks" placeholder="مثال: 5000" min="1" />
+    </div>
+    <div class="form-group">
+      <label>سعر الكتكوت الواحد (دج)</label>
+      <input type="number" id="nc-chick-price" placeholder="0" min="0" step="0.01" />
+    </div>
+    <div class="form-group">
+      <label>المورد / المُنتِج</label>
+      <input type="text" id="nc-supplier" placeholder="اسم المورد (اختياري)" />
+    </div>
+    <div class="form-group">
+      <label>الوزن المستهدف (غ)</label>
+      <input type="number" id="nc-target-weight" placeholder="مثال: 2200" min="0" />
+    </div>
+    <div class="form-group">
+      <label>تكلفة الفرشة (دج)</label>
+      <input type="number" id="nc-bedding-cost" placeholder="0" min="0" />
+    </div>
+    <div class="form-group">
+      <label>تكلفة التدفئة (دج)</label>
+      <input type="number" id="nc-heating-cost" placeholder="0" min="0" />
+    </div>
+    <div class="calc-preview" style="margin-bottom:12px">
+      <div class="calc-row"><span>تكلفة الكتاكيت الإجمالية:</span><strong id="nc-preview-chick-cost" style="color:var(--orange)">—</strong></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btn-confirm-new-cycle">🐣 بدء الدورة</button>
+      <button class="btn btn-outline" id="btn-cancel-new-cycle">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: BROILER PARTNER EXPENSE ===== -->
+<div class="modal-overlay" id="modal-broiler-partner-expense">
+  <div class="modal-box" style="max-width:420px">
+    <div class="modal-title" id="bpe-modal-title">💸 مصروف / سحب للشريك</div>
+    <div class="form-group">
+      <label>النوع</label>
+      <select id="bpe-type">
+        <option value="expense">💸 مصروف</option>
+        <option value="withdrawal">💵 سحب</option>
+        <option value="injection">💉 ضخ رأسمال</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>المبلغ (دج)</label>
+      <input type="number" id="bpe-amount" placeholder="0" min="0" />
+    </div>
+    <div class="form-group">
+      <label>التاريخ</label>
+      <input type="date" id="bpe-date" />
+    </div>
+    <div class="form-group">
+      <label>ملاحظة</label>
+      <input type="text" id="bpe-note" placeholder="وصف المعاملة (اختياري)" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btn-confirm-bpe">✅ تسجيل</button>
+      <button class="btn btn-outline" id="btn-cancel-bpe">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: BROILER PARTNER STATEMENT ===== -->
+<div class="modal-overlay" id="modal-broiler-statement">
+  <div class="modal-box" style="max-width:560px;max-height:90vh;overflow-y:auto">
+    <div class="modal-title">📄 كشف حساب الشريك</div>
+    <div id="broiler-statement-content"></div>
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="btn btn-primary" onclick="window.print()">🖨️ طباعة</button>
+      <button class="btn btn-outline" id="btn-close-broiler-statement">إغلاق</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: ADD SLAUGHTER BATCH ===== -->
+<div class="modal-overlay" id="modal-add-slaughter">
+  <div class="modal-box" style="max-width:520px">
+    <div class="modal-title">🔪 إضافة دفعة ذبح</div>
+    <div class="form-group">
+      <label>التاريخ</label>
+      <input type="date" id="sl-date" />
+    </div>
+    <div class="form-group">
+      <label>عدد الدجاج المذبوح</label>
+      <input type="number" id="sl-count" placeholder="0" min="1" oninput="updateSlaughterCalc()" />
+    </div>
+    <div class="form-group">
+      <label>متوسط الوزن الحي (غ)</label>
+      <input type="number" id="sl-live-weight" placeholder="2200" min="0" oninput="updateSlaughterCalc()" />
+    </div>
+    <div class="form-group">
+      <label>السعر (دج/كغ وزن حي)</label>
+      <input type="number" id="sl-price-per-kg" placeholder="0" min="0" step="0.01" oninput="updateSlaughterCalc()" />
+    </div>
+    <div class="form-group">
+      <label>اسم المشتري</label>
+      <input type="text" id="sl-buyer" placeholder="اسم المشتري / السوق" />
+    </div>
+    <div class="form-group">
+      <label>نوع الدفع</label>
+      <select id="sl-payment-type">
+        <option value="cash">💰 نقداً</option>
+        <option value="credit">📋 كريديت</option>
+      </select>
+    </div>
+    <div class="form-group" id="sl-paid-amount-wrap" style="display:none">
+      <label>المبلغ المدفوع (دج)</label>
+      <input type="number" id="sl-paid-amount" placeholder="0" min="0" />
+    </div>
+    <div class="calc-preview">
+      <div class="calc-row"><span>إجمالي الوزن الحي:</span><strong id="sl-prev-total-weight">—</strong></div>
+      <div class="calc-row"><span>إجمالي المدخول:</span><strong id="sl-prev-income" style="color:var(--green)">—</strong></div>
+      <div class="calc-row" id="sl-prev-credit-row" style="display:none"><span>المتبقي (كريديت):</span><strong id="sl-prev-credit" style="color:var(--red)">—</strong></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btn-confirm-add-slaughter">➕ تسجيل الدفعة</button>
+      <button class="btn btn-outline" id="btn-cancel-add-slaughter">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: COMPLETE CYCLE ===== -->
+<div class="modal-overlay" id="modal-complete-cycle">
+  <div class="modal-box" style="max-width:420px">
+    <div class="modal-title">🏁 إنهاء الدورة</div>
+    <p style="color:var(--text-secondary);font-size:0.88rem;margin-bottom:18px;line-height:1.6">
+      هذا الإجراء سيُنهي الدورة النشطة وينقلها إلى سجل المنتهيات.<br>
+      <span style="color:var(--red)">لا يمكن التراجع عن هذا الإجراء.</span>
+    </p>
+    <div class="form-group">
+      <label>ملاحظة ختامية (اختياري)</label>
+      <textarea id="cc-notes" placeholder="ملاحظات نهائية للدورة..." rows="2"></textarea>
+    </div>
+    <div class="form-group">
+      <label>كلمة السر للتأكيد</label>
+      <input type="password" id="cc-password" placeholder="••••••••" style="letter-spacing:3px" />
+    </div>
+    <div id="cc-error" class="auth-error"></div>
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="btn-confirm-complete-cycle">🏁 تأكيد الإنهاء</button>
+      <button class="btn btn-outline" id="btn-cancel-complete-cycle">إلغاء</button>
+    </div>
+  </div>
+</div>
 
 <!-- Firebase SDKs -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>

@@ -763,12 +763,12 @@ const FactoryDB = {
     } catch (e) { console.error('Cloud factory list sync error:', e); }
   },
 
-  addFactory(name, icon, color) {
+  addFactory(name, icon, color, type = 'layer') {
     const list = this.getFactories();
     const id = 'f_' + Date.now();
     // Carry existing partner UIDs into the new factory so they see it immediately
     const partnerUids = [...new Set(list.flatMap(f => f.partnerUids || []))];
-    const factory = { id, name, icon, color, ownerUid: EFFECTIVE_OWNER_UID, createdAt: new Date().toISOString(), partnerUids };
+    const factory = { id, name, icon, color, type, ownerUid: EFFECTIVE_OWNER_UID, createdAt: new Date().toISOString(), partnerUids };
     list.push(factory);
     this.saveFactories(list);
     return factory;
@@ -846,7 +846,7 @@ function forceRefreshFromCloud() {
   }
 
   setSyncStatus('syncing');
-  const keys = ['settings', 'workers', 'daily_logs', 'activities', 'credits'];
+  const keys = ['settings', 'workers', 'daily_logs', 'activities', 'credits', 'broiler_cycles', 'broiler_logs'];
   let done = 0;
 
   keys.forEach(key => {
@@ -872,7 +872,7 @@ function initCloudSync() {
   stopFactorySync();
   setSyncStatus('syncing');
 
-  const keys = ['settings', 'workers', 'daily_logs', 'activities', 'credits'];
+  const keys = ['settings', 'workers', 'daily_logs', 'activities', 'credits', 'broiler_cycles', 'broiler_logs'];
   const initialLoaded = new Set();
 
   // 1. Force fetch from server FIRST to guarantee fresh data
@@ -1524,7 +1524,11 @@ function renderCurrentPage() {
     sales: renderSalesFeedPage,
     workers: renderWorkersPage,
     reports: renderReportsPage,
-    settings: loadSettingsForm
+    settings: loadSettingsForm,
+    cycles: renderCyclesPage,
+    'broiler-sales': renderBroilerSalesPage,
+    'broiler-reports': renderBroilerReportsPage,
+    'broiler-workers': renderBroilerWorkersPage
   };
   if (refreshers[pageId]) refreshers[pageId]();
 }
@@ -1634,14 +1638,20 @@ function buildFactoryCard(factory, idx, isPrimaryOwner, container) {
 
   const canDelete = isPrimaryOwner && !isReadOnlyUser();
 
+  const fType = factory.type || 'layer';
+  const typeBadge = fType === 'broiler'
+    ? `<span class="factory-type-badge factory-type-badge--broiler">🍗 لحم</span>`
+    : `<span class="factory-type-badge factory-type-badge--layer">🥚 بيض</span>`;
+
   card.innerHTML = `
     ${canDelete ? `<button class="factory-card-delete" data-id="${factory.id}" title="حذف المصنع">✕</button>` : ''}
+    ${typeBadge}
     <span class="factory-card-icon">${factory.icon || '🐔'}</span>
     <div class="factory-card-name">${factory.name}</div>
     <div class="factory-card-meta">${isPrimaryOwner ? '👔 تملك هذا المصنع' : `🤝 شريك${myShareRaw ? ' — حصتك ' + myShareRaw + '%' : ''}`}</div>
     <div class="factory-card-stat">
-      <span class="label">مدخول اليوم</span>
-      <span class="value">${todayLog ? fmt(todayLog.income, 'دج') : '—'}</span>
+      <span class="label">${fType === 'broiler' ? 'الدورة الحالية' : 'مدخول اليوم'}</span>
+      <span class="value">${fType === 'broiler' ? '—' : (todayLog ? fmt(todayLog.income, 'دج') : '—')}</span>
     </div>
   `;
 
@@ -1905,8 +1915,13 @@ function enterFactory(factory, sourceCard = null) {
 
     document.getElementById('sidebar-factory-icon').textContent = factory.icon || '🐔';
     document.getElementById('sidebar-factory-name').textContent = factory.name;
-    document.getElementById('sidebar-factory-sub').textContent = isSharedFactory ? '(شراكة)' : '';
+    const factoryType = factory.type || 'layer';
+    const typeLabel = factoryType === 'broiler' ? '🍗 مصنع لحم' : '🥚 مصنع بيض';
+    const sharingSuffix = isSharedFactory ? ' · شراكة' : '';
+    document.getElementById('sidebar-factory-sub').textContent = typeLabel + sharingSuffix;
     document.getElementById('topbar-factory-name').textContent = `deku — ${factory.name}${isSharedFactory ? ' (شراكة)' : ''}`;
+
+    applyFactoryTypeToUI(factoryType);
 
     initFactoryData();
     applyRoleToUI(CURRENT_ROLE, CURRENT_USER_NAME);
@@ -1923,6 +1938,86 @@ function enterFactory(factory, sourceCard = null) {
   };
 
   playFactoryEntryTransition(factory, sourceCard, continueEnter);
+}
+
+function applyFactoryTypeToUI(type) {
+  const isBroiler = type === 'broiler';
+
+  // Dashboard: show/hide the correct content blocks
+  const broilerPlaceholder = document.getElementById('broiler-dashboard-placeholder');
+  const kpiGrid = document.getElementById('kpi-grid');
+  const lastReportCard = document.getElementById('last-report-card');
+  const activityFeedSection = document.querySelector('#page-dashboard .section-card:last-of-type');
+
+  if (broilerPlaceholder) broilerPlaceholder.style.display = isBroiler ? '' : 'none';
+  if (kpiGrid) kpiGrid.style.display = isBroiler ? 'none' : '';
+  if (lastReportCard) lastReportCard.style.display = isBroiler ? 'none' : '';
+  if (activityFeedSection) activityFeedSection.style.display = isBroiler ? 'none' : '';
+
+  // Daily page: show broiler or layer form
+  const broilerWrapper = document.getElementById('broiler-daily-wrapper');
+  const layerWrapper = document.getElementById('layer-daily-wrapper');
+  if (broilerWrapper) broilerWrapper.style.display = isBroiler ? '' : 'none';
+  if (layerWrapper) layerWrapper.style.display = isBroiler ? 'none' : '';
+  const dailySub = document.getElementById('daily-page-sub');
+  if (dailySub) dailySub.textContent = isBroiler ? 'سجّل بيانات دورة اللحم اليومية' : 'سجّل بيانات يوم العمل';
+
+  // Nav cycles, sales, reports: show for broiler, hide for layer
+  const navCycles = document.getElementById('nav-cycles');
+  const navSales = document.getElementById('nav-broiler-sales');
+  const navReports = document.getElementById('nav-broiler-reports');
+  if (navCycles) navCycles.style.display = isBroiler ? '' : 'none';
+  if (navSales) navSales.style.display = isBroiler ? '' : 'none';
+  if (navReports) navReports.style.display = isBroiler ? '' : 'none';
+
+  // Nav sales/reports: for broiler, mark as coming-soon
+  const comingSoonPages = ['sales', 'reports'];
+  comingSoonPages.forEach(pageId => {
+    const navBtn = document.getElementById(`nav-${pageId}`);
+    if (!navBtn) return;
+    if (isBroiler) {
+      navBtn.classList.add('nav-item--disabled');
+      navBtn.setAttribute('title', 'متاح في المرحلة القادمة لمصانع اللحم');
+    } else {
+      navBtn.classList.remove('nav-item--disabled');
+      navBtn.removeAttribute('title');
+    }
+  });
+
+  // Dashboard header subtitle
+  const dashSub = document.getElementById('dashboard-sub');
+  if (dashSub) dashSub.textContent = isBroiler ? 'مصنع الدجاج اللاحم — دورات التربية' : 'نظرة عامة على المصنع';
+
+  // P4: Nav broiler-workers
+  const navBW = document.getElementById('nav-broiler-workers');
+  if (navBW) navBW.style.display = isBroiler ? '' : 'none';
+
+  // P4: Broiler settings card
+  const bsc = document.getElementById('broiler-settings-card');
+  if (bsc) bsc.style.display = isBroiler ? '' : 'none';
+
+  // P4: Hide layer-only settings cards for broiler
+  const psc = document.getElementById('partners-settings-card');
+  if (psc) psc.style.display = isBroiler ? 'none' : '';
+
+  // 🥚 إخفاء حقول مصنع البيض عند مصنع اللحم
+  const layerOnlySettings = document.getElementById('layer-only-settings');
+  if (layerOnlySettings) layerOnlySettings.style.display = isBroiler ? 'none' : '';
+
+  // P4: Load broiler settings into form
+  if (isBroiler && typeof loadBroilerSettings === 'function') loadBroilerSettings();
+
+  // Hide layer-only nav items when broiler
+  const navWorkers = document.getElementById('nav-workers');
+  if (navWorkers) {
+    if (isBroiler) {
+      navWorkers.classList.add('nav-item--disabled');
+      navWorkers.setAttribute('title', 'استخدم صفحة الفريق');
+    } else {
+      navWorkers.classList.remove('nav-item--disabled');
+      navWorkers.removeAttribute('title');
+    }
+  }
 }
 
 function exitToFactoryScreen() {
@@ -2279,13 +2374,16 @@ function initFactoryScreen() {
     if (!name) { showToast('يرجى إدخال اسم المصنع', 'error'); return; }
     const selectedIcon = document.querySelector('.icon-opt.selected');
     const icon = selectedIcon ? selectedIcon.dataset.icon : '🐔';
+    const selectedTypeBtn = document.querySelector('#factory-type-selector .factory-type-btn.selected');
+    const type = selectedTypeBtn ? selectedTypeBtn.dataset.type : 'layer';
     const usedColors = FactoryDB.getFactories().map(f => f.color);
     const color = CARD_COLORS.find(c => !usedColors.includes(c)) || CARD_COLORS[FactoryDB.getFactories().length % CARD_COLORS.length];
-    const factory = FactoryDB.addFactory(name, icon, color);
+    const factory = FactoryDB.addFactory(name, icon, color, type);
     closeAddFactoryModal();
     document.getElementById('new-factory-name').value = '';
     renderFactoryScreen();
-    showToast(`✅ تمت إضافة ${name}`);
+    const typeLabel = type === 'broiler' ? 'مصنع لحم 🍗' : 'مصنع بيض 🥚';
+    showToast(`✅ تمت إضافة ${name} (${typeLabel})`);
   });
 
   document.getElementById('btn-cancel-add-factory').addEventListener('click', closeAddFactoryModal);
@@ -2298,6 +2396,22 @@ function initFactoryScreen() {
     opt.addEventListener('click', () => {
       document.querySelectorAll('.icon-opt').forEach(o => o.classList.remove('selected'));
       opt.classList.add('selected');
+    });
+  });
+
+  // Factory type selector
+  document.querySelectorAll('.factory-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.factory-type-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      // Auto-select matching icon based on type
+      const type = btn.dataset.type;
+      const autoIcon = type === 'broiler' ? '🍗' : '🥚';
+      const iconOpt = document.querySelector(`.icon-opt[data-icon="${autoIcon}"]`);
+      if (iconOpt) {
+        document.querySelectorAll('.icon-opt').forEach(o => o.classList.remove('selected'));
+        iconOpt.classList.add('selected');
+      }
     });
   });
 
@@ -2347,9 +2461,16 @@ function showPage(pageId) {
     sales: renderSalesFeedPage,
     workers: renderWorkersPage,
     reports: renderReportsPage,
-    settings: loadSettingsForm
+    settings: loadSettingsForm,
+    cycles: renderCyclesPage,
+    'broiler-sales': renderBroilerSalesPage,
+    'broiler-reports': renderBroilerReportsPage,
+    'broiler-workers': renderBroilerWorkersPage
   };
   if (refreshers[pageId]) refreshers[pageId]();
+  if (pageId === 'daily' && CURRENT_FACTORY?.type === 'broiler') {
+    if (typeof initBroilerDailyPage === 'function') initBroilerDailyPage();
+  }
   // Close mobile sidebar — delay on mobile so nav animation stays visible
   const sidebarDelay = window.innerWidth <= 768 ? 1520 : 0;
   setTimeout(() => {
@@ -2368,6 +2489,7 @@ function updateLiveDate() {
 
 /* ===================== DASHBOARD ===================== */
 function renderDashboard() {
+  if (typeof _broilerDashboardHook === 'function' && _broilerDashboardHook()) return;
   const logs = DB.get('daily_logs') || [];
   const settings = DB.get('settings') || defaultSettings();
 
@@ -5103,6 +5225,1155 @@ if (installBtn) {
     }
   });
 }
+
+/* =====================================================================
+   BROILER (MEAT FACTORY) — FULL MODULE
+   ===================================================================== */
+
+/* ---------- Utility ---------- */
+function getCyclePhase(day) {
+  if (day <= 14) return { key: 'starter', label: 'Starter', color: '#68d391', feedType: 'starter' };
+  if (day <= 28) return { key: 'grower',  label: 'Grower',  color: '#f6ad55', feedType: 'grower'  };
+  return              { key: 'finisher', label: 'Finisher', color: '#fc8181', feedType: 'finisher' };
+}
+
+function getDayOfCycle(cycle) {
+  if (!cycle?.startDate) return 0;
+  const start = new Date(cycle.startDate);
+  const now   = new Date();
+  now.setHours(0,0,0,0); start.setHours(0,0,0,0);
+  return Math.max(1, Math.floor((now - start) / 86400000) + 1);
+}
+
+/* ---------- DB helpers ---------- */
+const BroilerDB = {
+  getCycles()          { return DB.get('broiler_cycles') || []; },
+  saveCycles(arr)      { DB.set('broiler_cycles', arr); },
+  getLogs()            { return DB.get('broiler_logs') || []; },
+  saveLogs(arr)        { DB.set('broiler_logs', arr); },
+  getActiveCycle()     { return this.getCycles().find(c => c.status === 'active') || null; },
+  getLogsForCycle(cid) { return this.getLogs().filter(l => l.cycleId === cid); },
+};
+
+/* ---------- Broiler Dashboard ---------- */
+function renderBroilerDashboard() {
+  const placeholder = document.getElementById('broiler-dashboard-placeholder');
+  if (!placeholder) return;
+
+  const cycle = BroilerDB.getActiveCycle();
+  if (!cycle) {
+    placeholder.innerHTML = `
+      <div class="broiler-coming-soon">
+        <div class="broiler-cs-icon">🐣</div>
+        <div class="broiler-cs-title">لا توجد دورة نشطة</div>
+        <div class="broiler-cs-sub">ابدأ دورة تربية جديدة لتتبع أداء مصنعك</div>
+        <button class="btn btn-primary" onclick="showPage('cycles')">📋 إدارة الدورات</button>
+      </div>`;
+    return;
+  }
+
+  const day   = getDayOfCycle(cycle);
+  const phase = getCyclePhase(day);
+  const logs  = BroilerDB.getLogsForCycle(cycle.id);
+
+  const totalDead    = logs.reduce((s, l) => s + (l.dead || 0), 0);
+  const remaining    = (cycle.chicksCount || 0) - totalDead;
+  const mortRate     = cycle.chicksCount ? ((totalDead / cycle.chicksCount) * 100).toFixed(1) : '0.0';
+  const totalFeedKg  = logs.reduce((s, l) => s + (l.feedKg || 0), 0);
+  const lastWeightLog = [...logs].reverse().find(l => l.avgWeight > 0);
+  const avgWeight    = lastWeightLog ? lastWeightLog.avgWeight : 0;
+  const totalWeightKg = avgWeight ? ((remaining * avgWeight) / 1000).toFixed(0) : '—';
+  const fcr = avgWeight && totalFeedKg && remaining
+    ? (totalFeedKg / (remaining * avgWeight / 1000)).toFixed(2) : '—';
+
+  placeholder.innerHTML = `
+    <div class="broiler-hero-card">
+      <div class="bhero-top">
+        <div>
+          <div class="bhero-title">${cycle.name}</div>
+          <div class="bhero-sub">بدأت ${new Date(cycle.startDate).toLocaleDateString('ar-DZ')}</div>
+        </div>
+        <div class="bhero-badge" style="background:${phase.color}22;color:${phase.color};border-color:${phase.color}44">
+          ${phase.label} · يوم ${day}
+        </div>
+      </div>
+      <div class="bhero-kpis">
+        <div class="bhero-kpi"><span class="bhkpi-val">${remaining.toLocaleString('ar')}</span><span class="bhkpi-label">الباقي</span></div>
+        <div class="bhero-kpi"><span class="bhkpi-val" style="color:#fc8181">${mortRate}%</span><span class="bhkpi-label">نسبة النفوق</span></div>
+        <div class="bhero-kpi"><span class="bhkpi-val">${totalFeedKg.toLocaleString('ar')} كغ</span><span class="bhkpi-label">إجمالي العلف</span></div>
+        <div class="bhero-kpi"><span class="bhkpi-val">${avgWeight ? avgWeight + ' غ' : '—'}</span><span class="bhkpi-label">متوسط الوزن</span></div>
+        <div class="bhero-kpi"><span class="bhkpi-val">${fcr}</span><span class="bhkpi-label">FCR</span></div>
+        <div class="bhero-kpi"><span class="bhkpi-val">${totalWeightKg !== '—' ? totalWeightKg + ' كغ' : '—'}</span><span class="bhkpi-label">الوزن الكلي</span></div>
+      </div>
+      <div class="bhero-actions">
+        <button class="btn btn-outline btn-sm" onclick="showPage('cycles')">📋 الدورات</button>
+        <button class="btn btn-primary btn-sm" onclick="showPage('daily')">📅 إدخال يومي</button>
+      </div>
+    </div>
+    ${logs.length > 0 ? renderBroilerRecentLogs(logs.slice(-3).reverse()) : ''}`;
+}
+
+function renderBroilerRecentLogs(logs) {
+  const rows = logs.map(l => {
+    const ph = getCyclePhase(l.dayNum || 1);
+    return `<tr>
+      <td>${l.date || '—'}</td>
+      <td>يوم ${l.dayNum || '—'}</td>
+      <td><span style="color:${ph.color}">${ph.label}</span></td>
+      <td style="color:#fc8181">${l.dead || 0}</td>
+      <td>${l.feedKg || 0} كغ</td>
+      <td>${l.avgWeight ? l.avgWeight + ' غ' : '—'}</td>
+    </tr>`;
+  }).join('');
+  return `
+    <div class="section-card" style="margin-top:16px">
+      <div class="section-title">📜 آخر الإدخالات</div>
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead><tr><th>التاريخ</th><th>اليوم</th><th>الطور</th><th>النافق</th><th>العلف</th><th>الوزن</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+/* ---------- renderDashboard hook (called via _broilerDashboardHook) ---------- */
+function _broilerDashboardHook() {
+  if (CURRENT_FACTORY?.type === 'broiler') {
+    renderBroilerDashboard();
+    return true;
+  }
+  return false;
+}
+
+/* ---------- Cycles Page ---------- */
+let _cyclesFilter = 'active';
+
+function switchCyclesTab(filter, btn) {
+  _cyclesFilter = filter;
+  document.querySelectorAll('#cycles-tabs .page-tab').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderCyclesPage();
+}
+
+function renderCyclesPage() {
+  const cycles = BroilerDB.getCycles();
+  const activeCycle = BroilerDB.getActiveCycle();
+
+  // Hero card for active cycle
+  const heroCard = document.getElementById('cycle-hero-card');
+  if (heroCard) {
+    if (activeCycle) {
+      heroCard.style.display = '';
+      const day = getDayOfCycle(activeCycle);
+      const phase = getCyclePhase(day);
+      const logs = BroilerDB.getLogsForCycle(activeCycle.id);
+      const totalDead = logs.reduce((s,l) => s+(l.dead||0), 0);
+      const remaining = (activeCycle.chicksCount||0) - totalDead;
+      const totalFeedKg = logs.reduce((s,l) => s+(l.feedKg||0), 0);
+      const lastW = [...logs].reverse().find(l=>l.avgWeight>0);
+      const avgW = lastW ? lastW.avgWeight : 0;
+      const fcr = avgW && totalFeedKg && remaining
+        ? (totalFeedKg / (remaining * avgW / 1000)).toFixed(2) : '—';
+
+      document.getElementById('bhero-title').textContent = activeCycle.name;
+      document.getElementById('bhero-sub').textContent =
+        `بدأت ${new Date(activeCycle.startDate).toLocaleDateString('ar-DZ')} · ${activeCycle.chicksCount?.toLocaleString('ar')} كتكوت`;
+      const badge = document.getElementById('bhero-phase-badge');
+      badge.textContent = `${phase.label} · يوم ${day}`;
+      badge.style.cssText = `background:${phase.color}22;color:${phase.color};border:1px solid ${phase.color}44;`;
+
+      document.getElementById('bhero-kpis').innerHTML = `
+        <div class="bhero-kpi"><span class="bhkpi-val">${remaining.toLocaleString('ar')}</span><span class="bhkpi-label">الباقي</span></div>
+        <div class="bhero-kpi"><span class="bhkpi-val" style="color:#fc8181">${activeCycle.chicksCount ? ((totalDead/activeCycle.chicksCount)*100).toFixed(1)+'%' : '—'}</span><span class="bhkpi-label">نسبة النفوق</span></div>
+        <div class="bhero-kpi"><span class="bhkpi-val">${totalFeedKg.toLocaleString('ar')} كغ</span><span class="bhkpi-label">إجمالي العلف</span></div>
+        <div class="bhero-kpi"><span class="bhkpi-val">${avgW ? avgW+' غ' : '—'}</span><span class="bhkpi-label">متوسط الوزن</span></div>
+        <div class="bhero-kpi"><span class="bhkpi-val">${fcr}</span><span class="bhkpi-label">FCR</span></div>
+        <div class="bhero-kpi"><span class="bhkpi-val">${logs.length}</span><span class="bhkpi-label">أيام مسجّلة</span></div>`;
+    } else {
+      heroCard.style.display = 'none';
+    }
+  }
+
+  // Cycle list
+  const container = document.getElementById('cycles-list-container');
+  if (!container) return;
+
+  const filtered = cycles.filter(c => {
+    if (_cyclesFilter === 'active') return c.status === 'active';
+    if (_cyclesFilter === 'done')   return c.status === 'completed';
+    return true;
+  });
+
+  if (!filtered.length) {
+    container.innerHTML = `<div class="empty-state">
+      <div class="empty-icon">${_cyclesFilter === 'active' ? '🟢' : '📋'}</div>
+      <p>${_cyclesFilter === 'active' ? 'لا توجد دورة نشطة حالياً' : 'لا توجد دورات في هذا القسم'}</p>
+    </div>`;
+    return;
+  }
+
+  container.innerHTML = filtered.map(cycle => {
+    const logs = BroilerDB.getLogsForCycle(cycle.id);
+    const totalDead = logs.reduce((s,l) => s+(l.dead||0), 0);
+    const remaining = (cycle.chicksCount||0) - totalDead;
+    const totalFeedKg = logs.reduce((s,l) => s+(l.feedKg||0), 0);
+    const lastW = [...logs].reverse().find(l=>l.avgWeight>0);
+    const avgW = lastW ? lastW.avgWeight : 0;
+    const day = cycle.status === 'active' ? getDayOfCycle(cycle) : cycle.totalDays || '—';
+    const phase = cycle.status === 'active' ? getCyclePhase(day) : null;
+
+    return `<div class="cycle-card ${cycle.status === 'active' ? 'cycle-card--active' : ''}">
+      <div class="cc-header">
+        <div>
+          <div class="cc-name">${cycle.name}</div>
+          <div class="cc-meta">${new Date(cycle.startDate).toLocaleDateString('ar-DZ')} · ${cycle.chicksCount?.toLocaleString('ar')} كتكوت</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+          ${phase ? `<span class="bhero-badge" style="background:${phase.color}22;color:${phase.color};border:1px solid ${phase.color}44;border-radius:8px;padding:3px 10px;font-size:0.8rem;font-weight:700">${phase.label}</span>` : ''}
+          ${cycle.status === 'completed' ? '<span class="cycle-done-badge">✅ منتهية</span>' : ''}
+        </div>
+      </div>
+      <div class="cc-kpis">
+        <div class="cc-kpi"><span>${typeof day === 'number' ? 'يوم '+day : day+' يوم'}</span><small>المدة</small></div>
+        <div class="cc-kpi"><span>${remaining.toLocaleString('ar')}</span><small>الباقي</small></div>
+        <div class="cc-kpi"><span style="color:#fc8181">${totalDead}</span><small>النفوق</small></div>
+        <div class="cc-kpi"><span>${totalFeedKg.toLocaleString('ar')} كغ</span><small>إجمالي العلف</small></div>
+        <div class="cc-kpi"><span>${avgW ? avgW+' غ' : '—'}</span><small>آخر وزن</small></div>
+        <div class="cc-kpi"><span>${logs.length}</span><small>أيام مسجّلة</small></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------- New Cycle Modal ---------- */
+function openNewCycleModal() {
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('nc-start-date').value = today;
+  document.getElementById('nc-name').value = `الدورة ${BroilerDB.getCycles().length + 1}`;
+  ['nc-chicks','nc-chick-price','nc-supplier','nc-target-weight','nc-bedding-cost','nc-heating-cost'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  document.getElementById('nc-preview-chick-cost').textContent = '—';
+  document.getElementById('modal-new-cycle').classList.add('open');
+  setTimeout(() => document.getElementById('nc-name').focus(), 300);
+}
+
+function closeNewCycleModal() {
+  document.getElementById('modal-new-cycle').classList.remove('open');
+}
+
+function confirmNewCycle() {
+  const name        = document.getElementById('nc-name').value.trim();
+  const startDate   = document.getElementById('nc-start-date').value;
+  const chicksCount = parseInt(document.getElementById('nc-chicks').value) || 0;
+  const chickPrice  = parseFloat(document.getElementById('nc-chick-price').value) || 0;
+  const supplier    = document.getElementById('nc-supplier').value.trim();
+  const targetWeight= parseInt(document.getElementById('nc-target-weight').value) || 0;
+  const beddingCost = parseFloat(document.getElementById('nc-bedding-cost').value) || 0;
+  const heatingCost = parseFloat(document.getElementById('nc-heating-cost').value) || 0;
+
+  if (!name)        { showToast('أدخل اسم الدورة', 'error'); return; }
+  if (!startDate)   { showToast('أدخل تاريخ البداية', 'error'); return; }
+  if (!chicksCount) { showToast('أدخل عدد الكتاكيت', 'error'); return; }
+
+  if (BroilerDB.getActiveCycle()) {
+    showToast('يوجد دورة نشطة بالفعل — أنهِها أولاً', 'error'); return;
+  }
+
+  const cycle = {
+    id: 'cyc_' + Date.now(),
+    name, startDate, chicksCount, chickPrice, supplier,
+    targetWeight, beddingCost, heatingCost,
+    status: 'active',
+    createdAt: new Date().toISOString()
+  };
+
+  const cycles = BroilerDB.getCycles();
+  cycles.push(cycle);
+  BroilerDB.saveCycles(cycles);
+
+  closeNewCycleModal();
+  renderCyclesPage();
+  showToast(`✅ بدأت الدورة "${name}" — ${chicksCount.toLocaleString('ar')} كتكوت`);
+}
+
+/* ---------- Complete Cycle Modal ---------- */
+function openCompleteCycleModal() {
+  if (!BroilerDB.getActiveCycle()) { showToast('لا توجد دورة نشطة', 'error'); return; }
+  document.getElementById('cc-password').value = '';
+  document.getElementById('cc-notes').value = '';
+  document.getElementById('cc-error').textContent = '';
+  document.getElementById('modal-complete-cycle').classList.add('open');
+}
+
+function closeCompleteCycleModal() {
+  document.getElementById('modal-complete-cycle').classList.remove('open');
+}
+
+function confirmCompleteCycle() {
+  const pwd = document.getElementById('cc-password').value;
+  const bSettings = DB.get('broiler_settings') || {};
+  const settings = DB.get('settings') || {};
+  const correctPwd = bSettings.cyclePassword || settings.completeCyclePassword || '1234';
+  if (pwd !== correctPwd) {
+    document.getElementById('cc-error').textContent = '❌ كلمة السر غير صحيحة';
+    return;
+  }
+  const notes = document.getElementById('cc-notes').value.trim();
+  const cycles = BroilerDB.getCycles();
+  const idx = cycles.findIndex(c => c.status === 'active');
+  if (idx === -1) { showToast('لا توجد دورة نشطة', 'error'); return; }
+
+  const cycle = cycles[idx];
+  const logs  = BroilerDB.getLogsForCycle(cycle.id);
+  cycle.status       = 'completed';
+  cycle.endDate      = new Date().toISOString().split('T')[0];
+  cycle.totalDays    = getDayOfCycle(cycle);
+  cycle.closingNotes = notes;
+
+  const totalDead = logs.reduce((s,l) => s+(l.dead||0), 0);
+  cycle.finalRemaining = (cycle.chicksCount||0) - totalDead;
+  cycle.totalFeedKg    = logs.reduce((s,l) => s+(l.feedKg||0), 0);
+  const lastW = [...logs].reverse().find(l=>l.avgWeight>0);
+  cycle.finalAvgWeight = lastW ? lastW.avgWeight : 0;
+
+  cycles[idx] = cycle;
+  BroilerDB.saveCycles(cycles);
+
+  closeCompleteCycleModal();
+  renderCyclesPage();
+  showToast(`✅ تم إنهاء الدورة "${cycle.name}"`, 'success');
+}
+
+/* ---------- Broiler Daily Entry ---------- */
+function initBroilerDailyPage() {
+  const cycle = BroilerDB.getActiveCycle();
+  const noCycleBanner = document.getElementById('broiler-no-cycle-banner');
+  const formInner = document.getElementById('broiler-daily-form-inner');
+
+  if (!cycle) {
+    if (noCycleBanner) noCycleBanner.style.display = '';
+    if (formInner) formInner.style.display = 'none';
+    return;
+  }
+  if (noCycleBanner) noCycleBanner.style.display = 'none';
+  if (formInner) formInner.style.display = '';
+
+  const day = getDayOfCycle(cycle);
+  const phase = getCyclePhase(day);
+
+  const dayBar = document.getElementById('broiler-day-bar');
+  if (dayBar) dayBar.style.borderColor = phase.color + '55';
+  const dayNum = document.getElementById('bday-num');
+  if (dayNum) dayNum.textContent = `يوم ${day}`;
+  const phaseBadge = document.getElementById('bday-phase');
+  if (phaseBadge) {
+    phaseBadge.textContent = phase.label;
+    phaseBadge.style.cssText = `background:${phase.color}22;color:${phase.color};border:1px solid ${phase.color}44;border-radius:6px;padding:2px 10px;font-size:0.82rem;font-weight:700`;
+  }
+  const cycleName = document.getElementById('bday-cycle-name');
+  if (cycleName) cycleName.textContent = cycle.name;
+
+  // Auto-set feed type based on phase
+  const feedTypeEl = document.getElementById('binp-feed-type');
+  if (feedTypeEl) feedTypeEl.value = phase.feedType;
+
+  // Set today's date
+  const dateEl = document.getElementById('binp-date');
+  if (dateEl && !dateEl.value) dateEl.value = new Date().toISOString().split('T')[0];
+
+  updateBroilerCalc();
+  renderBroilerRecentTable(cycle.id);
+}
+
+function updateBroilerCalc() {
+  const cycle = BroilerDB.getActiveCycle();
+  if (!cycle) return;
+
+  const logs      = BroilerDB.getLogsForCycle(cycle.id);
+  const totalDead = logs.reduce((s,l) => s+(l.dead||0), 0);
+  const newDead   = parseInt(document.getElementById('binp-dead')?.value) || 0;
+  const remaining = (cycle.chicksCount||0) - totalDead - newDead;
+  const mortRate  = cycle.chicksCount
+    ? (((totalDead + newDead) / cycle.chicksCount) * 100).toFixed(1) : '0.0';
+
+  const el = (id) => document.getElementById(id);
+  if (el('bprev-remaining')) el('bprev-remaining').textContent = remaining.toLocaleString('ar');
+  if (el('bprev-mort-rate')) {
+    el('bprev-mort-rate').textContent = mortRate + '%';
+    el('bprev-mort-rate').style.color = parseFloat(mortRate) > 5 ? 'var(--red)' : 'var(--green)';
+  }
+
+  const feedKg    = parseFloat(el('binp-feed-kg')?.value) || 0;
+  const feedPrice = parseFloat(el('binp-feed-price')?.value) || 0;
+  const feedCost  = feedKg * feedPrice;
+  const totalFeedKg = logs.reduce((s,l) => s+(l.feedKg||0), 0) + feedKg;
+
+  if (el('bprev-feed-cost')) el('bprev-feed-cost').textContent = feedCost ? fmt(feedCost,'دج') : '—';
+  if (el('bprev-total-feed')) el('bprev-total-feed').textContent = totalFeedKg.toLocaleString('ar') + ' كغ';
+
+  const avgWeight = parseFloat(el('binp-avg-weight')?.value) || 0;
+  if (avgWeight && remaining > 0) {
+    const totalWeightKg = (remaining * avgWeight / 1000).toFixed(0);
+    if (el('bprev-total-weight')) el('bprev-total-weight').textContent = (+totalWeightKg).toLocaleString('ar') + ' كغ';
+    const fcr = totalFeedKg && remaining ? (totalFeedKg / (remaining * avgWeight / 1000)).toFixed(2) : '—';
+    if (el('bprev-fcr')) el('bprev-fcr').textContent = fcr;
+  } else {
+    if (el('bprev-total-weight')) el('bprev-total-weight').textContent = '—';
+    if (el('bprev-fcr')) el('bprev-fcr').textContent = '—';
+  }
+}
+
+function saveBroilerDay() {
+  const cycle = BroilerDB.getActiveCycle();
+  if (!cycle) { showToast('لا توجد دورة نشطة', 'error'); return; }
+
+  const date      = document.getElementById('binp-date')?.value;
+  if (!date) { showToast('اختر تاريخ اليوم', 'error'); return; }
+
+  const logs = BroilerDB.getLogs();
+  if (logs.find(l => l.cycleId === cycle.id && l.date === date)) {
+    if (!confirm(`يوجد إدخال بتاريخ ${date} — هل تريد تحديثه؟`)) return;
+    const idx = logs.findIndex(l => l.cycleId === cycle.id && l.date === date);
+    logs.splice(idx, 1);
+  }
+
+  const day     = getDayOfCycle(cycle);
+  const feedKg  = parseFloat(document.getElementById('binp-feed-kg')?.value) || 0;
+  const entry = {
+    id:         'bl_' + Date.now(),
+    cycleId:    cycle.id,
+    date,
+    dayNum:     day,
+    phase:      getCyclePhase(day).key,
+    dead:       parseInt(document.getElementById('binp-dead')?.value) || 0,
+    feedType:   document.getElementById('binp-feed-type')?.value || 'grower',
+    feedKg,
+    feedPrice:  parseFloat(document.getElementById('binp-feed-price')?.value) || 0,
+    avgWeight:  parseFloat(document.getElementById('binp-avg-weight')?.value) || 0,
+    weighedCount: parseInt(document.getElementById('binp-weighed-count')?.value) || 0,
+    waterCost:  parseFloat(document.getElementById('binp-water')?.value) || 0,
+    medsCost:   parseFloat(document.getElementById('binp-meds')?.value) || 0,
+    notes:      document.getElementById('binp-notes')?.value.trim() || '',
+    enteredBy:  CURRENT_USER_NAME || 'unknown',
+    createdAt:  new Date().toISOString()
+  };
+
+  logs.push(entry);
+  BroilerDB.saveLogs(logs);
+
+  showToast(`✅ تم حفظ يوم ${day} — نافق: ${entry.dead} | علف: ${feedKg} كغ`);
+  clearBroilerForm();
+  renderBroilerRecentTable(cycle.id);
+  updateBroilerCalc();
+}
+
+function clearBroilerForm() {
+  ['binp-dead','binp-feed-kg','binp-feed-price','binp-avg-weight','binp-weighed-count','binp-water','binp-meds','binp-notes'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  updateBroilerCalc();
+}
+
+function renderBroilerRecentTable(cycleId) {
+  const tbody = document.getElementById('broiler-daily-tbody');
+  if (!tbody) return;
+  const logs = BroilerDB.getLogsForCycle(cycleId).slice(-7).reverse();
+  if (!logs.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-cell">لا توجد سجلات</td></tr>';
+    return;
+  }
+  tbody.innerHTML = logs.map(l => {
+    const ph = getCyclePhase(l.dayNum||1);
+    return `<tr>
+      <td>${l.date}</td>
+      <td>${l.dayNum}</td>
+      <td><span style="color:${ph.color};font-weight:700">${ph.label}</span></td>
+      <td style="color:#fc8181">${l.dead}</td>
+      <td>${l.feedKg} كغ</td>
+      <td>${l.avgWeight ? l.avgWeight+' غ' : '—'}</td>
+      <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis">${l.notes||'—'}</td>
+      <td class="admin-only"><button class="btn-icon btn-danger-sm" onclick="deleteBroilerLog('${l.id}')">🗑</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function deleteBroilerLog(logId) {
+  if (!confirm('حذف هذا السجل؟')) return;
+  const logs = BroilerDB.getLogs().filter(l => l.id !== logId);
+  BroilerDB.saveLogs(logs);
+  const cycle = BroilerDB.getActiveCycle();
+  if (cycle) renderBroilerRecentTable(cycle.id);
+  updateBroilerCalc();
+  showToast('تم الحذف', 'warning');
+}
+
+/* ---------- New Cycle preview calc ---------- */
+function updateNewCyclePreview() {
+  const count = parseInt(document.getElementById('nc-chicks')?.value) || 0;
+  const price = parseFloat(document.getElementById('nc-chick-price')?.value) || 0;
+  const el = document.getElementById('nc-preview-chick-cost');
+  if (el) el.textContent = count && price ? fmt(count * price, 'دج') : '—';
+}
+
+/* ---------- Event Listeners (Broiler) ---------- */
+document.addEventListener('DOMContentLoaded', () => {
+  // New cycle modal
+  document.getElementById('btn-new-cycle')?.addEventListener('click', () => {
+    if (isReadOnlyUser()) { showToast('🔒 وضع المشاهدة فقط', 'error'); return; }
+    openNewCycleModal();
+  });
+  document.getElementById('btn-confirm-new-cycle')?.addEventListener('click', confirmNewCycle);
+  document.getElementById('btn-cancel-new-cycle')?.addEventListener('click', closeNewCycleModal);
+  document.getElementById('modal-new-cycle')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('modal-new-cycle')) closeNewCycleModal();
+  });
+
+  // Live preview in new cycle modal
+  ['nc-chicks','nc-chick-price'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', updateNewCyclePreview);
+  });
+
+  // Complete cycle modal
+  document.getElementById('btn-complete-cycle')?.addEventListener('click', () => {
+    if (isReadOnlyUser()) { showToast('🔒 وضع المشاهدة فقط', 'error'); return; }
+    openCompleteCycleModal();
+  });
+  document.getElementById('btn-confirm-complete-cycle')?.addEventListener('click', confirmCompleteCycle);
+  document.getElementById('btn-cancel-complete-cycle')?.addEventListener('click', closeCompleteCycleModal);
+  document.getElementById('modal-complete-cycle')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('modal-complete-cycle')) closeCompleteCycleModal();
+  });
+
+  // Broiler daily save/clear
+  document.getElementById('btn-save-broiler-day')?.addEventListener('click', saveBroilerDay);
+  document.getElementById('btn-clear-broiler-form')?.addEventListener('click', clearBroilerForm);
+
+  // Broiler advance row
+  document.getElementById('broiler-add-advance-row')?.addEventListener('click', () => {
+    const container = document.getElementById('broiler-advance-entries');
+    if (!container) return;
+    const rows = container.querySelectorAll('.advance-row');
+    const newRow = document.createElement('div');
+    newRow.className = 'advance-row';
+    newRow.dataset.idx = rows.length;
+    newRow.innerHTML = `
+      <select class="adv-worker-select"><option value="">— اختر عاملاً —</option></select>
+      <input type="number" class="adv-amount" placeholder="المبلغ (دج)" min="0" />
+      <button class="btn-remove-adv" title="حذف">✕</button>`;
+    newRow.querySelector('.btn-remove-adv').addEventListener('click', () => newRow.remove());
+    container.appendChild(newRow);
+    populateWorkerSelects();
+  });
+});
+
+// Broiler daily init is called from applyFactoryTypeToUI + nav click
+
+/* -------- Broiler Sales -------- */
+function renderBroilerSalesPage() {
+  const cycle = BroilerDB.getActiveCycle();
+  if (!cycle) {
+    document.getElementById('page-broiler-sales').innerHTML = `<div class="empty-state" style="padding:60px 20px">
+      <p>لا توجد دورة نشطة</p></div>`;
+    return;
+  }
+
+  const sales = DB.get('broiler_slaughter') || [];
+  const cycleSales = sales.filter(s => s.cycleId === cycle.id);
+
+  const totalCount = cycleSales.reduce((s, sl) => s + (sl.count || 0), 0);
+  const totalIncome = cycleSales.reduce((s, sl) => s + (sl.income || 0), 0);
+  const totalPaid = cycleSales.reduce((s, sl) => s + (sl.paidAmount || 0), 0);
+  const totalCredit = totalIncome - totalPaid;
+
+  // Cycle cost estimate
+  const logs = BroilerDB.getLogsForCycle(cycle.id);
+  const totalFeedCost = logs.reduce((s, l) => s + (l.feedKg * (l.feedPrice || 0)), 0);
+  const totalWaterMeds = logs.reduce((s, l) => s + ((l.waterCost || 0) + (l.medsCost || 0)), 0);
+  const chicksInitial = (cycle.chicksCount || 0) * (cycle.chickPrice || 0);
+  const totalCost = chicksInitial + totalFeedCost + totalWaterMeds + (cycle.beddingCost || 0) + (cycle.heatingCost || 0);
+  const profit = totalIncome - totalCost;
+
+  document.getElementById('bs-total-slaughtered').textContent = totalCount.toLocaleString('ar');
+  document.getElementById('bs-total-income').textContent = fmt(totalIncome, 'دج');
+  document.getElementById('bs-total-cost').textContent = fmt(totalCost, 'دج');
+  document.getElementById('bs-total-profit').textContent = fmt(profit, 'دج');
+  const profitEl = document.getElementById('bs-total-profit').parentElement.parentElement;
+  if (profitEl) profitEl.style.borderColor = profit >= 0 ? 'rgba(72,187,120,0.3)' : 'rgba(252,129,129,0.3)';
+
+  const tbody = document.getElementById('slaughter-tbody');
+  if (!cycleSales.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-cell">لم يتم تسجيل أي دفعات ذبح</td></tr>';
+  } else {
+    tbody.innerHTML = cycleSales.map(sl => `<tr>
+      <td>${sl.date}</td>
+      <td>${sl.count.toLocaleString('ar')}</td>
+      <td>${(sl.count * sl.liveWeight / 1000).toFixed(1)} كغ</td>
+      <td>${sl.buyer}</td>
+      <td>${sl.pricePerKg}</td>
+      <td>${fmt(sl.income, 'دج')}</td>
+      <td><span style="font-size:0.75rem;padding:2px 8px;border-radius:4px;background:${sl.paymentType === 'cash' ? 'rgba(72,187,120,0.15);color:#68d391' : 'rgba(252,129,129,0.15);color:#fc8181'}">${sl.paymentType === 'cash' ? '💰 نقد' : '📋 كريديت'}</span></td>
+      <td class="admin-only"><button class="btn-icon btn-danger-sm" onclick="deleteBroilerSale('${sl.id}')">🗑</button></td>
+    </tr>`).join('');
+  }
+
+  // Credits
+  const credits = cycleSales.filter(s => s.paymentType === 'credit');
+  const creditsEl = document.getElementById('broiler-credits-list');
+  if (credits.length) {
+    creditsEl.innerHTML = credits.map(c => `<div class="credit-item" style="padding:12px;background:rgba(252,129,129,0.08);border:1px solid rgba(252,129,129,0.2);border-radius:8px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap">
+        <div><span style="font-weight:700">${c.buyer}</span><br><span style="font-size:0.8rem;color:var(--text-muted)">${c.date}</span></div>
+        <div style="text-align:right">
+          <span style="color:#fc8181;font-weight:700;font-size:1.1rem">${fmt(c.income - c.paidAmount, 'دج')}</span><br>
+          <span style="font-size:0.75rem">من أصل ${fmt(c.income, 'دج')}</span>
+        </div>
+      </div>
+    </div>`).join('');
+  } else {
+    creditsEl.innerHTML = '<div class="empty-state"><p>لا توجد كريديات معلقة</p></div>';
+  }
+}
+
+function updateSlaughterCalc() {
+  const count = parseInt(document.getElementById('sl-count')?.value) || 0;
+  const weight = parseInt(document.getElementById('sl-live-weight')?.value) || 0;
+  const price = parseFloat(document.getElementById('sl-price-per-kg')?.value) || 0;
+
+  const totalWeightKg = count * weight / 1000;
+  const income = totalWeightKg * price;
+
+  const wEl = document.getElementById('sl-prev-total-weight');
+  if (wEl) wEl.textContent = totalWeightKg.toFixed(1) + ' كغ';
+  const iEl = document.getElementById('sl-prev-income');
+  if (iEl) iEl.textContent = fmt(income, 'دج');
+
+  const paymentType = document.getElementById('sl-payment-type')?.value;
+  const paidWrap = document.getElementById('sl-paid-amount-wrap');
+  const creditRow = document.getElementById('sl-prev-credit-row');
+
+  if (paymentType === 'credit') {
+    if (paidWrap) paidWrap.style.display = '';
+    if (creditRow) creditRow.style.display = '';
+    const paid = parseFloat(document.getElementById('sl-paid-amount')?.value) || 0;
+    const credit = income - paid;
+    const cEl = document.getElementById('sl-prev-credit');
+    if (cEl) cEl.textContent = fmt(credit, 'دج');
+  } else {
+    if (paidWrap) paidWrap.style.display = 'none';
+    if (creditRow) creditRow.style.display = 'none';
+  }
+}
+
+function openAddSlaughterModal() {
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('sl-date').value = today;
+  ['sl-count','sl-live-weight','sl-price-per-kg','sl-buyer','sl-paid-amount'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.value = '';
+  });
+  document.getElementById('sl-payment-type').value = 'cash';
+  updateSlaughterCalc();
+  document.getElementById('modal-add-slaughter').classList.add('open');
+  setTimeout(() => document.getElementById('sl-count').focus(), 300);
+}
+
+function closeAddSlaughterModal() {
+  document.getElementById('modal-add-slaughter').classList.remove('open');
+}
+
+function confirmAddSlaughter() {
+  const cycle = BroilerDB.getActiveCycle();
+  if (!cycle) { showToast('لا توجد دورة نشطة', 'error'); return; }
+
+  const date = document.getElementById('sl-date')?.value;
+  const count = parseInt(document.getElementById('sl-count')?.value) || 0;
+  const weight = parseInt(document.getElementById('sl-live-weight')?.value) || 0;
+  const price = parseFloat(document.getElementById('sl-price-per-kg')?.value) || 0;
+  const buyer = document.getElementById('sl-buyer')?.value.trim();
+  const paymentType = document.getElementById('sl-payment-type')?.value || 'cash';
+  const paidAmount = paymentType === 'cash' ? (count * weight / 1000 * price) : (parseFloat(document.getElementById('sl-paid-amount')?.value) || 0);
+
+  if (!date || !count || !weight || !price) { showToast('أكمل البيانات المطلوبة', 'error'); return; }
+
+  const income = count * weight / 1000 * price;
+  const sale = {
+    id: 'sl_' + Date.now(),
+    cycleId: cycle.id,
+    date, count, liveWeight: weight,
+    pricePerKg: price, buyer: buyer || 'بدون',
+    income, paymentType, paidAmount,
+    createdAt: new Date().toISOString()
+  };
+
+  const sales = DB.get('broiler_slaughter') || [];
+  sales.push(sale);
+  DB.set('broiler_slaughter', sales);
+
+  closeAddSlaughterModal();
+  renderBroilerSalesPage();
+  showToast(`✅ تم تسجيل دفعة: ${count} طير — ${fmt(income, 'دج')}`);
+}
+
+function deleteBroilerSale(saleId) {
+  if (!confirm('حذف هذه الدفعة؟')) return;
+  const sales = (DB.get('broiler_slaughter') || []).filter(s => s.id !== saleId);
+  DB.set('broiler_slaughter', sales);
+  renderBroilerSalesPage();
+  showToast('تم الحذف', 'warning');
+}
+
+/* -------- Broiler Reports -------- */
+function renderBroilerReportsPage() {
+  const cycle = BroilerDB.getActiveCycle();
+  if (!cycle) {
+    document.getElementById('page-broiler-reports').innerHTML = `<div class="empty-state" style="padding:60px 20px">
+      <p>لا توجد دورة نشطة</p></div>`;
+    return;
+  }
+
+  const logs = BroilerDB.getLogsForCycle(cycle.id);
+  const sales = (DB.get('broiler_slaughter') || []).filter(s => s.cycleId === cycle.id);
+  const partners = DB.get('partners') || [];
+
+  const totalDead = logs.reduce((s, l) => s + (l.dead || 0), 0);
+  const remaining = (cycle.chicksCount || 0) - totalDead;
+  const mortRate = cycle.chicksCount ? ((totalDead / cycle.chicksCount) * 100).toFixed(2) : '0.00';
+  const totalFeedKg = logs.reduce((s, l) => s + (l.feedKg || 0), 0);
+  const lastW = [...logs].reverse().find(l => l.avgWeight > 0);
+  const avgWeight = lastW ? lastW.avgWeight : 0;
+  const fcr = avgWeight && totalFeedKg && remaining
+    ? (totalFeedKg / (remaining * avgWeight / 1000)).toFixed(2) : '—';
+  const totalSlaughtered = sales.reduce((s, sl) => s + (sl.count || 0), 0);
+
+  const summaryHTML = `
+    <div class="report-item"><span>🐣 الكتاكيت الابتدائية:</span><strong>${(cycle.chicksCount || 0).toLocaleString('ar')}</strong></div>
+    <div class="report-item"><span>💀 النفوق الإجمالي:</span><strong style="color:#fc8181">${totalDead.toLocaleString('ar')} (${mortRate}%)</strong></div>
+    <div class="report-item"><span>🐔 المتبقي الحي:</span><strong>${remaining.toLocaleString('ar')}</strong></div>
+    <div class="report-item"><span>🔪 المذبوح:</span><strong>${totalSlaughtered.toLocaleString('ar')}</strong></div>
+    <div class="report-item"><span>🌾 إجمالي العلف:</span><strong>${totalFeedKg.toLocaleString('ar')} كغ</strong></div>
+    <div class="report-item"><span>⚖️ متوسط الوزن:</span><strong>${avgWeight ? avgWeight + ' غ' : '—'}</strong></div>
+    <div class="report-item"><span>📊 FCR:</span><strong>${fcr}</strong></div>
+    <div class="report-item"><span>📅 مدة الدورة:</span><strong>${getDayOfCycle(cycle)} يوم</strong></div>`;
+
+  const summaryEl = document.getElementById('broiler-report-summary');
+  if (summaryEl) summaryEl.innerHTML = summaryHTML;
+
+  // Financials
+  const chicksInitial = (cycle.chicksCount || 0) * (cycle.chickPrice || 0);
+  const feedCost = logs.reduce((s, l) => s + (l.feedKg * (l.feedPrice || 0)), 0);
+  const waterMeds = logs.reduce((s, l) => s + ((l.waterCost || 0) + (l.medsCost || 0)), 0);
+  const beddingHeating = (cycle.beddingCost || 0) + (cycle.heatingCost || 0);
+  const totalCost = chicksInitial + feedCost + waterMeds + beddingHeating;
+  const totalIncome = sales.reduce((s, sl) => s + (sl.income || 0), 0);
+  const profit = totalIncome - totalCost;
+
+  const finEl = document.getElementById('broiler-report-financials');
+  if (finEl) finEl.innerHTML = `
+    <div style="margin-bottom:20px">
+      <div class="calc-row"><span>تكلفة الكتاكيت:</span><strong>${fmt(chicksInitial, 'دج')}</strong></div>
+      <div class="calc-row"><span>تكلفة العلف:</span><strong>${fmt(feedCost, 'دج')}</strong></div>
+      <div class="calc-row"><span>الماء والأدوية:</span><strong>${fmt(waterMeds, 'دج')}</strong></div>
+      <div class="calc-row"><span>الفرشة والتدفئة:</span><strong>${fmt(beddingHeating, 'دج')}</strong></div>
+      <div style="border-top:1px dashed rgba(255,255,255,0.2);margin:10px 0;padding-top:10px">
+        <div class="calc-row"><span style="font-weight:700">إجمالي التكاليف:</span><strong>${fmt(totalCost, 'دج')}</strong></div>
+      </div>
+      <div class="calc-row"><span>إجمالي المدخول (الذبح):</span><strong style="color:var(--green)">${fmt(totalIncome, 'دج')}</strong></div>
+      <div style="border-top:1px dashed rgba(255,255,255,0.2);margin:10px 0;padding-top:10px">
+        <div class="calc-row" style="font-size:1.1rem"><span style="font-weight:900">الفائدة الصافية:</span><strong style="color:${profit >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(profit, 'دج')}</strong></div>
+      </div>
+    </div>`;
+
+  // Partners
+  const partnersEl = document.getElementById('broiler-partners-tbody');
+  if (!partners.length) {
+    if (partnersEl) partnersEl.innerHTML = '<tr><td colspan="5" class="empty-cell">لا يوجد شركاء</td></tr>';
+  } else {
+    const ownerSharePct = (DB.get('settings') || {}).ownerShare || 100;
+    const rows = [];
+
+    partners.forEach(p => {
+      const share = (profit * (p.sharePercent || 0) / 100);
+      rows.push(`<tr>
+        <td>${p.name}</td>
+        <td>${p.sharePercent}%</td>
+        <td>${fmt(share, 'دج')}</td>
+        <td>—</td>
+        <td style="color:${share >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(share, 'دج')}</td>
+      </tr>`);
+    });
+
+    const ownerShare = (profit * ownerSharePct / 100);
+    rows.push(`<tr style="border-top:1px solid rgba(255,255,255,0.1)">
+      <td style="font-weight:700">👔 صاحب العمل</td>
+      <td style="font-weight:700">${ownerSharePct}%</td>
+      <td style="font-weight:700">${fmt(ownerShare, 'دج')}</td>
+      <td>—</td>
+      <td style="color:var(--green);font-weight:700">${fmt(ownerShare, 'دج')}</td>
+    </tr>`);
+
+    if (partnersEl) partnersEl.innerHTML = rows.join('');
+  }
+
+  // Feed
+  const feedEl = document.getElementById('broiler-report-feed');
+  if (feedEl) {
+    const feedByType = { starter: 0, grower: 0, finisher: 0 };
+    logs.forEach(l => {
+      const t = l.feedType || 'grower';
+      if (feedByType.hasOwnProperty(t)) feedByType[t] += l.feedKg || 0;
+    });
+    feedEl.innerHTML = `
+      <div class="calc-row"><span>Starter:</span><strong>${feedByType.starter.toLocaleString('ar')} كغ</strong></div>
+      <div class="calc-row"><span>Grower:</span><strong>${feedByType.grower.toLocaleString('ar')} كغ</strong></div>
+      <div class="calc-row"><span>Finisher:</span><strong>${feedByType.finisher.toLocaleString('ar')} كغ</strong></div>`;
+  }
+}
+
+/* ---------- Broiler Event Listeners (Phase 3) ---------- */
+document.addEventListener('DOMContentLoaded', () => {
+  // Slaughter modal
+  document.getElementById('btn-add-slaughter')?.addEventListener('click', () => {
+    if (isReadOnlyUser()) { showToast('🔒 وضع المشاهدة فقط', 'error'); return; }
+    openAddSlaughterModal();
+  });
+  document.getElementById('btn-confirm-add-slaughter')?.addEventListener('click', confirmAddSlaughter);
+  document.getElementById('btn-cancel-add-slaughter')?.addEventListener('click', closeAddSlaughterModal);
+  document.getElementById('modal-add-slaughter')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('modal-add-slaughter')) closeAddSlaughterModal();
+  });
+  document.getElementById('sl-payment-type')?.addEventListener('change', updateSlaughterCalc);
+  document.getElementById('sl-paid-amount')?.addEventListener('input', updateSlaughterCalc);
+  ['sl-count','sl-live-weight','sl-price-per-kg'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', updateSlaughterCalc);
+  });
+});
+
+// broiler-sales, broiler-reports, broiler-workers, and daily are handled
+// directly inside the showPage refreshers map (no override needed)
+
+/* ======================================================================
+   BROILER — PHASE 4: PARTNERS, WORKERS, SETTINGS, STATEMENT
+   ====================================================================== */
+
+/* -------- Partners (Broiler) -------- */
+let _bpePartnerId = null; // partner being edited in expense modal
+
+function renderBroilerWorkersPage() {
+  renderBroilerPartnersTab();
+  renderBroilerWorkersTab();
+}
+
+function switchBroilerTeamTab(tab, btn) {
+  document.querySelectorAll('#broiler-team-tabs .page-tab').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  const partnersTab = document.getElementById('bteam-tab-partners');
+  const workersTab  = document.getElementById('bteam-tab-workers');
+  if (partnersTab) partnersTab.style.display = tab === 'partners' ? '' : 'none';
+  if (workersTab)  workersTab.style.display  = tab === 'workers'  ? '' : 'none';
+}
+
+function renderBroilerPartnersTab() {
+  const partners = DB.get('broiler_partners') || [];
+  const container = document.getElementById('broiler-partners-list');
+  if (!container) return;
+
+  if (!partners.length) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">🤝</div><p>لا يوجد شركاء بعد</p></div>`;
+    return;
+  }
+
+  const cycle  = BroilerDB.getActiveCycle();
+  const logs   = cycle ? BroilerDB.getLogsForCycle(cycle.id) : [];
+  const sales  = cycle ? (DB.get('broiler_slaughter') || []).filter(s => s.cycleId === cycle.id) : [];
+  const totalIncome = sales.reduce((s, sl) => s + (sl.income || 0), 0);
+  const totalFeedCost = logs.reduce((s, l) => s + (l.feedKg * (l.feedPrice || 0)), 0);
+  const totalWaterMeds = logs.reduce((s, l) => s + ((l.waterCost||0) + (l.medsCost||0)), 0);
+  const chicksInitial = cycle ? (cycle.chicksCount||0) * (cycle.chickPrice||0) : 0;
+  const bSettings = DB.get('broiler_settings') || {};
+  const fixedCosts = (bSettings.loyer||0) + (bSettings.electricity||0) + (bSettings.misc||0);
+  const totalCost  = chicksInitial + totalFeedCost + totalWaterMeds + (cycle?.beddingCost||0) + (cycle?.heatingCost||0) + fixedCosts;
+  const profit     = totalIncome - totalCost;
+
+  container.innerHTML = partners.map(p => {
+    const sharePct = Number(p.sharePercent) || 0;
+    const profitShare = profit * sharePct / 100;
+    const txs = (DB.get('broiler_partner_txs') || []).filter(t => t.partnerId === p.id);
+    const totalExpenses   = txs.filter(t => t.txType === 'expense'   ).reduce((s,t) => s+(t.amount||0), 0);
+    const totalWithdrawals= txs.filter(t => t.txType === 'withdrawal').reduce((s,t) => s+(t.amount||0), 0);
+    const totalInjections = txs.filter(t => t.txType === 'injection' ).reduce((s,t) => s+(t.amount||0), 0);
+    const netDue = profitShare - totalExpenses - totalWithdrawals + totalInjections;
+
+    return `<div class="broiler-partner-card">
+      <div class="bpc-header">
+        <div>
+          <div class="bpc-name">${p.name}</div>
+          <div class="bpc-meta">${sharePct}% — ${txs.length} معاملة</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" onclick="openBroilerPartnerExpense('${p.id}')">💸 مصروف</button>
+          <button class="btn btn-outline btn-sm" onclick="openBroilerStatement('${p.id}')">📄 كشف</button>
+          <button class="btn btn-danger btn-sm restricted-edit" onclick="deleteBroilerPartner('${p.id}')">✕</button>
+        </div>
+      </div>
+      <div class="bpc-kpis">
+        <div class="bpc-kpi"><span>${fmt(profitShare,'دج')}</span><small>الحصة من الفائدة</small></div>
+        <div class="bpc-kpi"><span style="color:var(--orange)">${fmt(totalExpenses+totalWithdrawals,'دج')}</span><small>المسحوبات</small></div>
+        <div class="bpc-kpi"><span style="color:${netDue>=0?'var(--green)':'var(--red)'}">${fmt(netDue,'دج')}</span><small>الصافي المستحق</small></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderBroilerWorkersTab() {
+  const workers = DB.get('workers') || [];
+  const container = document.getElementById('broiler-workers-list');
+  if (!container) return;
+  if (!workers.length) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">👤</div><p>لا يوجد عمال</p></div>`;
+    return;
+  }
+
+  const cycle = BroilerDB.getActiveCycle();
+  const logs  = cycle ? BroilerDB.getLogsForCycle(cycle.id) : [];
+
+  container.innerHTML = workers.map(w => {
+    const advances = logs.reduce((s, l) => {
+      const adv = (l.advances || []).find(a => a.workerId === w.id);
+      return s + (adv ? adv.amount : 0);
+    }, 0);
+    return `<div class="section-card" style="margin-bottom:10px;padding:14px 16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div>
+          <span style="font-weight:700">${w.name}</span>
+          <span style="font-size:0.78rem;color:var(--text-muted);margin-right:8px">راتب: ${fmt(w.salary||0,'دج')}</span>
+        </div>
+        <div style="display:flex;gap:12px;align-items:center">
+          <span style="font-size:0.85rem;color:var(--orange)">سلف: ${fmt(advances,'دج')}</span>
+          <button class="btn btn-danger btn-sm restricted-edit" onclick="deleteBroilerWorker('${w.id}')">✕ حذف</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function addBroilerPartner() {
+  const name  = document.getElementById('bp-name')?.value.trim();
+  const share = parseFloat(document.getElementById('bp-share')?.value) || 0;
+  if (!name)  { showToast('أدخل اسم الشريك','error'); return; }
+  if (!share) { showToast('أدخل نسبة المشاركة','error'); return; }
+
+  const partners = DB.get('broiler_partners') || [];
+  const totalUsed = partners.reduce((s,p) => s + Number(p.sharePercent), 0);
+  const ownerShare = (DB.get('broiler_settings')||{}).ownerShare || 100;
+  const available  = 100 - (100 - ownerShare) - totalUsed;
+  if (share > available) {
+    showToast(`النسب المتاحة: ${available.toFixed(1)}% فقط`, 'error'); return;
+  }
+
+  partners.push({ id:'bp_'+Date.now(), name, sharePercent: share });
+  DB.set('broiler_partners', partners);
+  document.getElementById('bp-name').value  = '';
+  document.getElementById('bp-share').value = '';
+  renderBroilerPartnersTab();
+  showToast(`✅ تمت إضافة ${name}`);
+}
+
+function deleteBroilerPartner(id) {
+  if (!confirm('حذف هذا الشريك؟')) return;
+  DB.set('broiler_partners', (DB.get('broiler_partners')||[]).filter(p => p.id !== id));
+  DB.set('broiler_partner_txs', (DB.get('broiler_partner_txs')||[]).filter(t => t.partnerId !== id));
+  renderBroilerPartnersTab();
+  showToast('تم الحذف', 'warning');
+}
+
+function addBroilerWorker() {
+  const name   = document.getElementById('bw-name')?.value.trim();
+  const salary = parseFloat(document.getElementById('bw-salary')?.value) || 0;
+  if (!name) { showToast('أدخل اسم العامل','error'); return; }
+  const workers = DB.get('workers') || [];
+  workers.push({ id:'bw_'+Date.now(), name, salary });
+  DB.set('workers', workers);
+  document.getElementById('bw-name').value   = '';
+  document.getElementById('bw-salary').value = '';
+  renderBroilerWorkersTab();
+  populateWorkerSelects();
+  showToast(`✅ تمت إضافة ${name}`);
+}
+
+function deleteBroilerWorker(id) {
+  if (!confirm('حذف هذا العامل؟')) return;
+  DB.set('workers', (DB.get('workers')||[]).filter(w => w.id !== id));
+  renderBroilerWorkersTab();
+  populateWorkerSelects();
+  showToast('تم الحذف', 'warning');
+}
+
+/* -------- Partner Expense Modal -------- */
+function openBroilerPartnerExpense(partnerId) {
+  _bpePartnerId = partnerId;
+  const partner = (DB.get('broiler_partners')||[]).find(p => p.id === partnerId);
+  const title = document.getElementById('bpe-modal-title');
+  if (title) title.textContent = `💸 معاملة — ${partner?.name || ''}`;
+  document.getElementById('bpe-amount').value = '';
+  document.getElementById('bpe-note').value   = '';
+  document.getElementById('bpe-date').value   = new Date().toISOString().split('T')[0];
+  document.getElementById('bpe-type').value   = 'expense';
+  document.getElementById('modal-broiler-partner-expense').classList.add('open');
+  setTimeout(() => document.getElementById('bpe-amount').focus(), 300);
+}
+
+function closeBroilerPartnerExpense() {
+  document.getElementById('modal-broiler-partner-expense').classList.remove('open');
+  _bpePartnerId = null;
+}
+
+function confirmBroilerPartnerExpense() {
+  if (!_bpePartnerId) return;
+  const amount = parseFloat(document.getElementById('bpe-amount')?.value) || 0;
+  if (!amount) { showToast('أدخل المبلغ','error'); return; }
+  const tx = {
+    id:        'btx_'+Date.now(),
+    partnerId: _bpePartnerId,
+    txType:    document.getElementById('bpe-type')?.value || 'expense',
+    amount,
+    date:      document.getElementById('bpe-date')?.value || '',
+    note:      document.getElementById('bpe-note')?.value.trim() || '',
+    createdAt: new Date().toISOString()
+  };
+  const txs = DB.get('broiler_partner_txs') || [];
+  txs.push(tx);
+  DB.set('broiler_partner_txs', txs);
+  closeBroilerPartnerExpense();
+  renderBroilerPartnersTab();
+  const typeLabels = { expense:'مصروف', withdrawal:'سحب', injection:'ضخ رأسمال' };
+  showToast(`✅ تم تسجيل ${typeLabels[tx.txType]}: ${fmt(amount,'دج')}`);
+}
+
+/* -------- Partner Statement -------- */
+function openBroilerStatement(partnerId) {
+  const partner  = (DB.get('broiler_partners')||[]).find(p => p.id === partnerId);
+  const txs      = (DB.get('broiler_partner_txs')||[]).filter(t => t.partnerId === partnerId);
+  const cycle    = BroilerDB.getActiveCycle();
+  const sales    = cycle ? (DB.get('broiler_slaughter')||[]).filter(s => s.cycleId === cycle.id) : [];
+  const logs     = cycle ? BroilerDB.getLogsForCycle(cycle.id) : [];
+  const totalIncome = sales.reduce((s,sl)=>s+(sl.income||0),0);
+  const bS = DB.get('broiler_settings') || {};
+  const fixedCosts = (bS.loyer||0)+(bS.electricity||0)+(bS.misc||0);
+  const chiCost = cycle ? (cycle.chicksCount||0)*(cycle.chickPrice||0) : 0;
+  const feedCost = logs.reduce((s,l)=>s+(l.feedKg*(l.feedPrice||0)),0);
+  const waterMeds = logs.reduce((s,l)=>s+((l.waterCost||0)+(l.medsCost||0)),0);
+  const totalCost = chiCost+feedCost+waterMeds+(cycle?.beddingCost||0)+(cycle?.heatingCost||0)+fixedCosts;
+  const profit = totalIncome - totalCost;
+  const sharePct = Number(partner?.sharePercent)||0;
+  const profitShare = profit * sharePct / 100;
+  const totalExp  = txs.filter(t=>t.txType==='expense'  ).reduce((s,t)=>s+(t.amount||0),0);
+  const totalWith = txs.filter(t=>t.txType==='withdrawal').reduce((s,t)=>s+(t.amount||0),0);
+  const totalInj  = txs.filter(t=>t.txType==='injection' ).reduce((s,t)=>s+(t.amount||0),0);
+  const netDue = profitShare - totalExp - totalWith + totalInj;
+
+  const txRows = txs.length
+    ? txs.map(t=>`<tr>
+        <td>${t.date}</td>
+        <td>${{expense:'💸 مصروف',withdrawal:'💵 سحب',injection:'💉 رأسمال'}[t.txType]||t.txType}</td>
+        <td>${t.note||'—'}</td>
+        <td style="color:${t.txType==='injection'?'var(--green)':'var(--red)'}">${t.txType==='injection'?'+':'−'} ${fmt(t.amount,'دج')}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="4" class="empty-cell">لا توجد معاملات</td></tr>';
+
+  const html = `
+    <div style="padding:16px;border:1px solid rgba(255,255,255,0.1);border-radius:10px;margin-bottom:16px">
+      <div style="font-size:1.1rem;font-weight:900;margin-bottom:4px">${partner?.name}</div>
+      <div style="font-size:0.82rem;color:var(--text-muted)">نسبة المشاركة: ${sharePct}% · ${new Date().toLocaleDateString('ar-DZ')}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px">
+        <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:0.75rem;color:var(--text-muted)">الحصة من الفائدة</div>
+          <div style="font-weight:800;font-size:1.1rem;margin-top:4px">${fmt(profitShare,'دج')}</div>
+        </div>
+        <div style="background:rgba(255,255,255,0.04);border-radius:8px;padding:10px;text-align:center">
+          <div style="font-size:0.75rem;color:var(--text-muted)">الصافي المستحق</div>
+          <div style="font-weight:800;font-size:1.1rem;margin-top:4px;color:${netDue>=0?'var(--green)':'var(--red)'}">${fmt(netDue,'دج')}</div>
+        </div>
+      </div>
+    </div>
+    <div style="margin-bottom:8px;font-weight:700;font-size:0.9rem">سجل المعاملات:</div>
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead><tr><th>التاريخ</th><th>النوع</th><th>الملاحظة</th><th>المبلغ</th></tr></thead>
+        <tbody>${txRows}</tbody>
+      </table>
+    </div>`;
+
+  document.getElementById('broiler-statement-content').innerHTML = html;
+  document.getElementById('modal-broiler-statement').classList.add('open');
+}
+
+function closeBroilerStatement() {
+  document.getElementById('modal-broiler-statement').classList.remove('open');
+}
+
+/* -------- Broiler Settings -------- */
+function loadBroilerSettings() {
+  const s = DB.get('broiler_settings') || {};
+  const el = id => document.getElementById(id);
+  if (el('broiler-owner-share'))    el('broiler-owner-share').value    = s.ownerShare    ?? 100;
+  if (el('broiler-loyer'))          el('broiler-loyer').value          = s.loyer         ?? 0;
+  if (el('broiler-electricity'))    el('broiler-electricity').value    = s.electricity   ?? 0;
+  if (el('broiler-misc'))           el('broiler-misc').value           = s.misc          ?? 0;
+  if (el('broiler-cycle-password')) el('broiler-cycle-password').value = s.cyclePassword ?? '';
+  if (el('broiler-mort-alert'))     el('broiler-mort-alert').value     = s.mortAlert     ?? 5;
+}
+
+function saveBroilerSettings() {
+  const el = id => document.getElementById(id);
+  const s = {
+    ownerShare:    parseFloat(el('broiler-owner-share')?.value)    || 100,
+    loyer:         parseFloat(el('broiler-loyer')?.value)          || 0,
+    electricity:   parseFloat(el('broiler-electricity')?.value)    || 0,
+    misc:          parseFloat(el('broiler-misc')?.value)           || 0,
+    cyclePassword: el('broiler-cycle-password')?.value             || '1234',
+    mortAlert:     parseFloat(el('broiler-mort-alert')?.value)     || 5,
+  };
+  DB.set('broiler_settings', s);
+  showToast('✅ تم حفظ إعدادات اللحم');
+}
+
+/* -------- Sync broiler keys -------- */
+// Add extra keys to cloud sync
+const _broilerExtraKeys = ['broiler_partners','broiler_partner_txs','broiler_settings','broiler_slaughter'];
+
+/* -------- applyFactoryTypeToUI — show broiler-settings-card -------- */
+// called by applyFactoryTypeToUI which runs on enterFactory
+
+/* -------- Event Listeners Phase 4 -------- */
+document.addEventListener('DOMContentLoaded', () => {
+  // Workers page
+  document.getElementById('btn-add-broiler-partner')?.addEventListener('click', addBroilerPartner);
+  document.getElementById('btn-add-broiler-worker')?.addEventListener('click', addBroilerWorker);
+
+  // Partner expense modal
+  document.getElementById('btn-confirm-bpe')?.addEventListener('click', confirmBroilerPartnerExpense);
+  document.getElementById('btn-cancel-bpe')?.addEventListener('click',  closeBroilerPartnerExpense);
+  document.getElementById('modal-broiler-partner-expense')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('modal-broiler-partner-expense')) closeBroilerPartnerExpense();
+  });
+
+  // Statement modal
+  document.getElementById('btn-close-broiler-statement')?.addEventListener('click', closeBroilerStatement);
+  document.getElementById('modal-broiler-statement')?.addEventListener('click', e => {
+    if (e.target === document.getElementById('modal-broiler-statement')) closeBroilerStatement();
+  });
+
+  // Broiler settings save
+  document.getElementById('btn-save-broiler-settings')?.addEventListener('click', saveBroilerSettings);
+});
+
+/* -------- confirmCompleteCycle uses broiler settings password -------- */
+/* (replaces the earlier definition to support custom password) */
+
+/* =====================================================================
+   END BROILER MODULE
+   ===================================================================== */
 
 // Global Enter key navigation for inputs
 document.addEventListener('keydown', function(e) {
