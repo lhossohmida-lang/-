@@ -328,6 +328,9 @@
     <button class="nav-item" data-page="reports" id="nav-reports">
       <span class="nav-icon">📈</span><span>التقارير</span>
     </button>
+    <button class="nav-item" data-page="ai-chat" id="nav-ai-chat">
+      <span class="nav-icon">🤖</span><span>الذكاء الاصطناعي</span>
+    </button>
     <button class="nav-item" data-page="settings" id="nav-settings">
       <span class="nav-icon">⚙️</span><span>الإعدادات</span>
     </button>
@@ -1301,6 +1304,70 @@
   </section>
 
   <!-- ========== SETTINGS PAGE ========== -->
+  <!-- ========== AI CHAT PAGE ========== -->
+  <section class="page" id="page-ai-chat">
+    <div class="page-header">
+      <h1>🤖 مساعد مصنع البيض الذكي</h1>
+      <p>اسأل المساعد الذكي عن أي شيء يخص مصنعك</p>
+    </div>
+
+    <div class="ai-chat-wrapper">
+      <!-- Status Bar -->
+      <div class="ai-status-bar" id="ai-status-bar">
+        <div class="ai-status-indicator" id="ai-status-indicator">
+          <span class="ai-status-dot offline"></span>
+          <span class="ai-status-text" id="ai-status-text">جاري الفحص...</span>
+        </div>
+        <button class="btn btn-outline btn-sm" id="btn-check-ai-status">🔄 فحص الاتصال</button>
+      </div>
+
+      <!-- Error Message -->
+      <div class="ai-error-box" id="ai-error-box" style="display:none">
+        <span class="ai-error-icon">⚠️</span>
+        <span class="ai-error-text" id="ai-error-text"></span>
+      </div>
+
+      <!-- Chat Messages -->
+      <div class="ai-chat-messages" id="ai-chat-messages">
+        <div class="ai-welcome-msg">
+          <div class="ai-welcome-icon">🤖</div>
+          <div class="ai-welcome-title">مرحبا بك في مساعد مصنع البيض الذكي</div>
+          <div class="ai-welcome-sub">اسألني عن الإنتاج، الأرباح، المصاريف، المخزون، أو أي شيء يخص مصنعك</div>
+        </div>
+      </div>
+
+      <!-- Quick Suggestions -->
+      <div class="ai-suggestions" id="ai-suggestions">
+        <button class="ai-suggestion-chip" data-q="احسب ربح اليوم">💰 احسب ربح اليوم</button>
+        <button class="ai-suggestion-chip" data-q="لخص لي إنتاج اليوم">📊 لخص إنتاج اليوم</button>
+        <button class="ai-suggestion-chip" data-q="ما هي نسبة الإنتاج؟">📈 نسبة الإنتاج</button>
+        <button class="ai-suggestion-chip" data-q="هل الإنتاج ضعيف اليوم؟">🔍 هل الإنتاج ضعيف؟</button>
+        <button class="ai-suggestion-chip" data-q="كم خسرت من البيض المكسور؟">🔴 خسارة الكسر</button>
+        <button class="ai-suggestion-chip" data-q="ما هو سعر البيع المناسب للبيضة؟">🥚 سعر البيضة</button>
+        <button class="ai-suggestion-chip" data-q="ما هو سعر البيع المناسب للكرتونة؟">📦 سعر الكرتونة</button>
+        <button class="ai-suggestion-chip" data-q="هل مصاريف العلف مرتفعة؟">🌾 مصاريف العلف</button>
+        <button class="ai-suggestion-chip" data-q="أعطني نصائح لزيادة الإنتاج">💡 نصائح الإنتاج</button>
+        <button class="ai-suggestion-chip" data-q="كم بقي في مخزون البيض؟">🥚 مخزون البيض</button>
+        <button class="ai-suggestion-chip" data-q="كم بقي في مخزون العلف؟">🌾 مخزون العلف</button>
+        <button class="ai-suggestion-chip" data-q="حلل لي الفواتير">🧾 تحليل الفواتير</button>
+      </div>
+
+      <!-- Input Area -->
+      <div class="ai-input-area">
+        <div class="ai-input-row">
+          <input type="text" class="ai-input" id="ai-input" placeholder="اكتب سؤالك هنا..." maxlength="2000" />
+          <button class="btn btn-primary ai-send-btn" id="btn-ai-send" title="إرسال">
+            <span class="ai-send-icon">➤</span>
+          </button>
+        </div>
+        <div class="ai-input-actions">
+          <button class="btn btn-outline btn-sm" id="btn-ai-clear">🗑 مسح المحادثة</button>
+          <span class="ai-char-count" id="ai-char-count">0 / 2000</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section class="page" id="page-settings">
     <div class="page-header">
       <h1>⚙️ الإعدادات</h1>

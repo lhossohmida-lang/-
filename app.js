@@ -1571,7 +1571,8 @@ function renderCurrentPage() {
     cycles: renderCyclesPage,
     'broiler-sales': renderBroilerSalesPage,
     'broiler-reports': renderBroilerReportsPage,
-    'broiler-workers': renderBroilerWorkersPage
+    'broiler-workers': renderBroilerWorkersPage,
+    'ai-chat': renderAIChatPage
   };
   if (refreshers[pageId]) refreshers[pageId]();
 }
@@ -2094,19 +2095,27 @@ function applyFactoryTypeToUI(type) {
   if (navSales) navSales.style.display = isBroiler ? '' : 'none';
   if (navReports) navReports.style.display = isBroiler ? '' : 'none';
 
-  // Nav sales/reports: for broiler, mark as coming-soon
+  // Nav sales/reports: for broiler, hide completely
   const comingSoonPages = ['sales', 'reports'];
   comingSoonPages.forEach(pageId => {
     const navBtn = document.getElementById(`nav-${pageId}`);
     if (!navBtn) return;
     if (isBroiler) {
+      navBtn.style.display = 'none';
       navBtn.classList.add('nav-item--disabled');
-      navBtn.setAttribute('title', 'متاح في المرحلة القادمة لمصانع اللحم');
     } else {
+      navBtn.style.display = '';
       navBtn.classList.remove('nav-item--disabled');
       navBtn.removeAttribute('title');
     }
   });
+
+  // AI Chat nav: always visible for all factory types
+  const navAI = document.getElementById('nav-ai-chat');
+  if (navAI) {
+    navAI.style.display = '';
+    navAI.classList.remove('nav-item--disabled');
+  }
 
   // Dashboard header subtitle
   const dashSub = document.getElementById('dashboard-sub');
@@ -2145,9 +2154,10 @@ function applyFactoryTypeToUI(type) {
   const navWorkers = document.getElementById('nav-workers');
   if (navWorkers) {
     if (isBroiler) {
+      navWorkers.style.display = 'none';
       navWorkers.classList.add('nav-item--disabled');
-      navWorkers.setAttribute('title', 'استخدم صفحة الفريق');
     } else {
+      navWorkers.style.display = '';
       navWorkers.classList.remove('nav-item--disabled');
       navWorkers.removeAttribute('title');
     }
@@ -2599,7 +2609,8 @@ function showPage(pageId) {
     cycles: renderCyclesPage,
     'broiler-sales': renderBroilerSalesPage,
     'broiler-reports': renderBroilerReportsPage,
-    'broiler-workers': renderBroilerWorkersPage
+    'broiler-workers': renderBroilerWorkersPage,
+    'ai-chat': renderAIChatPage
   };
   if (refreshers[pageId]) refreshers[pageId]();
   if (pageId === 'daily' && CURRENT_FACTORY?.type === 'broiler') {
@@ -6599,6 +6610,263 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /* =====================================================================
    END BROILER MODULE
+   ===================================================================== */
+
+/* =====================================================================
+   AI CHAT MODULE — مساعد مصنع البيض الذكي
+   ===================================================================== */
+// Auto-detect: use localhost for local dev, empty string (relative) for Vercel
+const AI_BACKEND_URL = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+  ? 'http://localhost:5000'
+  : '';
+let _aiChatHistory = [];
+let _aiIsOnline = false;
+let _aiIsSending = false;
+
+function getBusinessContextForAI() {
+  const logs = DB.get('daily_logs') || [];
+  const settings = DB.get('settings') || {};
+  const today = todayStr();
+  const todayLogs = logs.filter(l => l.date === today);
+
+  const summary = todayLogs.reduce((acc, l) => {
+    acc.eggsProduced += Number(l.produced) || 0;
+    acc.brokenEggs += Number(l.broken) || 0;
+    acc.eggsSold += Number(l.soldGroups) * 30 + (Number(l.soldSingle) || 0);
+    acc.income += Number(l.income) || 0;
+    acc.feedUsed += Number(l.feedUsed) || 0;
+    return acc;
+  }, { eggsProduced: 0, brokenEggs: 0, eggsSold: 0, income: 0, feedUsed: 0 });
+
+  const feedBalance = typeof getCurrentFeedBalance === 'function' ? getCurrentFeedBalance() : 0;
+
+  return {
+    date: today,
+    layingHens: Number(settings.chickens) || 0,
+    eggsProduced: summary.eggsProduced,
+    brokenEggs: summary.brokenEggs,
+    eggsSold: summary.eggsSold,
+    eggStock: summary.eggsProduced - summary.brokenEggs - summary.eggsSold,
+    feedCost: Number(settings.feedPrice) * summary.feedUsed || 0,
+    medicineCost: 0,
+    vitaminsCost: 0,
+    laborCost: 0,
+    electricityCost: Number(settings.electricity) || 0,
+    waterCost: 0,
+    transportCost: 0,
+    salesTotal: summary.income,
+    feedStockKg: feedBalance
+  };
+}
+
+async function checkAIStatus() {
+  const dot = document.querySelector('#ai-status-indicator .ai-status-dot');
+  const text = document.getElementById('ai-status-text');
+  const errBox = document.getElementById('ai-error-box');
+  const errText = document.getElementById('ai-error-text');
+
+  if (dot) { dot.className = 'ai-status-dot checking'; }
+  if (text) text.textContent = 'جاري الفحص...';
+  if (errBox) errBox.style.display = 'none';
+
+  try {
+    const res = await fetch(`${AI_BACKEND_URL}/api/ai/status`);
+    const data = await res.json();
+
+    if (data.online && data.modelInstalled) {
+      _aiIsOnline = true;
+      if (dot) dot.className = 'ai-status-dot online';
+      if (text) text.textContent = `متصل — النموذج: ${data.model}`;
+      if (errBox) errBox.style.display = 'none';
+    } else if (data.online && !data.modelInstalled) {
+      _aiIsOnline = false;
+      if (dot) dot.className = 'ai-status-dot offline';
+      if (text) text.textContent = 'النموذج غير مثبت';
+      if (errBox) errBox.style.display = 'flex';
+      if (errText) errText.textContent = data.error || 'النموذج غير مثبت.';
+    } else {
+      _aiIsOnline = false;
+      if (dot) dot.className = 'ai-status-dot offline';
+      if (text) text.textContent = 'غير متصل';
+      if (errBox) errBox.style.display = 'flex';
+      if (errText) errText.textContent = data.error || 'Ollama غير مشغل.';
+    }
+  } catch (err) {
+    _aiIsOnline = false;
+    if (dot) dot.className = 'ai-status-dot offline';
+    if (text) text.textContent = 'غير متصل';
+    if (errBox) errBox.style.display = 'flex';
+    if (errText) errText.textContent = 'تعذر الاتصال بالسيرفر. تأكد من تشغيل Backend على المنفذ 5000.';
+  }
+}
+
+function addAIChatMessage(role, content) {
+  const container = document.getElementById('ai-chat-messages');
+  if (!container) return;
+
+  const welcome = container.querySelector('.ai-welcome-msg');
+  if (welcome) welcome.remove();
+
+  const msgDiv = document.createElement('div');
+  msgDiv.className = `ai-msg ${role}`;
+
+  const avatar = document.createElement('div');
+  avatar.className = 'ai-msg-avatar';
+  avatar.textContent = role === 'user' ? '👤' : '🤖';
+
+  const bubble = document.createElement('div');
+  bubble.className = 'ai-msg-bubble';
+  bubble.textContent = content;
+
+  msgDiv.appendChild(avatar);
+  msgDiv.appendChild(bubble);
+  container.appendChild(msgDiv);
+
+  container.scrollTop = container.scrollHeight;
+}
+
+function showAITyping() {
+  const container = document.getElementById('ai-chat-messages');
+  if (!container) return;
+
+  const existing = container.querySelector('.ai-typing');
+  if (existing) existing.remove();
+
+  const typing = document.createElement('div');
+  typing.className = 'ai-typing';
+  typing.innerHTML = '<div class="ai-typing-dots"><span></span><span></span><span></span></div><span>المساعد يفكر...</span>';
+  container.appendChild(typing);
+  container.scrollTop = container.scrollHeight;
+}
+
+function hideAITyping() {
+  const container = document.getElementById('ai-chat-messages');
+  if (!container) {
+    return;
+  }
+  const typing = container.querySelector('.ai-typing');
+  if (typing) typing.remove();
+}
+
+async function sendAIMessage(messageText) {
+  if (_aiIsSending || !messageText || messageText.trim().length === 0) return;
+
+  const input = document.getElementById('ai-input');
+  const sendBtn = document.getElementById('btn-ai-send');
+
+  _aiIsSending = true;
+  if (sendBtn) sendBtn.disabled = true;
+  if (input) input.value = '';
+  updateAICharCount();
+
+  addAIChatMessage('user', messageText.trim());
+  showAITyping();
+
+  try {
+    const businessContext = getBusinessContextForAI();
+    const res = await fetch(`${AI_BACKEND_URL}/api/ai/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: messageText.trim(),
+        businessContext,
+        history: _aiChatHistory.slice(-10)
+      })
+    });
+
+    hideAITyping();
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      const errMsg = errData.error || 'حدث خطأ. حاول مرة أخرى.';
+      addAIChatMessage('assistant', '⚠️ ' + errMsg);
+      return;
+    }
+
+    const data = await res.json();
+    const reply = data.reply || 'لم أستطع توليد رد.';
+
+    addAIChatMessage('assistant', reply);
+    _aiChatHistory.push({ role: 'user', content: messageText.trim() });
+    _aiChatHistory.push({ role: 'assistant', content: reply });
+
+    if (_aiChatHistory.length > 20) {
+      _aiChatHistory = _aiChatHistory.slice(-20);
+    }
+
+  } catch (err) {
+    hideAITyping();
+    addAIChatMessage('assistant', '⚠️ تعذر الاتصال بالسيرفر. تأكد من تشغيل Backend وOllama.');
+  } finally {
+    _aiIsSending = false;
+    if (sendBtn) sendBtn.disabled = false;
+    if (input) input.focus();
+  }
+}
+
+function clearAIChat() {
+  const container = document.getElementById('ai-chat-messages');
+  if (!container) return;
+  container.innerHTML = `
+    <div class="ai-welcome-msg">
+      <div class="ai-welcome-icon">🤖</div>
+      <div class="ai-welcome-title">مرحبا بك في مساعد مصنع البيض الذكي</div>
+      <div class="ai-welcome-sub">اسألني عن الإنتاج، الأرباح، المصاريف، المخزون، أو أي شيء يخص مصنعك</div>
+    </div>`;
+  _aiChatHistory = [];
+}
+
+function updateAICharCount() {
+  const input = document.getElementById('ai-input');
+  const counter = document.getElementById('ai-char-count');
+  if (input && counter) {
+    counter.textContent = `${input.value.length} / 2000`;
+  }
+}
+
+function initAIChatPage() {
+  checkAIStatus();
+
+  document.getElementById('btn-check-ai-status')?.addEventListener('click', checkAIStatus);
+
+  document.getElementById('btn-ai-send')?.addEventListener('click', () => {
+    const input = document.getElementById('ai-input');
+    if (input && input.value.trim()) sendAIMessage(input.value);
+  });
+
+  document.getElementById('ai-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      const input = document.getElementById('ai-input');
+      if (input && input.value.trim()) sendAIMessage(input.value);
+    }
+  });
+
+  document.getElementById('ai-input')?.addEventListener('input', updateAICharCount);
+
+  document.getElementById('btn-ai-clear')?.addEventListener('click', clearAIChat);
+
+  document.querySelectorAll('.ai-suggestion-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const q = chip.getAttribute('data-q');
+      if (q) sendAIMessage(q);
+    });
+  });
+}
+
+let _aiPageInitialized = false;
+function renderAIChatPage() {
+  if (!_aiPageInitialized) {
+    initAIChatPage();
+    _aiPageInitialized = true;
+  } else {
+    checkAIStatus();
+  }
+}
+
+/* =====================================================================
+   END AI CHAT MODULE
    ===================================================================== */
 
 // Global Enter key navigation for inputs

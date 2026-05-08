@@ -7,7 +7,10 @@
       "Bash(node --input-type=module)",
       "Bash(node -c app.js)",
       "Bash(node -e \"try { eval\\(require\\('fs'\\).readFileSync\\('app.js','utf8'\\)\\); console.log\\('OK'\\); } catch\\(e\\){ console.error\\(e.message\\); }\")",
-      "Bash(firebase deploy *)"
+      "Bash(firebase deploy *)",
+      "Bash(ollama list *)",
+      "Bash(ollama show *)",
+      "PowerShell($procs = Get-NetTCPConnection -LocalPort 5000 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique; if \\($procs\\) { $procs | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } }; Start-Sleep -Seconds 1; Start-Process -FilePath \"node\" -ArgumentList \"server.js\" -WorkingDirectory \"D:\\\\PRGRM\\\\d\\\\-\\\\server\" -WindowStyle Hidden; Start-Sleep -Seconds 2; $test = Invoke-WebRequest -Uri \"http://localhost:5000/api/ai/status\" -UseBasicParsing -ErrorAction SilentlyContinue; $test.Content)"
     ]
   }
 }
