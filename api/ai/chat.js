@@ -20,6 +20,8 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 function buildBusinessContextString(ctx) {
   if (!ctx || typeof ctx !== 'object') return '';
+  const safeContext = JSON.stringify(ctx, null, 2).slice(0, 12000);
+  return `\n\nCURRENT APP DATA CONTEXT (read-only JSON from the user's selected factory; use these exact numbers and do not invent missing data):\n${safeContext}`;
   const lines = [];
   if (ctx.date) lines.push(`التاريخ: ${ctx.date}`);
   if (ctx.layingHens != null) lines.push(`عدد الدجاج البياض: ${ctx.layingHens}`);
@@ -66,7 +68,18 @@ export default async function handler(req, res) {
 
     const contextStr = buildBusinessContextString(businessContext);
     const userContent = contextStr
-      ? `${contextStr}\n\nسؤال المستخدم: ${message.trim()}`
+      ? `${contextStr}
+
+تعليمات مهمة جدا:
+- البيانات أعلاه مأخوذة مباشرة من التطبيق وقاعدة بيانات المصنع المختار.
+- استعمل الأرقام الموجودة في JSON كما هي، ولا تخترع أرقاما من عندك.
+- إذا سأل المستخدم عن "اليوم" فاستعمل layerSummary.today.
+- إذا سأل عن "هذا الشهر" فاستعمل layerSummary.thisMonth.
+- إذا سأل عن المخزون فاستعمل layerSummary.stock.
+- إذا سأل عن مصنع اللحم فاستعمل broiler.activeCycle.
+- إذا كانت القيمة غير موجودة أو تساوي 0، قل ذلك بوضوح ولا تعوضها بتخمين.
+
+سؤال المستخدم: ${message.trim()}`
       : message.trim();
 
     const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
@@ -94,7 +107,7 @@ export default async function handler(req, res) {
         model: AI_MODEL,
         messages,
         max_tokens: 1500,
-        temperature: 0.7
+        temperature: 0.2
       })
     });
 

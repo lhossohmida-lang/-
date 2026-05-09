@@ -6626,37 +6626,223 @@ let _aiIsSending = false;
 function getBusinessContextForAI() {
   const logs = DB.get('daily_logs') || [];
   const settings = DB.get('settings') || {};
+  const workers = DB.get('workers') || [];
+  const credits = DB.get('credits') || [];
   const today = todayStr();
   const todayLogs = logs.filter(l => l.date === today);
 
-  const summary = todayLogs.reduce((acc, l) => {
-    acc.eggsProduced += Number(l.produced) || 0;
-    acc.brokenEggs += Number(l.broken) || 0;
-    acc.eggsSold += Number(l.soldGroups) * 30 + (Number(l.soldSingle) || 0);
+  const sumLayerLogs = (items) => items.reduce((acc, l) => {
+    const produced = Number(l.produced) || 0;
+    const broken = Number(l.broken) || 0;
+    const soldPlates = Number(l.soldTotal) || ((Number(l.soldGroups) || 0) * 12) + (Number(l.soldSingle) || 0);
+    const baseProfit = Number(l.baseProfit ?? l.profit) || 0;
+    const netProfit = Number(l.profit ?? l.baseProfit) || 0;
+
+    acc.days += 1;
+    acc.producedPlates += produced;
+    acc.brokenPlates += broken;
+    acc.netPlates += Number(l.netEggs) || Math.max(0, produced - broken);
+    acc.soldPlates += soldPlates;
+    acc.freePlates += Number(l.freePlates) || 0;
     acc.income += Number(l.income) || 0;
-    acc.feedUsed += Number(l.feedUsed) || 0;
+    acc.specialIncome += Number(l.specialIncome) || 0;
+    acc.manureIncome += Number(l.manureIncome) || 0;
+    acc.feedInKg += Number(l.feedIn) || 0;
+    acc.feedUsedKg += Number(l.feedUsed) || 0;
+    acc.feedCost += Number(l.feedCost) || ((Number(l.feedUsed) || 0) * (Number(l.feedPrice || settings.feedPrice) || 0));
+    acc.waterCost += Number(l.waterCost) || 0;
+    acc.deadChickens += Number(l.dead) || 0;
+    acc.ownerAdvance += Number(l.ownerAdvance) || 0;
+    acc.baseProfit += baseProfit;
+    acc.netProfit += netProfit;
     return acc;
-  }, { eggsProduced: 0, brokenEggs: 0, eggsSold: 0, income: 0, feedUsed: 0 });
+  }, {
+    days: 0,
+    producedPlates: 0,
+    brokenPlates: 0,
+    netPlates: 0,
+    soldPlates: 0,
+    freePlates: 0,
+    income: 0,
+    specialIncome: 0,
+    manureIncome: 0,
+    feedInKg: 0,
+    feedUsedKg: 0,
+    feedCost: 0,
+    waterCost: 0,
+    deadChickens: 0,
+    ownerAdvance: 0,
+    baseProfit: 0,
+    netProfit: 0
+  });
+
+  const sortedLogs = [...logs].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  const monthKey = today.slice(0, 7);
+  const monthLogs = logs.filter(l => String(l.date || '').slice(0, 7) === monthKey);
+  const todaySummary = sumLayerLogs(todayLogs);
+  const monthSummary = sumLayerLogs(monthLogs);
+  const allTimeSummary = sumLayerLogs(logs);
 
   const feedBalance = typeof getCurrentFeedBalance === 'function' ? getCurrentFeedBalance() : 0;
+  const eggStockPlates = allTimeSummary.netPlates - allTimeSummary.soldPlates - allTimeSummary.freePlates;
+  const partners = (settings.partners || []).map(p => ({
+    name: p.name || p.email || 'partner',
+    email: p.email || '',
+    sharePercent: Number(p.sharePercent) || 0
+  }));
+  const workerSummary = workers.map(w => ({
+    name: w.name || 'worker',
+    salary: Number(w.salary) || 0,
+    isDustWorker: !!w.isDustWorker,
+    totalAdvances: (w.advances || []).reduce((s, a) => s + (Number(a.amount) || 0), 0)
+  }));
+  const creditSummary = credits.map(c => ({
+    client: c.client || c.name || c.buyer || 'client',
+    amount: Number(c.amount) || Number(c.income || 0) - Number(c.paidAmount || 0) || 0,
+    date: c.date || '',
+    description: c.description || ''
+  }));
 
-  return {
-    date: today,
-    layingHens: Number(settings.chickens) || 0,
-    eggsProduced: summary.eggsProduced,
-    brokenEggs: summary.brokenEggs,
-    eggsSold: summary.eggsSold,
-    eggStock: summary.eggsProduced - summary.brokenEggs - summary.eggsSold,
-    feedCost: Number(settings.feedPrice) * summary.feedUsed || 0,
-    medicineCost: 0,
-    vitaminsCost: 0,
-    laborCost: 0,
-    electricityCost: Number(settings.electricity) || 0,
-    waterCost: 0,
-    transportCost: 0,
-    salesTotal: summary.income,
-    feedStockKg: feedBalance
+  const context = {
+    generatedAt: new Date().toISOString(),
+    currentFactory: {
+      id: CURRENT_FACTORY?.id || '',
+      name: CURRENT_FACTORY?.name || settings.farmName || 'deku',
+      type: CURRENT_FACTORY?.type === 'broiler' ? 'broiler_meat_factory' : 'layer_egg_factory',
+      userRole: CURRENT_ROLE || '',
+      readOnlyView: typeof cannotDoDailyEntry === 'function' ? cannotDoDailyEntry() : false
+    },
+    layerSettings: {
+      farmName: settings.farmName || CURRENT_FACTORY?.name || '',
+      ownerName: settings.owner || '',
+      ownerSharePercent: Number(settings.ownerShare ?? 100),
+      layingHens: Number(settings.chickens || settings.initialChickens) || 0,
+      initialChickens: Number(settings.initialChickens) || 0,
+      chickenPrice: Number(settings.chickenPrice) || 0,
+      initialFeedKg: Number(settings.initialFeed) || 0,
+      feedPrice: Number(settings.feedPrice) || 0,
+      monthlyRent: Number(settings.loyer) || 0,
+      monthlyElectricity: Number(settings.electricity) || 0,
+      brokenAlertPercent: Number(settings.brokenAlertPct) || 5,
+      feedAlertKg: Number(settings.feedAlertThreshold) || 100
+    },
+    partners,
+    workers: workerSummary,
+    credits: {
+      total: creditSummary.reduce((s, c) => s + (Number(c.amount) || 0), 0),
+      items: creditSummary.slice(0, 20)
+    },
+    layerSummary: {
+      today: todaySummary,
+      thisMonth: monthSummary,
+      allTime: allTimeSummary,
+      stock: {
+        eggStockPlates,
+        eggStockApproxEggs: eggStockPlates * 30,
+        feedStockKg: feedBalance
+      },
+      profit: {
+        totalNetProfitAfterFixedCosts: typeof getTotalNetProfit === 'function' ? getTotalNetProfit() : allTimeSummary.netProfit,
+        expectedMonthlyProfit: typeof getExpectedMonthlyProfit === 'function' ? getExpectedMonthlyProfit() : 0,
+        brokenLossThisMonth: typeof getTotalBrokenLossThisMonth === 'function' ? getTotalBrokenLossThisMonth() : 0,
+        workerAdvancesTotal: typeof getTotalAdvances === 'function' ? getTotalAdvances() : 0
+      },
+      recentDays: sortedLogs.slice(0, 14).map(l => ({
+        date: l.date,
+        producedPlates: Number(l.produced) || 0,
+        brokenPlates: Number(l.broken) || 0,
+        soldPlates: Number(l.soldTotal) || ((Number(l.soldGroups) || 0) * 12) + (Number(l.soldSingle) || 0),
+        pricePerPlate: Number(l.price) || 0,
+        income: Number(l.income) || 0,
+        feedUsedKg: Number(l.feedUsed) || 0,
+        waterCost: Number(l.waterCost) || 0,
+        baseProfit: Number(l.baseProfit ?? l.profit) || 0,
+        netProfit: Number(l.profit ?? l.baseProfit) || 0,
+        notes: l.notes || ''
+      }))
+    },
+    units: {
+      plate: 'one plate equals 30 eggs',
+      carton: 'one carton equals 12 plates'
+    }
   };
+
+  if (CURRENT_FACTORY?.type === 'broiler') {
+    const cycles = DB.get('broiler_cycles') || [];
+    const broilerLogs = DB.get('broiler_logs') || [];
+    const sales = DB.get('broiler_slaughter') || [];
+    const broilerPartners = DB.get('broiler_partners') || [];
+    const broilerSettings = DB.get('broiler_settings') || {};
+    const activeCycle = cycles.find(c => c.status === 'active') || null;
+    const cycleLogs = activeCycle ? broilerLogs.filter(l => l.cycleId === activeCycle.id) : [];
+    const cycleSales = activeCycle ? sales.filter(s => s.cycleId === activeCycle.id) : [];
+    const totalDead = cycleLogs.reduce((s, l) => s + (Number(l.dead) || 0), 0);
+    const totalFeedKg = cycleLogs.reduce((s, l) => s + (Number(l.feedKg) || 0), 0);
+    const totalFeedCost = cycleLogs.reduce((s, l) => s + ((Number(l.feedKg) || 0) * (Number(l.feedPrice) || 0)), 0);
+    const totalWaterMeds = cycleLogs.reduce((s, l) => s + (Number(l.waterCost) || 0) + (Number(l.medsCost) || 0), 0);
+    const totalSalesIncome = cycleSales.reduce((s, sl) => s + (Number(sl.income) || 0), 0);
+    const totalPaid = cycleSales.reduce((s, sl) => s + (Number(sl.paidAmount) || 0), 0);
+    const initialCost = activeCycle
+      ? ((Number(activeCycle.chicksCount) || 0) * (Number(activeCycle.chickPrice) || 0))
+        + (Number(activeCycle.beddingCost) || 0)
+        + (Number(activeCycle.heatingCost) || 0)
+      : 0;
+
+    context.broiler = {
+      settings: {
+        ownerSharePercent: Number(broilerSettings.ownerShare ?? 100),
+        rent: Number(broilerSettings.loyer) || 0,
+        electricity: Number(broilerSettings.electricity) || 0,
+        misc: Number(broilerSettings.misc) || 0,
+        mortalityAlertPercent: Number(broilerSettings.mortAlert) || 5
+      },
+      activeCycle: activeCycle ? {
+        name: activeCycle.name,
+        startDate: activeCycle.startDate,
+        chicksCount: Number(activeCycle.chicksCount) || 0,
+        chickPrice: Number(activeCycle.chickPrice) || 0,
+        currentDay: typeof getDayOfCycle === 'function' ? getDayOfCycle(activeCycle) : 0,
+        deadTotal: totalDead,
+        remainingBirds: (Number(activeCycle.chicksCount) || 0) - totalDead,
+        mortalityPercent: activeCycle.chicksCount ? (totalDead / Number(activeCycle.chicksCount)) * 100 : 0,
+        totalFeedKg,
+        totalFeedCost,
+        waterAndMedicineCost: totalWaterMeds,
+        initialCost,
+        salesIncome: totalSalesIncome,
+        unpaidSales: totalSalesIncome - totalPaid,
+        estimatedProfit: totalSalesIncome - initialCost - totalFeedCost - totalWaterMeds,
+        recentDays: cycleLogs.slice(-14).map(l => ({
+          date: l.date,
+          dayNum: l.dayNum,
+          dead: Number(l.dead) || 0,
+          feedKg: Number(l.feedKg) || 0,
+          feedPrice: Number(l.feedPrice) || 0,
+          avgWeight: Number(l.avgWeight) || 0,
+          waterCost: Number(l.waterCost) || 0,
+          medsCost: Number(l.medsCost) || 0,
+          notes: l.notes || ''
+        })),
+        sales: cycleSales.slice(-12).map(s => ({
+          date: s.date,
+          count: Number(s.count) || 0,
+          liveWeight: Number(s.liveWeight) || 0,
+          pricePerKg: Number(s.pricePerKg) || 0,
+          buyer: s.buyer || '',
+          income: Number(s.income) || 0,
+          paidAmount: Number(s.paidAmount) || 0,
+          paymentType: s.paymentType || ''
+        }))
+      } : null,
+      completedCyclesCount: cycles.filter(c => c.status === 'completed').length,
+      partners: broilerPartners.map(p => ({
+        name: p.name || '',
+        sharePercent: Number(p.sharePercent) || 0
+      }))
+    };
+  }
+
+  return context;
 }
 
 async function checkAIStatus() {
