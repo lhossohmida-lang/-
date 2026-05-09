@@ -9,3 +9,5 @@ server/logs/
 tmp_app.js
 diff.txt
 Screenshot*.png
+
+.vercel
