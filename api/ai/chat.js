@@ -20,7 +20,7 @@ const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 function buildBusinessContextString(ctx) {
   if (!ctx || typeof ctx !== 'object') return '';
-  const safeContext = JSON.stringify(ctx, null, 2).slice(0, 12000);
+  const safeContext = JSON.stringify(ctx, null, 2).slice(0, 50000);
   return `\n\nCURRENT APP DATA CONTEXT (read-only JSON from the user's selected factory; use these exact numbers and do not invent missing data):\n${safeContext}`;
   const lines = [];
   if (ctx.date) lines.push(`التاريخ: ${ctx.date}`);

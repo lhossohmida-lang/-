@@ -6715,9 +6715,64 @@ function getBusinessContextForAI() {
     date: c.date || '',
     description: c.description || ''
   }));
+  const aiSecretKeyPattern = /(password|pass|secret|token|apiKey|api_key|deletePassword|cyclePassword|completeCyclePassword|ownerCode|hashedOwnerCode|devCode)/i;
+  const sanitizeForAI = (value, depth = 0) => {
+    if (depth > 8) return '[nested data omitted]';
+    if (Array.isArray(value)) return value.map(item => sanitizeForAI(item, depth + 1));
+    if (!value || typeof value !== 'object') return value;
+    return Object.entries(value).reduce((acc, [key, val]) => {
+      if (aiSecretKeyPattern.test(key)) {
+        acc[key] = '[hidden security field]';
+      } else {
+        acc[key] = sanitizeForAI(val, depth + 1);
+      }
+      return acc;
+    }, {});
+  };
+  const fullAppData = sanitizeForAI({
+    visibleFactories: typeof FactoryDB !== 'undefined' ? FactoryDB.getFactories() : [],
+    selectedFactory: CURRENT_FACTORY || null,
+    currentUser: {
+      uid: CURRENT_USER?.uid || '',
+      email: CURRENT_USER?.email || '',
+      name: CURRENT_USER_NAME || '',
+      role: CURRENT_ROLE || '',
+      effectiveOwnerUid: EFFECTIVE_OWNER_UID || ''
+    },
+    factoryTables: {
+      settings,
+      workers,
+      daily_logs: logs,
+      activities: DB.get('activities') || [],
+      credits,
+      broiler_cycles: DB.get('broiler_cycles') || [],
+      broiler_logs: DB.get('broiler_logs') || [],
+      broiler_partners: DB.get('broiler_partners') || [],
+      broiler_partner_txs: DB.get('broiler_partner_txs') || [],
+      broiler_settings: DB.get('broiler_settings') || {},
+      broiler_slaughter: DB.get('broiler_slaughter') || []
+    }
+  });
 
   const context = {
     generatedAt: new Date().toISOString(),
+    aiPermissions: {
+      level: 'full_app_read',
+      canRead: [
+        'factory settings',
+        'partners and partner shares',
+        'workers and advances',
+        'daily egg records',
+        'credits/debts',
+        'activities',
+        'broiler cycles',
+        'broiler daily records',
+        'broiler partners and transactions',
+        'broiler sales/slaughter records'
+      ],
+      canWriteOrDelete: false,
+      hiddenSecurityFields: 'passwords, API keys, tokens, developer/delete/cycle codes'
+    },
     currentFactory: {
       id: CURRENT_FACTORY?.id || '',
       name: CURRENT_FACTORY?.name || settings.farmName || 'deku',
@@ -6739,6 +6794,7 @@ function getBusinessContextForAI() {
       brokenAlertPercent: Number(settings.brokenAlertPct) || 5,
       feedAlertKg: Number(settings.feedAlertThreshold) || 100
     },
+    fullAppData,
     partners,
     workers: workerSummary,
     faida: {
