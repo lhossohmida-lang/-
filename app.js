@@ -6685,6 +6685,19 @@ function getBusinessContextForAI() {
 
   const feedBalance = typeof getCurrentFeedBalance === 'function' ? getCurrentFeedBalance() : 0;
   const eggStockPlates = allTimeSummary.netPlates - allTimeSummary.soldPlates - allTimeSummary.freePlates;
+  const initialChickensCost = (Number(settings.initialChickens) || 0) * (Number(settings.chickenPrice) || 0);
+  const initialFeedCost = (Number(settings.initialFeed) || 0) * (Number(settings.feedPrice) || 0);
+  const effectiveRent = Math.max(0, (Number(settings.loyer) || 0) - (Number(settings.repairLoyer) || 0));
+  const totalFixedDeductions =
+    initialChickensCost +
+    initialFeedCost +
+    effectiveRent +
+    (Number(settings.electricity) || 0) +
+    (Number(settings.repairTotal) || 0) +
+    credits.reduce((s, c) => s + (Number(c.amount) || 0), 0);
+  const netFaidaTotal = allTimeSummary.baseProfit - totalFixedDeductions;
+  const todayNetFaida = todaySummary.baseProfit;
+  const thisMonthNetFaida = monthSummary.baseProfit - effectiveRent - (Number(settings.electricity) || 0);
   const partners = (settings.partners || []).map(p => ({
     name: p.name || p.email || 'partner',
     email: p.email || '',
@@ -6728,6 +6741,27 @@ function getBusinessContextForAI() {
     },
     partners,
     workers: workerSummary,
+    faida: {
+      todayNetFaida,
+      thisMonthNetFaida,
+      totalGrossDailyFaida: allTimeSummary.baseProfit,
+      totalFixedDeductions,
+      netFaidaTotal,
+      netFaidaTotalLabel: 'الفائدة الإجمالية الصافية الكلية',
+      calculation: 'netFaidaTotal = totalGrossDailyFaida - totalFixedDeductions'
+    },
+    legacyAIFields: {
+      date: today,
+      salesTotal: todaySummary.income,
+      feedCost: todaySummary.feedCost,
+      laborCost: workerSummary.reduce((s, w) => s + (Number(w.salary) || 0), 0),
+      electricityCost: Number(settings.electricity) || 0,
+      waterCost: todaySummary.waterCost,
+      totalNetProfit: netFaidaTotal,
+      faidaTotal: netFaidaTotal,
+      todayProfit: todayNetFaida,
+      thisMonthProfit: thisMonthNetFaida
+    },
     credits: {
       total: creditSummary.reduce((s, c) => s + (Number(c.amount) || 0), 0),
       items: creditSummary.slice(0, 20)
@@ -6742,6 +6776,9 @@ function getBusinessContextForAI() {
         feedStockKg: feedBalance
       },
       profit: {
+        netFaidaTotal,
+        todayNetFaida,
+        thisMonthNetFaida,
         totalNetProfitAfterFixedCosts: typeof getTotalNetProfit === 'function' ? getTotalNetProfit() : allTimeSummary.netProfit,
         expectedMonthlyProfit: typeof getExpectedMonthlyProfit === 'function' ? getExpectedMonthlyProfit() : 0,
         brokenLossThisMonth: typeof getTotalBrokenLossThisMonth === 'function' ? getTotalBrokenLossThisMonth() : 0,

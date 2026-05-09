@@ -1,5 +1,5 @@
 // ===== Zohir PWA Service Worker =====
-const CACHE_NAME = 'zohir-v20';
+const CACHE_NAME = 'zohir-v21-ai-data';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
