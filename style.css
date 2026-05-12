@@ -671,6 +671,63 @@ body {
   margin-top: 24px;
 }
 
+/* ======= DAILY WIZARD ======= */
+.daily-wizard {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-bottom: 16px;
+  box-shadow: var(--shadow-soft);
+}
+.daily-wizard-steps {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.daily-step-btn {
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.04);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  padding: 9px 8px;
+  font-family: 'Cairo', sans-serif;
+  font-weight: 800;
+  cursor: pointer;
+}
+.daily-step-btn.active {
+  color: var(--gold);
+  border-color: rgba(255, 204, 0, 0.75);
+  background: rgba(255, 204, 0, 0.10);
+}
+.daily-step-btn.done {
+  color: var(--green);
+  border-color: rgba(72,187,120,0.35);
+}
+.daily-wizard-hint {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin-bottom: 12px;
+}
+.daily-wizard-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.daily-stage-hidden {
+  display: none !important;
+}
+#layer-daily-wrapper #btn-save-day {
+  display: none;
+}
+#layer-daily-wrapper #btn-save-day.daily-save-visible {
+  display: inline-flex;
+}
+body.daily-readonly #layer-daily-wrapper #btn-save-day.daily-save-visible {
+  display: none !important;
+}
+
 /* Icon Picker */
 .icon-picker {
   display: flex;
@@ -2306,6 +2363,14 @@ body.role-worker .worker-mode-banner { display: block; }
   .modal-actions .btn {
     width: 100%;
     justify-content: center;
+  }
+
+  .daily-wizard-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .daily-wizard-actions {
+    flex-direction: column-reverse;
   }
 
   /* ---- accountant note ---- */

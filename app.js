@@ -33,6 +33,7 @@ let CURRENT_USER = null;  // Firebase user object
 let CURRENT_ROLE = null;  // 'owner' | 'worker' | 'partner'
 let CURRENT_USER_NAME = '';
 let _paymentStatus = 'paid'; // 'paid' | 'unpaid' — tracks daily form payment toggle
+let _dailyWizardStep = 0;
 // Hashed versions of the secret codes
 const ADMIN_SECRET_HASH = '2cad27b2e9406f8248c1806c048b3c51671db8e65888f418e93c74e185553686';
 const DEV_SECRET_HASH = 'f2eb032f911a094ab44ac20b7603f57ef37523c3b96a49c4d0b3496595c8b0ad';
@@ -2816,6 +2817,7 @@ function renderActivities() {
 /* ===================== DAILY INPUT ===================== */
 function initDailyForm() {
   document.getElementById('inp-date').value = todayStr();
+  initDailyWizard();
 
   const calcFields = ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates', 'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-expenses', 'inp-owner-advance', 'inp-water-cost', 'inp-manure-income', 'inp-special-plates', 'inp-special-singles', 'inp-special-price'];
   calcFields.forEach(id => {
@@ -2831,6 +2833,111 @@ function initDailyForm() {
   document.getElementById('btn-save-day').addEventListener('click', saveDayData);
   document.getElementById('btn-clear-form').addEventListener('click', clearDailyForm);
   document.getElementById('add-advance-row').addEventListener('click', addAdvanceRow);
+}
+
+function getDailyWizardStages() {
+  const cards = Array.from(document.querySelectorAll('#layer-daily-wrapper > .form-grid > .form-card'));
+  return [
+    {
+      title: 'الإنتاج',
+      hint: 'اكتب التاريخ، الإنتاج، المكسور، وسعر البلاكة. بعدها ننتقل للمبيعات.',
+      cards: [cards[0]].filter(Boolean)
+    },
+    {
+      title: 'المبيعات',
+      hint: 'اكتب عدد البلاكات المباعة وحالة الدفع، ثم تحقق من المدخول.',
+      cards: [cards[1]].filter(Boolean)
+    },
+    {
+      title: 'المصاريف والمخزون',
+      hint: 'أدخل الشعير، النافق، الماء، والغبار حتى تكون الفائدة دقيقة.',
+      cards: [cards[2], cards[3], cards[4]].filter(Boolean)
+    },
+    {
+      title: 'الشركاء والعمال',
+      hint: 'أدخل مصاريف الشركاء، سلفيات صاحب العمل، سلفيات العمال، والبيض الخاص.',
+      cards: [cards[5], cards[6], cards[7]].filter(Boolean)
+    },
+    {
+      title: 'التأكيد والحفظ',
+      hint: 'راجع الملاحظات والملخص، ثم اضغط حفظ بيانات اليوم.',
+      cards: [cards[8]].filter(Boolean)
+    }
+  ];
+}
+
+function initDailyWizard() {
+  const wizard = document.getElementById('daily-wizard');
+  if (!wizard || wizard.dataset.ready === '1') return;
+  wizard.dataset.ready = '1';
+  document.getElementById('daily-step-prev')?.addEventListener('click', () => setDailyWizardStep(_dailyWizardStep - 1));
+  document.getElementById('daily-step-next')?.addEventListener('click', () => {
+    if (!validateDailyWizardStep(_dailyWizardStep)) return;
+    setDailyWizardStep(_dailyWizardStep + 1);
+  });
+  document.querySelectorAll('#daily-wizard .daily-step-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = Number(btn.dataset.step) || 0;
+      if (target > _dailyWizardStep && !validateDailyWizardStep(_dailyWizardStep)) return;
+      setDailyWizardStep(target);
+    });
+  });
+  setDailyWizardStep(0);
+}
+
+function validateDailyWizardStep(step) {
+  if (cannotDoDailyEntry()) return true;
+  const produced = Number(document.getElementById('inp-produced')?.value) || 0;
+  const broken = Number(document.getElementById('inp-broken')?.value) || 0;
+  const price = Number(document.getElementById('inp-price')?.value) || 0;
+  const soldTotal = Number(document.getElementById('inp-sold-total')?.value) || 0;
+  const freePlates = Number(document.getElementById('inp-free-plates')?.value) || 0;
+  const net = produced - broken;
+
+  if (step === 0) {
+    if (!document.getElementById('inp-date')?.value) { showToast('اختر تاريخ اليوم أولاً', 'error'); return false; }
+    if (produced <= 0) { showToast('أدخل إنتاج اليوم أولاً', 'error'); return false; }
+    if (broken > produced) { showToast('المكسور لا يمكن أن يكون أكبر من الإنتاج', 'error'); return false; }
+    if (price <= 0) { showToast('أدخل سعر البلاكة قبل المبيعات', 'error'); return false; }
+  }
+
+  if (step === 1) {
+    if (soldTotal + freePlates > net) { showToast('المبيعات والمجاني أكبر من الصافي المتوفر', 'error'); return false; }
+    if (_paymentStatus === 'unpaid' && soldTotal > 0 && !document.getElementById('inp-sale-client')?.value.trim()) {
+      showToast('اكتب اسم المشتري عند البيع غير الخالص', 'error');
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function setDailyWizardStep(step) {
+  const stages = getDailyWizardStages();
+  if (!stages.length) return;
+  _dailyWizardStep = Math.max(0, Math.min(step, stages.length - 1));
+
+  stages.forEach((stage, idx) => {
+    stage.cards.forEach(card => {
+      card.classList.toggle('daily-stage-hidden', idx !== _dailyWizardStep);
+      card.classList.toggle('daily-stage-active', idx === _dailyWizardStep);
+    });
+  });
+
+  document.querySelectorAll('#daily-wizard .daily-step-btn').forEach(btn => {
+    const idx = Number(btn.dataset.step) || 0;
+    btn.classList.toggle('active', idx === _dailyWizardStep);
+    btn.classList.toggle('done', idx < _dailyWizardStep);
+  });
+
+  const hint = document.getElementById('daily-wizard-hint');
+  if (hint) hint.textContent = stages[_dailyWizardStep].hint;
+  const prev = document.getElementById('daily-step-prev');
+  const next = document.getElementById('daily-step-next');
+  if (prev) prev.style.visibility = _dailyWizardStep === 0 ? 'hidden' : 'visible';
+  if (next) next.textContent = _dailyWizardStep === stages.length - 1 ? 'مراجعة الحساب' : 'التالي';
+  document.getElementById('btn-save-day')?.classList.toggle('daily-save-visible', _dailyWizardStep === stages.length - 1);
+  updateDailyCalc();
 }
 
 function setPaymentStatus(status) {
@@ -3412,6 +3519,7 @@ function clearDailyForm() {
     </div>`;
   document.querySelector('.btn-remove-adv')?.addEventListener('click', (e) => e.target.closest('.advance-row')?.remove());
   document.getElementById('daily-report-output').style.display = 'none';
+  setDailyWizardStep(0);
   updateDailyCalc();
 }
 

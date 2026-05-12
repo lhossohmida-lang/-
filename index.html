@@ -643,6 +643,21 @@
     <!-- ===== LAYER DAILY FORM (existing) ===== -->
     <div id="layer-daily-wrapper">
 
+    <div class="daily-wizard" id="daily-wizard">
+      <div class="daily-wizard-steps" id="daily-wizard-steps">
+        <button type="button" class="daily-step-btn active" data-step="0">1 الإنتاج</button>
+        <button type="button" class="daily-step-btn" data-step="1">2 المبيعات</button>
+        <button type="button" class="daily-step-btn" data-step="2">3 المصاريف</button>
+        <button type="button" class="daily-step-btn" data-step="3">4 الشركاء</button>
+        <button type="button" class="daily-step-btn" data-step="4">5 التأكيد</button>
+      </div>
+      <div class="daily-wizard-hint" id="daily-wizard-hint">ابدأ بإدخال إنتاج اليوم، ثم انتقل للمبيعات.</div>
+      <div class="daily-wizard-actions">
+        <button type="button" class="btn btn-outline" id="daily-step-prev">السابق</button>
+        <button type="button" class="btn btn-primary" id="daily-step-next">التالي</button>
+      </div>
+    </div>
+
     <div class="form-grid">
       <div class="form-card">
         <div class="form-card-title">🥚 الإنتاج</div>
@@ -1701,7 +1716,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
-<script src="app.js?v=ai-full-access-20260509"></script>
+<script src="app.js?v=daily-wizard-20260512"></script>
 <script>
   // تسجيل Service Worker لجعل التطبيق يعمل Offline وقابل للتثبيت (PWA)
   if ('serviceWorker' in navigator) {
