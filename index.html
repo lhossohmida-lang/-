@@ -11,11 +11,45 @@
   <meta name="description" content="deku — إدارة مزارع الدواجن" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=48-remaining-eggs" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/x-icon" href="favicon.ico" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
+
+  <!-- === Forced report-grid CSS (cache-proof) === -->
+  <style id="force-report-css">
+    .report-grid {
+      display: grid !important;
+      grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)) !important;
+      gap: 11px !important;
+      width: 100% !important;
+      box-sizing: border-box !important;
+      overflow: visible !important;
+    }
+    .report-stat {
+      background: var(--bg-card2, #1a2035) !important;
+      border-radius: 10px !important;
+      border: 1px solid var(--border, rgba(255,255,255,0.08)) !important;
+      padding: 13px 9px !important;
+      text-align: center !important;
+      min-width: 0 !important;
+      box-sizing: border-box !important;
+      overflow: hidden !important;
+      word-break: break-all !important;
+    }
+    .report-stat .rs-val {
+      font-size: 1.1rem !important;
+      font-weight: 900 !important;
+      word-break: break-all !important;
+    }
+    .report-stat .rs-lbl {
+      font-size: 0.72rem !important;
+      color: var(--text-secondary, #8899aa) !important;
+      margin-top: 3px !important;
+      line-height: 1.3 !important;
+    }
+  </style>
 </head>
 <body>
 
@@ -26,8 +60,18 @@
   <div id="loader-status" class="loader-text">جاري الاتصال بالسحابة...</div>
 </div>
 
+<div id="runtime-error-screen" style="display:none;position:fixed;inset:0;z-index:20000;background:#0a0d14;color:#e2e8f0;align-items:center;justify-content:center;padding:24px;text-align:center;direction:rtl;font-family:Cairo,sans-serif">
+  <div style="max-width:620px;width:100%;background:#151c2e;border:1px solid rgba(252,129,129,.45);border-radius:16px;padding:28px;box-shadow:0 12px 40px rgba(0,0,0,.45)">
+    <div style="font-size:2.2rem;margin-bottom:12px">⚠️</div>
+    <h2 style="margin-bottom:10px">تعذر تشغيل الواجهة</h2>
+    <p style="color:#94a3b8;margin-bottom:16px">حدث خطأ في تشغيل جزء من التطبيق. يمكنك إعادة المحاولة أو نسخ تفاصيل الخطأ للمطور.</p>
+    <pre id="runtime-error-message" style="direction:ltr;text-align:left;white-space:pre-wrap;max-height:180px;overflow:auto;background:#0a0d14;border-radius:8px;padding:12px;color:#fc8181;font-size:.78rem"></pre>
+    <button class="btn btn-primary" type="button" onclick="location.reload()">🔄 إعادة المحاولة</button>
+  </div>
+</div>
+
 <!-- ===== LOGIN SCREEN ===== -->
-<div class="auth-screen" id="auth-screen" style="display:none">
+<div class="auth-screen" id="auth-screen" style="display:flex">
   <div class="auth-bg"></div>
   <div class="auth-card" id="auth-card">
 
@@ -39,11 +83,10 @@
       </div>
     </div>
 
-    <!-- TAB SWITCHER -->
-    <div class="auth-tabs" id="auth-tabs-container">
+    <!-- TAB SWITCHER — login only -->
+    <div class="auth-tabs" id="auth-tabs-container" style="display:none">
       <div class="auth-tab-slider" id="auth-tab-slider"></div>
       <button class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">دخول</button>
-      <button class="auth-tab" id="tab-register" onclick="switchAuthTab('register')">حساب جديد</button>
     </div>
 
     <!-- LOGIN FORM -->
@@ -63,53 +106,11 @@
       <button class="btn auth-btn-submit" id="btn-login" onclick="doLogin()">🔑 دخول</button>
     </form>
 
-    <!-- REGISTER FORM -->
-    <form class="auth-form" id="form-register" style="display:none" onsubmit="return false">
-      <div class="auth-form-group">
-        <label>الاسم الكامل</label>
-        <input type="text" id="reg-name" placeholder="أدخل اسمك الكامل" autocomplete="name" />
-      </div>
-      <div class="auth-form-group">
-        <label>البريد الإلكتروني</label>
-        <input type="email" id="reg-email" placeholder="example@email.com" autocomplete="email" />
-      </div>
-      <div class="auth-form-group">
-        <label>كلمة المرور</label>
-        <div class="auth-pass-wrap">
-          <input type="password" id="reg-password" placeholder="6 أحرف على الأقل" autocomplete="new-password" />
-          <button type="button" class="auth-eye-btn" onclick="togglePassVis('reg-password',this)">👁</button>
-        </div>
-      </div>
-      <div class="auth-form-group">
-        <label>نوع الحساب</label>
-        <select id="reg-role" onchange="initRoleChooser()">
-          <option value="owner">👔 صاحب عمل</option>
-        </select>
-        <p class="auth-role-note" id="reg-role-note">صاحب عمل: تُنشئ مصانعك الخاصة وتدير عمالك بحرية كاملة.</p>
-      </div>
-
-      <div id="reg-dev-code-owner-wrap" class="auth-form-group">
-        <label>رمز الدخول <span style="color:var(--text-muted);font-size:0.8rem">(تواصل مع المطور للحصول عليه)</span></label>
-        <div class="auth-pass-wrap">
-          <input type="password" id="reg-dev-code-owner" placeholder="أدخل رمز الدخول" />
-          <button type="button" class="auth-eye-btn" onclick="togglePassVis('reg-dev-code-owner',this)">👁</button>
-        </div>
-      </div>
-
-
-
-      <div id="reg-admin-code-wrap" class="auth-form-group" style="display:none">
-        <input type="password" id="reg-admin-code" placeholder="رمز الإدارة" />
-      </div>
-
-      <div id="reg-error" class="auth-error"></div>
-      <button class="btn auth-btn-submit" id="btn-register" onclick="doRegister()">✅ إنشاء الحساب</button>
-    </form>
   </div>
 </div>
 
 <!-- ===== FACTORY SELECTION SCREEN ===== -->
-<div class="factory-screen" id="factory-screen">
+<div class="factory-screen" id="factory-screen" style="display:none">
   <div class="factory-screen-bg"></div>
   <div class="factory-screen-content">
     <div class="factory-screen-header">
@@ -123,18 +124,57 @@
       <p class="factory-screen-tagline">اختر المصنع الذي تريد إدارته</p>
       <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px">
         <button class="btn btn-outline" id="btn-refresh-factories" style="font-size:0.85rem;padding:8px 16px">🔄 تحديث القائمة من السحابة</button>
-        <button class="btn btn-outline" id="btn-diagnose-shares" style="font-size:0.85rem;padding:8px 16px">🔍 تشخيص الشراكات</button>
+        <button class="btn btn-outline" id="btn-global-credits" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(72,187,120,0.4);color:var(--green)" onclick="toggleGlobalCredits()">💳 الكريديات (الديون)</button>
+        <button class="btn btn-outline" id="btn-profit-summary" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(245,197,24,0.4);color:var(--gold)" onclick="toggleProfitSummary()">💰 ملخص الأرباح</button>
+        <button class="btn btn-outline" id="btn-export-factory" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(72,187,120,0.5);color:var(--green)">📤 تصدير بيانات Excel</button>
+          <button class="btn btn-outline" id="btn-import-factory" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(66,153,225,0.5);color:var(--blue)">📥 استيراد مصنع من Excel</button>
+        <input type="file" id="factory-import-input" accept=".xlsx,.xls,.csv" style="display:none" />
       </div>
     </div>
 
-    <!-- ===== DIAGNOSE MODAL ===== -->
-    <div class="modal-overlay" id="modal-diagnose">
-      <div class="modal-box" style="max-width:560px;max-height:88vh;overflow-y:auto">
-        <div class="modal-title">🔍 تشخيص حالة الشراكات</div>
-        <div id="diagnose-output" style="font-family:monospace;font-size:0.85rem;background:rgba(0,0,0,0.4);padding:14px;border-radius:8px;white-space:pre-wrap;direction:ltr;text-align:left;max-height:60vh;overflow:auto"></div>
-        <div class="modal-actions" style="margin-top:14px">
-          <button class="btn btn-primary" id="btn-diagnose-fix">🔧 محاولة الإصلاح التلقائي</button>
-          <button class="btn btn-outline" id="btn-diagnose-close">إغلاق</button>
+    <!-- Profit Summary Popup Card -->
+    <div id="profit-summary-popup" style="display:none;width:100%;max-width:600px;margin:0 auto 20px;background:rgba(21,28,46,0.97);border:1px solid rgba(245,197,24,0.35);border-radius:16px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,0.5)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div style="font-size:1.1rem;font-weight:800;color:var(--gold)">💰 ملخص أرباح جميع المصانع</div>
+        <button onclick="toggleProfitSummary()" style="background:none;border:none;color:var(--text-secondary);font-size:1.2rem;cursor:pointer">×</button>
+      </div>
+      <div id="profit-summary-content" style="font-size:0.9rem">
+        <div style="text-align:center;color:var(--text-secondary);padding:20px">⏳ جاري حساب الأرباح...</div>
+      </div>
+    </div>
+
+    <!-- Global Credits Popup Card -->
+    <div id="global-credits-popup" style="display:none;width:100%;max-width:700px;margin:0 auto 20px;background:rgba(21,28,46,0.97);border:1px solid rgba(72,187,120,0.35);border-radius:16px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,0.5)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div style="font-size:1.1rem;font-weight:800;color:var(--green)">💳 نظام الكريديات والديون (شامل)</div>
+        <button onclick="toggleGlobalCredits()" style="background:none;border:none;color:var(--text-secondary);font-size:1.2rem;cursor:pointer">×</button>
+      </div>
+      <!-- Add new client/credit form -->
+      <div style="display:flex;gap:8px;margin-bottom:16px;background:rgba(0,0,0,0.2);padding:10px;border-radius:8px;flex-wrap:wrap">
+        <input type="text" id="gcredit-client" placeholder="اسم الزبون" style="flex:1;min-width:150px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:white"/>
+        <input type="number" id="gcredit-amount" placeholder="المبلغ (دج)" style="width:120px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:white"/>
+        <input type="text" id="gcredit-desc" placeholder="ملاحظة/السلعة" style="flex:2;min-width:150px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:white"/>
+        <button class="btn btn-primary" onclick="addManualGlobalCredit()">+ إضافة دين</button>
+      </div>
+
+      <div id="global-credits-content">
+        <!-- Client cards rendered here -->
+        <div style="text-align:center;color:var(--text-secondary);padding:20px">⏳ جاري تحميل الكريديات...</div>
+      </div>
+    </div>
+
+    <!-- Client Credit Details Modal -->
+    <div class="modal-overlay" id="modal-client-credits" style="z-index:99999">
+      <div class="modal-box" style="max-width:600px;max-height:88vh;overflow-y:auto">
+        <div class="modal-title" id="client-credits-title" style="color:var(--green)">📋 تفاصيل حساب: -</div>
+        <div style="display:flex;gap:8px;margin-bottom:16px">
+          <input type="number" id="client-pay-amount" placeholder="مبلغ التسديد (دج)" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:white" />
+          <button class="btn btn-primary" onclick="addGlobalCreditPayment()">💸 تسديد دين</button>
+        </div>
+        <div id="client-credits-history" style="font-size:0.85rem"></div>
+        <div class="modal-actions" style="margin-top:14px;display:flex;justify-content:space-between;width:100%">
+          <button class="btn btn-outline" style="color:var(--red);border-color:rgba(255,0,0,0.3)" onclick="deleteCurrentGlobalClient()">🗑️ حذف الحساب بالكامل</button>
+          <button class="btn btn-outline" onclick="document.getElementById('modal-client-credits').classList.remove('open')">إغلاق</button>
         </div>
       </div>
     </div>
@@ -154,6 +194,8 @@
       </div>
       <div class="factory-cards-grid" id="shared-factory-cards-grid"></div>
     </div>
+
+    <!-- Moved credits popup to top -->
 
     <button class="btn-add-factory" id="btn-add-factory">
       <span class="btn-add-factory-icon">+</span>
@@ -244,6 +286,22 @@
   </div>
 </div>
 
+
+<!-- ===== DELETE FACTORY MODAL ===== -->
+<div class="modal-overlay" id="modal-delete-factory">
+  <div class="modal-box" style="max-width:400px">
+    <div class="modal-title" style="color:var(--red)">حذف المصنع</div>
+    <p style="color:var(--text-secondary);font-size:0.95rem;margin-bottom:16px;line-height:1.6" id="delete-factory-message">
+      هل أنت متأكد من حذف هذا المصنع؟<br>
+      <strong style="color:var(--red)">تأكيد نهائي: سيتم مسح جميع بيانات المصنع بشكل دائم.</strong>
+    </p>
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="btn-confirm-delete-factory">نعم، احذف المصنع</button>
+      <button class="btn btn-outline" id="btn-cancel-delete-factory" onclick="document.getElementById('modal-delete-factory').classList.remove('open')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== DELETE PASSWORD MODAL ===== -->
 <div class="modal-overlay" id="modal-delete-password">
   <div class="modal-box" style="max-width:360px">
@@ -259,26 +317,7 @@
   </div>
 </div>
 
-<!-- ===== DEV PASSWORD MODAL (Partner Account Gate) ===== -->
-<div class="modal-overlay" id="modal-dev-password">
-  <div class="modal-box" style="max-width:400px">
-    <div class="modal-title" style="font-size:1.3rem">🔐 تأكيد المطور</div>
-    <p style="color:var(--text-secondary);font-size:0.88rem;margin-bottom:18px;text-align:center;line-height:1.6">
-      إنشاء حساب شريك محمي.<br>أدخل كلمة المرور الخاصة بالمطور للمتابعة.
-    </p>
-    <div class="form-group" style="position:relative">
-      <input type="password" id="dev-password-input"
-        placeholder="🔑 كلمة مرور المطور"
-        style="text-align:center;font-size:1.1rem;letter-spacing:4px;padding-right:44px"
-        onkeydown="if(event.key==='Enter') confirmDevPassword()" />
-    </div>
-    <div id="dev-password-error" class="auth-error" style="margin-bottom:10px;text-align:center"></div>
-    <div class="modal-actions">
-      <button class="btn btn-primary" id="btn-confirm-dev-password" onclick="confirmDevPassword()">✅ تأكيد</button>
-      <button class="btn btn-outline" id="btn-cancel-dev-password" onclick="cancelDevPassword()">❌ إلغاء</button>
-    </div>
-  </div>
-</div>
+<!-- DEV PASSWORD MODAL Removed -->
 
 <!-- ===== MAIN APP WRAPPER ===== -->
 <div class="app-wrapper" id="app-wrapper" style="display:none">
@@ -293,12 +332,11 @@
     </div>
   </div>
 
-  <!-- Factory Switcher -->
-  <button class="factory-switcher-btn" id="btn-switch-factory">
-    <span>🏭</span>
-    <span>تبديل المصنع</span>
-    <span class="switcher-arrow">‹</span>
-  </button>
+  <div style="padding: 10px 20px;">
+    <button class="btn btn-outline" id="btn-switch-factory" style="width:100%; border-color:rgba(255,255,255,0.2); color:white; font-size:0.9rem" onclick="exitToFactoryScreen()">
+      ⬅️ العودة للمصانع
+    </button>
+  </div>
 
   <nav class="sidebar-nav">
     <button class="nav-item active" data-page="dashboard" id="nav-dashboard">
@@ -319,9 +357,7 @@
     <button class="nav-item broiler-only" data-page="broiler-workers" id="nav-broiler-workers" style="display:none">
       <span class="nav-icon">👷</span><span>الفريق</span>
     </button>
-    <button class="nav-item" data-page="sales" id="nav-sales">
-      <span class="nav-icon">💰</span><span>المبيعات والمخزون</span>
-    </button>
+
     <button class="nav-item" data-page="workers" id="nav-workers">
       <span class="nav-icon">👷</span><span>العمال</span>
     </button>
@@ -359,7 +395,9 @@
 <div class="topbar">
   <button class="hamburger" id="hamburger">☰</button>
   <span class="topbar-title" id="topbar-factory-name">deku — مزرعة البيض</span>
-  <button class="topbar-switch-btn" id="topbar-switch-btn" title="تبديل المصنع">🏭</button>
+  <div style="display:flex;gap:4px">
+    <button class="topbar-switch-btn" title="تغيير المصنع" onclick="exitToFactoryScreen()" style="font-size:1.1rem">🏭</button>
+  </div>
 </div>
 <div class="sidebar-overlay" id="sidebar-overlay"></div>
 
@@ -490,7 +528,6 @@
       <h1>📅 الإدخال اليومي</h1>
       <p id="daily-page-sub">سجّل بيانات يوم العمل</p>
     </div>
-    <div class="worker-mode-banner"></div>
 
     <!-- ===== BROILER DAILY FORM ===== -->
     <div id="broiler-daily-wrapper" style="display:none">
@@ -640,22 +677,12 @@
       </div>
     </div>
 
-    <!-- ===== LAYER DAILY FORM (existing) ===== -->
+    <!-- ===== LAYER DAILY FORM (single-page, no wizard) ===== -->
     <div id="layer-daily-wrapper">
 
-    <div class="daily-wizard" id="daily-wizard">
-      <div class="daily-wizard-steps" id="daily-wizard-steps">
-        <button type="button" class="daily-step-btn active" data-step="0">1 الإنتاج</button>
-        <button type="button" class="daily-step-btn" data-step="1">2 المبيعات</button>
-        <button type="button" class="daily-step-btn" data-step="2">3 المصاريف</button>
-        <button type="button" class="daily-step-btn" data-step="3">4 الشركاء</button>
-        <button type="button" class="daily-step-btn" data-step="4">5 التأكيد</button>
-      </div>
-      <div class="daily-wizard-hint" id="daily-wizard-hint">ابدأ بإدخال إنتاج اليوم، ثم انتقل للمبيعات.</div>
-      <div class="daily-wizard-actions">
-        <button type="button" class="btn btn-outline" id="daily-step-prev">السابق</button>
-        <button type="button" class="btn btn-primary" id="daily-step-next">التالي</button>
-      </div>
+    <!-- Autosave indicator -->
+    <div id="daily-autosave-bar" style="font-size:0.8rem;color:var(--text-secondary);margin-bottom:10px;display:none">
+      💾 <span id="daily-autosave-text">البيانات محفوظة مؤقتاً...</span>
     </div>
 
     <div class="form-grid">
@@ -807,6 +834,11 @@
           <div class="field-note">⭐ بيض مفرد من النوع الخاص</div>
         </div>
         <div class="form-group">
+          <label>مبيعات البيض الخاص</label>
+          <input type="number" id="inp-special-sold" placeholder="0" min="0" />
+          <div class="field-note">الكمية المباعة من البيض الخاص</div>
+        </div>
+        <div class="form-group">
           <label>سعر البلاكة الخاصة (دج)</label>
           <input type="number" id="inp-special-price" placeholder="0.00" min="0" step="0.01" />
         </div>
@@ -947,163 +979,7 @@
   </section>
 
   <!-- ========== SALES + FEED + CREDITS (MERGED PAGE) ========== -->
-  <section class="page" id="page-sales">
-    <div class="page-header">
-      <h1>💰 المبيعات والمخزون</h1>
-      <p>المبيعات، مخزون الشعير، والكريديات</p>
-    </div>
-
-    <!-- Tabs -->
-    <div class="page-tabs" id="sales-page-tabs">
-      <button class="page-tab active" data-tab="tab-sales" onclick="switchSalesTab('tab-sales',this)">💰 المبيعات</button>
-      <button class="page-tab" data-tab="tab-feed" onclick="switchSalesTab('tab-feed',this)">🌾 مخزون الشعير</button>
-      <button class="page-tab" data-tab="tab-credits" onclick="switchSalesTab('tab-credits',this)">📋 الكريديات</button>
-    </div>
-
-    <!-- ===== TAB: SALES ===== -->
-    <div class="tab-panel active" id="tab-sales">
-      <div class="section-card">
-        <div class="section-title-row">
-          <div class="section-title">سجل المبيعات اليومية</div>
-          <div class="summary-chips">
-            <div class="chip">الإجمالي: <strong id="total-income-chip">0 دج</strong></div>
-            <div class="chip">إجمالي الفائدة: <strong id="total-profit-chip">0 دج</strong></div>
-            <div class="chip chip-red">كريديات: <strong id="total-credits-chip">0 دج</strong></div>
-          </div>
-        </div>
-        <div class="table-wrapper">
-          <table class="data-table" id="sales-table">
-            <thead>
-              <tr>
-                <th>التاريخ</th>
-                <th>الكرطونات</th>
-                <th>الفردي</th>
-                <th>السعر</th>
-                <th>مدخول عادي</th>
-                <th>بيض خاص ⭐</th>
-                <th>الإجمالي</th>
-                <th>الربح الأساسي 💰</th>
-                <th>إجراءات</th>
-              </tr>
-            </thead>
-            <tbody id="sales-tbody">
-              <tr><td colspan="9" class="empty-cell">لا توجد مبيعات مسجلة</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div class="section-card" style="margin-top:20px;">
-        <div class="section-title">سجل المبيعات الشهرية</div>
-        <div class="table-wrapper">
-          <table class="data-table" id="monthly-sales-table">
-            <thead>
-              <tr>
-                <th>الشهر</th>
-                <th>إجمالي الكرطونات</th>
-                <th>إجمالي الفردي</th>
-                <th>المدخول الإجمالي</th>
-                <th>الربح الأساسي 💰</th>
-              </tr>
-            </thead>
-            <tbody id="monthly-sales-tbody">
-              <tr><td colspan="5" class="empty-cell">لا توجد مبيعات شهرية</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- ===== TAB: FEED ===== -->
-    <div class="tab-panel" id="tab-feed">
-      <div class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom:16px">
-        <div class="kpi-card kpi-feed">
-          <div class="kpi-icon">🌾</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="feed-balance-big">0 كغ</span>
-            <span class="kpi-label">الرصيد الحالي</span>
-          </div>
-        </div>
-        <div class="kpi-card kpi-production">
-          <div class="kpi-icon">📥</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="feed-total-in">0 كغ</span>
-            <span class="kpi-label">إجمالي الداخل</span>
-          </div>
-        </div>
-        <div class="kpi-card kpi-loss">
-          <div class="kpi-icon">📤</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="feed-total-used">0 كغ</span>
-            <span class="kpi-label">إجمالي المستهلك</span>
-          </div>
-        </div>
-        <div class="kpi-card kpi-broken">
-          <div class="kpi-icon">💸</div>
-          <div class="kpi-info">
-            <span class="kpi-value" id="feed-total-cost">0 دج</span>
-            <span class="kpi-label">إجمالي تكلفة الشراء</span>
-          </div>
-        </div>
-      </div>
-      <div class="section-card">
-        <div class="section-title">سجل حركة الشعير</div>
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>التاريخ</th>
-                <th>داخل (كغ)</th>
-                <th>سعر الشراء (دج/كغ)</th>
-                <th>تكلفة الشراء (دج)</th>
-                <th>مستهلك (كغ)</th>
-                <th>الرصيد (كغ)</th>
-                <th>التنبيه</th>
-                <th class="admin-only">حذف</th>
-              </tr>
-            </thead>
-            <tbody id="feed-tbody">
-              <tr><td colspan="8" class="empty-cell">لا توجد حركات مسجلة</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- ===== TAB: CREDITS ===== -->
-    <div class="tab-panel" id="tab-credits">
-      <div class="section-card">
-        <div class="section-title">➕ إضافة كريديت جديد</div>
-        <div class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 10px;">
-          <input type="text" id="inp-credit-client" placeholder="اسم العميل" />
-          <input type="number" id="inp-credit-amount" placeholder="المبلغ (دج)" />
-          <input type="date" id="inp-credit-date" />
-          <input type="text" id="inp-credit-desc" placeholder="ملاحظة (اختياري)" />
-          <button class="btn btn-primary btn-sm" id="btn-add-credit">✅ تسجيل</button>
-        </div>
-      </div>
-
-      <div class="section-card">
-        <div class="section-title">📋 سجل الكريديتات (الديون)</div>
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>التاريخ</th>
-                <th>العميل</th>
-                <th>الملاحظة</th>
-                <th>المبلغ</th>
-                <th>حذف</th>
-              </tr>
-            </thead>
-            <tbody id="credits-tbody">
-              <tr><td colspan="5" class="empty-cell">لا توجد كريديتات مسجلة</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </section>
+  <!-- page-sales merged into page-reports -->
 
   <!-- ========== WORKERS + PARTNERS PAGE ========== -->
   <section class="page" id="page-workers">
@@ -1163,28 +1039,91 @@
     </div>
   </section>
 
-  <!-- ========== REPORTS PAGE ========== -->
+    <!-- ========== REPORTS PAGE ========== -->
   <section class="page" id="page-reports">
     <div class="page-header">
-      <h1>📈 التقارير</h1>
-      <p>تقارير مالية شاملة</p>
+      <button id="btn-show-report-curves" class="btn report-curves-toggle" type="button">📈 عرض المنحنيات</button>
+      <h1>📊 التقارير الشاملة</h1>
+      <p>جميع بيانات الإنتاج والمبيعات والمخزون في مكان واحد</p>
     </div>
 
-    <div class="section-card">
-      <div class="section-title">📅 ملخص الشهر الحالي</div>
-      <div class="report-grid" id="monthly-summary"></div>
-    </div>
-
-    <div class="section-card" id="dust-profit-card">
-      <div class="section-title">💩 فائدة الغبار (الحساب المنفصل)</div>
-      <div id="dust-profit-block" style="margin-bottom:8px;padding:14px 16px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid rgba(255,255,255,0.08)">
-        <div class="empty-state" style="padding:14px 0;color:var(--text-muted);font-size:0.9rem">لا توجد بيانات بعد لحساب فائدة الغبار.</div>
+    <!-- === الملخص الكلي === -->
+    <div class="section-card" style="border-color:rgba(245,197,24,0.3)">
+      <div class="section-title" style="color:var(--gold)">📋 الملخص الكلي (جميع الفترات)</div>
+      <div class="report-grid" id="total-summary">
+        <div class="report-stat"><div class="rs-val">0</div><div class="rs-lbl">إجمالي الأيام</div></div>
       </div>
     </div>
 
+    <!-- === ملخص الشهر الحالي === -->
+    <div class="section-card" style="border-color:rgba(66,153,225,0.3)">
+      <div class="section-title" style="color:var(--blue)">📅 ملخص الشهر الحالي</div>
+      <div class="report-grid" id="monthly-summary"></div>
+    </div>
+
+    <div class="section-card report-curves-card" id="report-curves-card" hidden>
+      <div class="section-title-row">
+        <div class="section-title" style="color:var(--blue)">📈 منحنيات البيانات اليومية</div>
+        <div class="curve-toolbar">
+          <label class="curve-control">المؤشر
+            <select id="report-curve-metric" class="curve-select">
+              <option value="produced">الإنتاج</option>
+              <option value="dead">النفوق</option>
+              <option value="price">سعر البيع</option>
+              <option value="income">المدخول</option>
+              <option value="sold">البيض المباع والمكسور</option>
+              <option value="feedUsed">الشعير المستهلك</option>
+              <option value="remaining">البيض المتبقي</option>
+            </select>
+          </label>
+          <div class="curve-zoom" aria-label="تكبير المنحنى">
+            <button type="button" id="report-curve-zoom-out" title="تصغير المنحنى">−</button>
+            <span id="report-curve-zoom-label">100%</span>
+            <button type="button" id="report-curve-zoom-in" title="تكبير المنحنى">+</button>
+            <button type="button" id="report-curve-zoom-reset" title="إعادة الحجم">↺</button>
+          </div>
+        </div>
+      </div>
+      <div class="curve-chart-wrap"><canvas id="report-curves-canvas" height="330"></canvas></div>
+      <div id="report-curve-details" class="curve-details"></div>
+    </div>
+
+    <!-- === الجدول الشامل === -->
+    <div class="section-card">
+      <div class="section-title-row">
+        <div class="section-title">📝 السجل اليومي الشامل</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button onclick="clearAndReimportLogs()" style="font-size:0.8rem;padding:6px 14px;border:1px solid var(--red);color:var(--red);background:transparent;border-radius:8px;cursor:pointer;">🗑️ مسح البيانات وإعادة الاستيراد</button>
+        </div>
+      </div>
+      <div class="table-wrapper">
+        <table class="data-table" id="unified-table">
+          <thead>
+            <tr>
+              <th>التاريخ</th>
+              <th>الإنتاج (بلاكة)</th>
+              <th>الكرطونات</th>
+              <th>الباقي</th>
+              <th>المكسور</th>
+              <th>بيع البيض</th>
+              <th>بيض خاص ⭐</th>
+              <th>الوفيات 💀</th>
+              <th>دخول العلف 🌾</th>
+              <th>استهلاك العلف</th>
+              <th>ملاحظات</th>
+              <th>إجراءات</th>
+            </tr>
+          </thead>
+          <tbody id="unified-tbody">
+            <tr><td colspan="12" class="empty-cell">لا توجد سجلات</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- === خلاصة أرباح الشركاء === -->
     <div class="section-card">
       <div class="section-title">🤝 خلاصة أرباح الشركاء</div>
-      <!-- Faida breakdown block — filled by JS -->
       <div id="partner-summary-faida-block" style="margin-bottom:16px;padding:14px 16px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid rgba(255,255,255,0.08);display:none"></div>
       <div class="table-wrapper">
         <table class="data-table">
@@ -1201,31 +1140,6 @@
           </thead>
           <tbody id="partner-summary-tbody">
             <tr><td colspan="7" class="empty-cell">لا يوجد شركاء مضافون</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="section-card">
-      <div class="section-title">🥚 سجل الإنتاج الكامل</div>
-      <div class="table-wrapper">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>التاريخ</th>
-              <th>المنتج</th>
-              <th>المكسور</th>
-              <th>الصافي</th>
-              <th>الكرطونات</th>
-              <th>الفردي</th>
-              <th>النافق</th>
-              <th>المدخِل</th>
-              <th>الملاحظات</th>
-              <th class="admin-only">حذف</th>
-            </tr>
-          </thead>
-          <tbody id="prod-tbody">
-            <tr><td colspan="8" class="empty-cell">لا توجد سجلات</td></tr>
           </tbody>
         </table>
       </div>
@@ -1466,20 +1380,7 @@
 
 
 
-      <!-- Worker Accounts Card — ADMIN ONLY -->
-      <div class="form-card admin-only-card" id="worker-accounts-card">
-        <div class="form-card-title">✍️ إنشاء حساب كاتب</div>
-        <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:14px">أنشئ حساب دخول للكاتب حتى يتمكن من تسجيل البيانات اليومية.</p>
-        <div class="inline-form">
-          <input type="text" id="wa-name" placeholder="الاسم الكامل" />
-          <input type="email" id="wa-email" placeholder="البريد الإلكتروني" />
-          <input type="password" id="wa-password" placeholder="كلمة المرور (6+ أحرف)" />
-          <input type="hidden" id="wa-role" value="worker" />
-          <button class="btn btn-primary" id="btn-create-worker-account" onclick="createWorkerAccount()">➕ إنشاء حساب كاتب</button>
-        </div>
-        <div id="wa-error" class="auth-error" style="margin-top:8px"></div>
-        <div id="wa-success" style="margin-top:8px;color:var(--green);font-size:0.85rem"></div>
-      </div>
+      <!-- Worker Accounts Card Removed -->
 
       <div class="form-card">
         <div class="form-card-title">🎨 الإعدادات العامة</div>
@@ -1716,20 +1617,54 @@
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
-<script src="app.js?v=daily-wizard-20260512"></script>
+<!-- SheetJS: deterministic, structured Excel exports from application data -->
 <script>
-  // تسجيل Service Worker لجعل التطبيق يعمل Offline وقابل للتثبيت (PWA)
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('sw.js')
-        .then(registration => {
-          console.log('ServiceWorker registration successful with scope: ', registration.scope);
-        })
-        .catch(err => {
-          console.log('ServiceWorker registration failed: ', err);
-        });
-    });
+// Load XLSX library with multiple fallbacks
+(function() {
+  function tryLoad(urls, idx) {
+    if (idx >= urls.length) {
+      console.error("XLSX: all CDNs failed");
+      var btn = document.getElementById("btn-import-factory");
+      if (btn) btn.textContent = "مكتبة Excel غير محملة";
+      return;
+    }
+    var s = document.createElement("script");
+    s.src = urls[idx];
+    s.onload = function() { console.log("XLSX loaded from", urls[idx]); };
+    s.onerror = function() { document.head.removeChild(s); tryLoad(urls, idx + 1); };
+    document.head.appendChild(s);
   }
+  tryLoad([
+    "https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
+    "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"
+  ], 0);
+})();
+</script>
+<script src="app.js?v=59-report-curve-zoom"></script>
+<script>
+  var APP_VERSION = 'zohir-v59-report-curve-zoom';
+  function initSW() {
+    if (!('serviceWorker' in navigator)) return;
+    Promise.resolve()
+      .then(function() {
+        if ('caches' in window) {
+          return caches.keys().then(function(keys) {
+            return Promise.all(keys.filter(function(k){ return k !== APP_VERSION; }).map(function(k){ return caches.delete(k); }));
+          });
+        }
+      })
+      .then(function() {
+        return navigator.serviceWorker.getRegistrations().then(function(regs) {
+          return Promise.all(regs.map(function(r){ return r.unregister(); }));
+        });
+      })
+      .then(function() {
+        return navigator.serviceWorker.register('sw.js?v=47');
+      })
+      .catch(function(e){ console.warn('[SW]', e); });
+  }
+  window.addEventListener('load', initSW);
 </script>
 
 <!-- Sale Receipt Modal -->
@@ -1747,5 +1682,17 @@
     </div>
   </div>
 </div>
+
+<!-- ===== CONFIRM MODAL ===== -->
+<div class="modal-overlay" id="confirm-modal" style="z-index:99999">
+  <div class="modal-box">
+    <div class="modal-title" style="color:var(--gold)">⚠️ رسالة النظام</div>
+    <div id="confirm-text" style="font-size:1.1rem; line-height:1.6; margin-bottom:20px; white-space:pre-wrap"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" onclick="document.getElementById('confirm-modal').style.display='none'">موافق</button>
+    </div>
+  </div>
+</div>
+
 </body>
 </html>

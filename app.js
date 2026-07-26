@@ -76,6 +76,9 @@ function isReadOnlyUser() {
 /** Owner with workers cannot enter daily data — workers handle that. */
 function cannotDoDailyEntry() {
   if (isReadOnlyUser()) return true;
+  const btnSave = document.getElementById('btn-save-day');
+  if (btnSave && btnSave.dataset.editMode === 'true') return false; // Allow owner to edit existing records
+  
   if (CURRENT_ROLE === 'owner') {
     const workers = DB.get('workers') || [];
     if (workers.length > 0) return true;
@@ -1448,13 +1451,22 @@ function fmt(num, suffix = '') {
   if (num === null || num === undefined || isNaN(num)) return '—';
   return Number(num).toLocaleString('ar-DZ') + (suffix ? ' ' + suffix : '');
 }
+function dateKeyLocal(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  if (isNaN(d.getTime())) return '';
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function parseDateKey(dateStr) {
+  const m = String(dateStr || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(dateStr);
+}
 function fmtDate(dateStr) {
   if (!dateStr) return '—';
-  const d = new Date(dateStr);
+  const d = parseDateKey(dateStr);
   return d.toLocaleDateString('ar-DZ', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 function todayStr() {
-  return new Date().toISOString().split('T')[0];
+  return dateKeyLocal(new Date());
 }
 function showToast(msg, type = 'success') {
   const t = document.getElementById('toast');
@@ -1483,14 +1495,14 @@ function getTotalDeadThisMonth() {
   const logs = DB.get('daily_logs') || [];
   const now = new Date();
   return logs
-    .filter(l => { const d = new Date(l.date); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); })
+    .filter(l => { const d = parseDateKey(l.date); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); })
     .reduce((s, l) => s + (Number(l.dead) || 0), 0);
 }
 function getTotalBrokenLossThisMonth() {
   const logs = DB.get('daily_logs') || [];
   const now = new Date();
   return logs
-    .filter(l => { const d = new Date(l.date); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); })
+    .filter(l => { const d = parseDateKey(l.date); return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear(); })
     .reduce((s, l) => s + ((Number(l.broken) || 0) * (Number(l.price) || 0)), 0);
 }
 function getTotalAdvances() {
@@ -1519,7 +1531,7 @@ function getTotalNetProfit() {
   let monthsDiff = 1;
   if (logs.length > 0) {
     const sorted = [...logs].sort((a, b) => a.date.localeCompare(b.date));
-    const firstDate = new Date(sorted[0].date);
+    const firstDate = parseDateKey(sorted[0].date);
     const now = new Date();
     monthsDiff = Math.max(1, (now.getFullYear() - firstDate.getFullYear()) * 12 + (now.getMonth() - firstDate.getMonth()) + 1);
   }
@@ -1575,7 +1587,14 @@ function renderCurrentPage() {
     'broiler-workers': renderBroilerWorkersPage,
     'ai-chat': renderAIChatPage
   };
-  if (refreshers[pageId]) refreshers[pageId]();
+  if (refreshers[pageId]) {
+    try {
+      refreshers[pageId]();
+    } catch (err) {
+      console.error(`[Page:${pageId}] render failed`, err);
+      showToast(`تعذر فتح الصفحة: ${err.message || 'خطأ غير معروف'}`, 'error');
+    }
+  }
 }
 
 /* ===================== FACTORY SELECTION SCREEN ===================== */
@@ -1596,9 +1615,15 @@ function renderFactoryScreen() {
   };
 
   // ── مصانعي (المملوكة لي) ──
-  const myFactories = readFactoriesForOwner(CURRENT_USER?.uid).filter(f =>
+  const allMyFactories = readFactoriesForOwner(CURRENT_USER?.uid).filter(f =>
     !f.ownerUid || f.ownerUid === CURRENT_USER?.uid
   );
+  const activeGroup = window._factoryGroupViewId
+    ? allMyFactories.find(f => f.id === window._factoryGroupViewId && f.isGroup)
+    : null;
+  const myFactories = activeGroup
+    ? allMyFactories.filter(f => f.parentId === activeGroup.id)
+    : allMyFactories.filter(f => !f.parentId);
 
   // ── المصانع المشاركة (من ملاك آخرين) ──
   // فقط المصانع التي:
@@ -1642,7 +1667,16 @@ function renderFactoryScreen() {
   }
 
   // عنوان "مصانعي" يظهر دائماً
-  if (myHeader) myHeader.style.display = '';
+  if (myHeader) {
+    myHeader.style.display = '';
+    myHeader.innerHTML = activeGroup
+      ? `<button type="button" id="btn-back-factory-group" class="btn btn-outline" style="margin-inline-end:12px;padding:6px 14px">← رجوع</button><span>📁 ${activeGroup.name}</span>`
+      : '<span>🏭 مصانعي</span>';
+    myHeader.querySelector('#btn-back-factory-group')?.addEventListener('click', () => {
+      window._factoryGroupViewId = null;
+      renderFactoryScreen();
+    });
+  }
 
   // رسم بطاقات مصانعي
   myFactories.forEach((factory, idx) => buildFactoryCard(factory, idx, true, myGrid));
@@ -1665,7 +1699,7 @@ function renderFactoryScreen() {
            </div>`;
     }
   }
-  requestAnimationFrame(() => playFactoryOrbitIntro([myGrid, sharedGrid]));
+  // Cards appear in place; the previous orbit/rotation intro is disabled.
 }
 
 function playFactoryOrbitIntro(grids) {
@@ -1765,12 +1799,14 @@ function buildFactoryCard(factory, idx, isPrimaryOwner, container) {
   const canDelete = isPrimaryOwner && !isReadOnlyUser();
 
   const fType = factory.type || 'layer';
-  const typeBadge = fType === 'broiler'
+  const typeBadge = factory.isGroup
+    ? `<span class="factory-type-badge factory-type-badge--layer">📁 مجموعة مصانع</span>`
+    : fType === 'broiler'
     ? `<span class="factory-type-badge factory-type-badge--broiler">🍗 لحم</span>`
     : `<span class="factory-type-badge factory-type-badge--layer">🥚 بيض</span>`;
 
   card.innerHTML = `
-    ${canDelete ? `<button class="factory-card-delete" data-id="${factory.id}" title="حذف المصنع">✕</button>` : ''}
+    ${canDelete ? `<button class="factory-card-delete" data-id="${factory.id}" data-name="${factory.name.replace(/\"/g, '&quot;')}" onclick="window.confirmDeleteFactory(event, this.dataset.id, this.dataset.name)" title="حذف المصنع">✕</button>` : ''}
     ${typeBadge}
     <span class="factory-card-icon">${factory.icon || '🐔'}</span>
     <div class="factory-card-name">${factory.name}</div>
@@ -1783,6 +1819,12 @@ function buildFactoryCard(factory, idx, isPrimaryOwner, container) {
 
   card.addEventListener('click', (e) => {
     if (e.target.classList.contains('factory-card-delete') || e.target.closest('.factory-card-delete')) return;
+
+    if (factory.isGroup) {
+      window._factoryGroupViewId = factory.id;
+      renderFactoryScreen();
+      return;
+    }
 
     const screen = document.getElementById('factory-screen');
     card.classList.add('factory-card-active');
@@ -2561,8 +2603,8 @@ function initFactoryScreen() {
   });
 
   // Factory switcher buttons
-  document.getElementById('btn-switch-factory').addEventListener('click', exitToFactoryScreen);
-  document.getElementById('topbar-switch-btn').addEventListener('click', exitToFactoryScreen);
+  document.getElementById('btn-switch-factory')?.addEventListener('click', exitToFactoryScreen);
+  document.getElementById('topbar-switch-btn')?.addEventListener('click', exitToFactoryScreen);
 
   // Refresh factories from cloud (manual trigger on factory selection screen)
   document.getElementById('btn-refresh-factories')?.addEventListener('click', () => refreshFactoriesFromCloud());
@@ -2817,6 +2859,11 @@ function renderActivities() {
 /* ===================== DAILY INPUT ===================== */
 function initDailyForm() {
   document.getElementById('inp-date').value = todayStr();
+  const btnSave = document.getElementById('btn-save-day');
+  if (btnSave) {
+    btnSave.innerText = 'حفظ التسجيل اليومي';
+    btnSave.dataset.editMode = 'false';
+  }
   initDailyWizard();
 
   const calcFields = ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates', 'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-expenses', 'inp-owner-advance', 'inp-water-cost', 'inp-manure-income', 'inp-special-plates', 'inp-special-singles', 'inp-special-price'];
@@ -2967,6 +3014,7 @@ function updateDailyCalc() {
   const waterCost = Number(document.getElementById('inp-water-cost')?.value) || 0;
   const specialPlates = Number(document.getElementById('inp-special-plates')?.value) || 0;
   const specialSingles = Number(document.getElementById('inp-special-singles')?.value) || 0;
+  const specialSold = Number(document.getElementById('inp-special-sold')?.value) || 0;
   const specialPrice = Number(document.getElementById('inp-special-price')?.value) || 0;
 
   const net = produced - broken;
@@ -3137,6 +3185,7 @@ function saveDayData() {
   const notes = document.getElementById('inp-notes').value.trim();
   const specialPlates = Number(document.getElementById('inp-special-plates')?.value) || 0;
   const specialSingles = Number(document.getElementById('inp-special-singles')?.value) || 0;
+  const specialSold = Number(document.getElementById('inp-special-sold')?.value) || 0;
   const specialPrice = Number(document.getElementById('inp-special-price')?.value) || 0;
   const specialIncome = specialPlates * specialPrice + specialSingles * (specialPrice / 12);
   const isPaid = _paymentStatus === 'paid';
@@ -3202,15 +3251,22 @@ function saveDayData() {
     soldTotal, soldGroups, soldSingle, freePlates, income,
     feedIn, feedPrice, feedCost, feedUsed, dead, waterCost, manureIncome, notes,
     expenses: 0, ownerAdvance, baseProfit, profit, partnerExpenses,
-    specialPlates, specialSingles, specialPrice, specialIncome,
+    specialPlates, specialSingles, specialSold, specialPrice, specialIncome,
     dustAdvances: dustWorkerAdvancesToday,
     isPaid, farsimon, saleClient,
     enteredBy: CURRENT_USER_NAME || '',
     enteredByUid: CURRENT_USER ? CURRENT_USER.uid : ''
   };
 
-  const logs = DB.get('daily_logs') || [];
-  logs.push(log);
+  const logs = (DB.get('daily_logs') || []).filter(l => l && typeof l === 'object');
+  const existingIdx = logs.findIndex(l => l.date === log.date);
+  if (existingIdx > -1) {
+    // Retain old advances/credits if not fully handled, but for now just replace the day object
+    log.id = logs[existingIdx].id; // Keep original ID
+    logs[existingIdx] = log;
+  } else {
+    logs.push(log);
+  }
   DB.set('daily_logs', logs);
 
   if (advancesThisDay.length) {
@@ -3245,6 +3301,13 @@ function saveDayData() {
   const totalDayIncome = income + specialIncome;
   addActivity(`تم حفظ بيانات يوم ${fmtDate(date)} — مدخول: ${fmt(income, 'دج')}${specialIncome > 0 ? ' + خاص: '+fmt(specialIncome, 'دج') : ''} — فائدة: ${fmt(log.profit, 'دج')}`, '📅');
   showToast('✅ تم حفظ بيانات اليوم بنجاح!');
+  const btnSave = document.getElementById('btn-save-day');
+  if (btnSave && btnSave.dataset.editMode === 'true') {
+    btnSave.innerText = 'حفظ التسجيل اليومي';
+    btnSave.dataset.editMode = 'false';
+    showPage('reports');
+    return;
+  }
   renderDailyReportOutput(log);
   if (!isPaid && income > 0) showSaleReceipt(log);
   updateDailyCalc();
@@ -3511,6 +3574,11 @@ function clearDailyForm() {
   // clear partner expense fields
   document.querySelectorAll('[id^="inp-pexp-"]').forEach(el => el.value = '');
   document.getElementById('inp-date').value = todayStr();
+  const btnSave = document.getElementById('btn-save-day');
+  if (btnSave) {
+    btnSave.innerText = 'حفظ التسجيل اليومي';
+    btnSave.dataset.editMode = 'false';
+  }
   document.getElementById('advance-entries').innerHTML = `
     <div class="advance-row">
       <select class="adv-worker-select">${workerOptions()}</select>
@@ -3557,7 +3625,7 @@ function renderSalesTable() {
     return;
   }
   tbody.innerHTML = '';
-  const sorted = [...logs].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const sorted = [...logs].sort((a, b) => parseDateKey(b.date) - parseDateKey(a.date));
   sorted.forEach(log => {
     totalIncome += Number(log.income) || 0;
     totalSpecialIncome += Number(log.specialIncome) || 0;
@@ -3627,7 +3695,7 @@ function renderMonthlySalesTable(logs) {
   const monthly = {};
   logs.forEach(log => {
     if (!log.date) return;
-    const dateObj = new Date(log.date);
+    const dateObj = parseDateKey(log.date);
     const y = dateObj.getFullYear();
     const m = dateObj.getMonth();
     const key = `${y}-${m}`;
@@ -3715,7 +3783,7 @@ function buildMonthlySalesMap(logs = DB.get('daily_logs') || []) {
   const monthly = {};
   logs.forEach(log => {
     if (!log.date) return;
-    const dateObj = new Date(log.date);
+    const dateObj = parseDateKey(log.date);
     const y = dateObj.getFullYear();
     const m = dateObj.getMonth();
     const key = `${y}-${m}`;
@@ -3742,7 +3810,7 @@ function showMonthlySalesDetails(monthKey) {
   const bodyEl = document.getElementById('monthly-details-body');
   titleEl.textContent = `تفاصيل شهر ${monthData.label}`;
 
-  const sortedLogs = [...monthData.logs].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const sortedLogs = [...monthData.logs].sort((a, b) => parseDateKey(b.date) - parseDateKey(a.date));
   const rows = sortedLogs.map(log => {
     const totalIncome = (Number(log.income) || 0) + (Number(log.specialIncome) || 0);
     const profit = Number(log.profit) || 0;
@@ -4492,7 +4560,7 @@ function renderFeedPage() {
   let totalIn = 0, totalUsed = 0, totalCost = 0;
 
   tbody.innerHTML = '';
-  const sorted = [...logs].sort((a, b) => new Date(a.date) - new Date(b.date));
+  const sorted = [...logs].sort((a, b) => parseDateKey(a.date) - parseDateKey(b.date));
   if (!sorted.length) {
     tbody.innerHTML = '<tr><td colspan="7" class="empty-cell">لا توجد حركات مسجلة</td></tr>';
   } else {
@@ -4926,70 +4994,431 @@ function resetWorkerAdvances(id) {
   }
 }
 
+function renderReportCurves(reportLogs) {
+  const card = document.getElementById('report-curves-card');
+  const button = document.getElementById('btn-show-report-curves');
+  const select = document.getElementById('report-curve-metric');
+  const canvas = document.getElementById('report-curves-canvas');
+  const details = document.getElementById('report-curve-details');
+  const zoomOut = document.getElementById('report-curve-zoom-out');
+  const zoomIn = document.getElementById('report-curve-zoom-in');
+  const zoomReset = document.getElementById('report-curve-zoom-reset');
+  const zoomLabel = document.getElementById('report-curve-zoom-label');
+  if (!card || !button || !select || !canvas) return;
+
+  if (!Number.isFinite(window._reportCurveZoom)) window._reportCurveZoom = 1;
+
+  const ordered = (reportLogs || []).slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const soldFor = l => (Number(l.soldEggs ?? l.soldTotal ?? 0) ||
+    ((Number(l.soldGroups) || 0) * 12 + (Number(l.soldSingle) || 0))) +
+    (Number(l.brokenEggs ?? l.broken) || 0);
+  const pointsFor = metric => {
+    let runningProduced = 0;
+    let runningSold = 0;
+    return ordered.map(l => {
+      runningProduced += Number(l.produced) || 0;
+      runningSold += soldFor(l);
+      const values = {
+        produced: Number(l.produced) || 0,
+        dead: Number(l.dead) || 0,
+        price: Number(l.price) || 0,
+        income: (Number(l.income) || 0) + (Number(l.specialIncome) || 0),
+        sold: soldFor(l),
+        feedUsed: Number(l.feedUsed) || 0,
+        remaining: Math.max(0, (Number(l.totalProduction) || runningProduced) - runningSold)
+      };
+      return { date: l.date, value: Math.max(0, values[metric] || 0) };
+    });
+  };
+  const labels = {
+    produced: 'الإنتاج', dead: 'النفوق', price: 'سعر البيع', income: 'المدخول',
+    sold: 'البيض المباع والمكسور', feedUsed: 'الشعير المستهلك', remaining: 'البيض المتبقي'
+  };
+  const colors = { produced: '#f5c518', dead: '#fc8181', price: '#63b3ed', income: '#48bb78', sold: '#b794f4', feedUsed: '#f6ad55', remaining: '#4ade80' };
+
+  const draw = () => {
+    const metric = select.value || 'produced';
+    const points = pointsFor(metric);
+    const zoom = Math.max(0.7, Math.min(2.4, Number(window._reportCurveZoom) || 1));
+    const containerWidth = Math.max(320, Math.floor(canvas.parentElement?.clientWidth || 700));
+    // Give every day a readable horizontal slot. The wrapper scrolls only when
+    // needed, so zooming never forces the labels to overlap.
+    const width = Math.max(containerWidth, Math.floor(Math.max(48, 48 * zoom) * Math.max(points.length, 8)));
+    const height = Math.floor(330 * zoom);
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    const pad = { left: 56, right: 18, top: 22, bottom: 48 };
+    const plotW = width - pad.left - pad.right;
+    const plotH = height - pad.top - pad.bottom;
+    const max = Math.max(1, ...points.map(p => p.value));
+    const color = colors[metric] || '#f5c518';
+    ctx.font = '12px Cairo, sans-serif';
+    ctx.direction = 'rtl';
+    ctx.strokeStyle = 'rgba(148,163,184,.16)';
+    ctx.fillStyle = '#8fa4c1';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad.top + plotH - (plotH * i / 4);
+      ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(width - pad.right, y); ctx.stroke();
+      ctx.textAlign = 'right'; ctx.fillText(fmt(Math.round(max * i / 4)), pad.left - 8, y + 4);
+    }
+    if (!points.length) {
+      ctx.textAlign = 'center'; ctx.fillStyle = '#8fa4c1'; ctx.fillText('لا توجد بيانات للرسم', width / 2, height / 2);
+      if (details) details.innerHTML = '<span>لا توجد سجلات يومية متاحة.</span>';
+      return;
+    }
+    const step = points.length > 1 ? plotW / (points.length - 1) : plotW / 2;
+    const xAt = i => points.length > 1 ? pad.left + step * i : pad.left + plotW / 2;
+    const yAt = v => pad.top + plotH - (v / max) * plotH;
+    const barW = Math.max(3, Math.min(24, plotW / Math.max(points.length * 2, 8)));
+    ctx.fillStyle = `${color}22`;
+    points.forEach((p, i) => ctx.fillRect(xAt(i) - barW / 2, yAt(p.value), barW, pad.top + plotH - yAt(p.value)));
+    ctx.beginPath();
+    points.forEach((p, i) => { const x = xAt(i), y = yAt(p.value); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+    points.forEach((p, i) => { ctx.beginPath(); ctx.arc(xAt(i), yAt(p.value), 4, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill(); });
+    ctx.fillStyle = '#8fa4c1'; ctx.textAlign = 'center';
+    const labelEvery = Math.max(1, Math.ceil(points.length / Math.max(4, Math.floor(plotW / 78))));
+    const shortDate = value => {
+      const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      return match ? `${match[3]}/${match[2]}` : fmtDate(value);
+    };
+    points.forEach((p, i) => { if (i % labelEvery === 0 || i === points.length - 1) ctx.fillText(shortDate(p.date), xAt(i), height - 18); });
+    const values = points.map(p => p.value);
+    const total = values.reduce((s, v) => s + v, 0);
+    const average = values.length ? total / values.length : 0;
+    if (details) details.innerHTML = `<span class="curve-detail-title" style="color:${color}">${labels[metric]}</span><span>أعلى قيمة: <b>${fmt(Math.max(...values))}</b></span><span>المتوسط اليومي: <b>${fmt(Math.round(average))}</b></span><span>عدد الأيام: <b>${fmt(values.length)}</b></span>`;
+  };
+  button.onclick = () => {
+    const opening = card.hidden;
+    card.hidden = !opening;
+    button.textContent = opening ? '📉 إخفاء المنحنيات' : '📈 عرض المنحنيات';
+    if (opening) requestAnimationFrame(draw);
+  };
+  select.onchange = draw;
+  const updateZoom = amount => {
+    window._reportCurveZoom = Math.max(0.7, Math.min(2.4, Number(amount) || 1));
+    if (zoomLabel) zoomLabel.textContent = `${Math.round(window._reportCurveZoom * 100)}%`;
+    if (!card.hidden) requestAnimationFrame(draw);
+  };
+  zoomOut.onclick = () => updateZoom((window._reportCurveZoom || 1) - 0.2);
+  zoomIn.onclick = () => updateZoom((window._reportCurveZoom || 1) + 0.2);
+  zoomReset.onclick = () => updateZoom(1);
+  if (zoomLabel) zoomLabel.textContent = `${Math.round(window._reportCurveZoom * 100)}%`;
+  if (!card.hidden) requestAnimationFrame(draw);
+}
+
 /* ===================== REPORTS PAGE ===================== */
 function renderReportsPage() {
-  const logs = DB.get('daily_logs') || [];
-  const now = new Date();
-  const monthLogs = logs.filter(l => {
-    const d = new Date(l.date);
-    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-  });
-
-  const totalIncome = monthLogs.reduce((s, l) => s + (Number(l.income) || 0), 0);
-  const totalProd = monthLogs.reduce((s, l) => s + (Number(l.produced) || 0), 0);
-  const totalNet = monthLogs.reduce((s, l) => s + (Number(l.netEggs) || 0), 0);
-  const totalBroken = monthLogs.reduce((s, l) => s + (Number(l.broken) || 0), 0);
-  const totalDead = monthLogs.reduce((s, l) => s + (Number(l.dead) || 0), 0);
-  const brokenLoss = getTotalBrokenLossThisMonth();
-  const totalAdv = getTotalAdvances();
-  const totalKartons = monthLogs.reduce((s, l) => s + (Number(l.koliates) || 0), 0);
-  const totalFeedCost = logs.reduce((s, l) => s + (Number(l.feedCost) || 0), 0);
-
-  const summary = document.getElementById('monthly-summary');
-  summary.innerHTML = `
-    <div class="report-stat"><div class="rs-val">${fmt(totalIncome, 'دج')}</div><div class="rs-lbl">إجمالي المداخيل</div></div>
-    <div class="report-stat"><div class="rs-val">${fmt(totalProd)}</div><div class="rs-lbl">إجمالي المنتج (بلاكة)</div></div>
-    <div class="report-stat"><div class="rs-val">${fmt(totalNet)}</div><div class="rs-lbl">إجمالي الصافي</div></div>
-    <div class="report-stat"><div class="rs-val">${fmt(totalKartons)}</div><div class="rs-lbl">إجمالي الكرطونات</div></div>
-    <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(totalFeedCost, 'دج')}</div><div class="rs-lbl">تكلفة الشعير الكلية</div></div>
-    <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(totalBroken)}</div><div class="rs-lbl">إجمالي المكسور</div></div>
-    <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(brokenLoss, 'دج')}</div><div class="rs-lbl">خسارة الكسر</div></div>
-    <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(totalDead)}</div><div class="rs-lbl">إجمالي النفوق</div></div>
-    <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(totalAdv, 'دج')}</div><div class="rs-lbl">إجمالي السلف</div></div>
-  `;
-
-  const tbody = document.getElementById('prod-tbody');
-  const sorted = [...logs].sort((a, b) => new Date(b.date) - new Date(a.date));
-  if (!sorted.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="empty-cell">لا توجد سجلات</td></tr>';
+  // Stable report renderer for imported Excel data.  Keep this path isolated
+  // from legacy report widgets so one malformed historical row cannot crash
+  // navigation to the reports page.
+  {
+    const reportLogs = (DB.get('daily_logs') || []).filter(l => l && typeof l === 'object' && l.date);
+    const saleWithBreakage = l =>
+      (l.soldEggs !== undefined ? Number(l.soldEggs) : Number(l.soldTotal) ||
+        ((Number(l.soldGroups) || 0) * 12 + (Number(l.soldSingle) || 0))) +
+      (Number(l.brokenEggs) || Number(l.broken) || 0);
+    const totalProduced = reportLogs.reduce((s, l) => s + (Number(l.produced) || 0), 0);
+    const totalSold = reportLogs.reduce((s, l) => s + saleWithBreakage(l), 0);
+    const totalBroken = reportLogs.reduce((s, l) => s + (Number(l.brokenEggs) || Number(l.broken) || 0), 0);
+    const totalNet = reportLogs.reduce((s, l) => s + (Number(l.netEggs) || Math.max(0, (Number(l.produced) || 0) - (Number(l.brokenEggs) || Number(l.broken) || 0))), 0);
+    const totalKartons = reportLogs.reduce((s, l) => s + (Number(l.soldGroups) || 0), 0);
+    const totalSpecial = reportLogs.reduce((s, l) => s + (Number(l.specialEggs) || 0), 0);
+    const totalSpecialSold = reportLogs.reduce((s, l) => s + (Number(l.specialSold) || 0), 0);
+    const totalFeedIn = reportLogs.reduce((s, l) => s + (Number(l.feedIn) || 0), 0);
+    const totalFeedUsed = reportLogs.reduce((s, l) => s + (Number(l.feedUsed) || 0), 0);
+    const totalDead = reportLogs.reduce((s, l) => s + (Number(l.dead) || 0), 0);
+    const cumulative = reportLogs.reduce((m, l) => Math.max(m, Number(l.totalProduction) || 0), 0);
+    const nowKey = todayStr().slice(0, 7);
+    const monthLogs = reportLogs.filter(l => String(l.date).slice(0, 7) === nowKey);
+    const monthProduced = monthLogs.reduce((s, l) => s + (Number(l.produced) || 0), 0);
+    const monthSold = monthLogs.reduce((s, l) => s + saleWithBreakage(l), 0);
+    const monthKartons = monthLogs.reduce((s, l) => s + (Number(l.soldGroups) || 0), 0);
+    const monthSpecial = monthLogs.reduce((s, l) => s + (Number(l.specialEggs) || 0), 0);
+    const monthSpecialSold = monthLogs.reduce((s, l) => s + (Number(l.specialSold) || 0), 0);
+    const monthFeedUsed = monthLogs.reduce((s, l) => s + (Number(l.feedUsed) || 0), 0);
+    const monthDead = monthLogs.reduce((s, l) => s + (Number(l.dead) || 0), 0);
+    const monthCumulative = monthLogs.reduce((m, l) => Math.max(m, Number(l.totalProduction) || 0), 0);
+    const monthRemaining = Math.max(0, (monthCumulative || monthProduced) - monthSold);
+    // The current stock belongs to the latest period.  Do not subtract
+    // historical months' sales from the latest month's cumulative balance.
+    const remaining = monthRemaining;
+    const totalSummary = document.getElementById('total-summary');
+    const monthSummary = document.getElementById('monthly-summary');
+    const specialRemaining = Math.max(0, totalSpecial - totalSpecialSold);
+    const monthSpecialRemaining = Math.max(0, monthSpecial - monthSpecialSold);
+    if (totalSummary) totalSummary.innerHTML = `
+      <div class="report-stat"><div class="rs-val">${fmt(reportLogs.length)}</div><div class="rs-lbl">إجمالي الأيام</div></div>
+      <div class="report-stat"><div class="rs-val">${fmt(totalProduced)}</div><div class="rs-lbl">إجمالي المنتج (بلاكة)</div></div>
+      <div class="report-stat"><div class="rs-val">${fmt(totalNet)}</div><div class="rs-lbl">إجمالي الصافي</div></div>
+      <div class="report-stat"><div class="rs-val">${fmt(totalKartons)}</div><div class="rs-lbl">إجمالي الكرطونات</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--green)">${fmt(totalSold)}</div><div class="rs-lbl">المبيعات (المباع والمكسور)</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--gold)">${fmt(totalSpecial)}</div><div class="rs-lbl">بيض خاص ⭐</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:#4ade80">${fmt(remaining)}</div><div class="rs-lbl">البيض المتبقي العادي</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--gold)">${fmt(totalSpecialSold)}</div><div class="rs-lbl">مبيعات البيض الخاص</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--gold)">${fmt(specialRemaining)}</div><div class="rs-lbl">المتبقي من الخاص</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(totalFeedIn)}</div><div class="rs-lbl">العلف الداخل (كغ)</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(totalFeedUsed)}</div><div class="rs-lbl">العلف المستهلك (كغ)</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(totalBroken)}</div><div class="rs-lbl">إجمالي المكسور</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(totalDead)}</div><div class="rs-lbl">إجمالي النفوق</div></div>`;
+    if (monthSummary) monthSummary.innerHTML = `
+      <div class="report-stat"><div class="rs-val">${fmt(monthProduced)}</div><div class="rs-lbl">المنتج هذا الشهر</div></div>
+      <div class="report-stat"><div class="rs-val">${fmt(monthKartons)}</div><div class="rs-lbl">الكرطونات هذا الشهر</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--green)">${fmt(monthSold)}</div><div class="rs-lbl">مبيعات الشهر</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:#4ade80">${fmt(monthRemaining)}</div><div class="rs-lbl">البيض المتبقي العادي</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--gold)">${fmt(monthSpecialSold)}</div><div class="rs-lbl">مبيعات الخاص هذا الشهر</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--gold)">${fmt(monthSpecialRemaining)}</div><div class="rs-lbl">المتبقي من الخاص</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(monthFeedUsed)}</div><div class="rs-lbl">الاستهلاك هذا الشهر</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(monthDead)}</div><div class="rs-lbl">النفوق هذا الشهر</div></div>`;
+    const tbody = document.getElementById('unified-tbody');
+    if (tbody) {
+      tbody.innerHTML = reportLogs.slice().sort((a, b) => String(b.date).localeCompare(String(a.date))).map(l => `
+        <tr><td>${fmtDate(l.date)}</td><td>${fmt(l.produced)}</td><td>${fmt(l.soldGroups)}</td>
+        <td>${fmt(l.soldSingle)}</td><td style="color:var(--red)">${fmt(l.brokenEggs ?? l.broken)}</td>
+        <td style="color:var(--green)">${fmt(l.soldEggs ?? l.soldTotal ?? 0)}</td>
+        <td style="color:var(--gold)">${fmt(l.specialEggs ?? 0)}</td><td>${fmt(l.dead)}</td>
+        <td>${fmt(l.feedIn)}</td><td>${fmt(l.feedUsed)}</td><td>${l.notes || '—'}</td><td>—</td></tr>`).join('') ||
+        '<tr><td colspan="12" class="empty-cell">لا توجد سجلات</td></tr>';
+    }
+    renderReportCurves(reportLogs);
     return;
   }
-  tbody.innerHTML = '';
-  sorted.forEach(log => {
-    const tr = document.createElement('tr');
-    const enteredBadge = log.enteredBy
-      ? `<span class="entered-by-badge">👷 ${log.enteredBy}</span>` : '';
-    tr.innerHTML = `
-      <td>${fmtDate(log.date)}</td>
-      <td>${fmt(log.produced)}</td>
-      <td><span style="color:var(--red)">${fmt(log.broken)}</span></td>
-      <td><strong style="color:var(--green)">${fmt(log.netEggs)}</strong></td>
-      <td>${fmt(log.koliates)}</td>
-      <td>${fmt(log.singleLeft)}</td>
-      <td>${log.dead > 0 ? `<span style="color:var(--red)">💀 ${log.dead}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
-      <td style="font-size:0.8rem">${enteredBadge}</td>
-      <td style="color:var(--text-secondary);font-size:0.8rem">${log.notes || '—'}</td>
-      <td class="admin-only"><button class="btn btn-danger btn-sm btn-delete-log-rep" data-id="${log.id}">🗑</button></td>
+
+  // === Inject fresh CSS for report-grid (bypasses any cached stylesheet) ===
+  (function() {
+    var old = document.getElementById('__report-grid-style__');
+    if (old) old.remove();
+    var s = document.createElement('style');
+    s.id = '__report-grid-style__';
+    s.textContent = `
+      .report-grid {
+        display: grid !important;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) !important;
+        gap: 12px !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+        overflow: visible !important;
+      }
+      .report-stat {
+        background: var(--bg-card2, #1a2035) !important;
+        border-radius: 10px !important;
+        border: 1px solid var(--border, rgba(255,255,255,0.08)) !important;
+        padding: 14px 10px !important;
+        text-align: center !important;
+        min-width: 0 !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+      }
+      .report-stat .rs-val {
+        font-size: 1.15rem !important;
+        font-weight: 900 !important;
+        color: var(--gold, #f5c518) !important;
+        word-break: break-all !important;
+      }
+      .report-stat .rs-lbl {
+        font-size: 0.74rem !important;
+        color: var(--text-secondary, #8899aa) !important;
+        margin-top: 4px !important;
+        line-height: 1.3 !important;
+      }
     `;
-    tbody.appendChild(tr);
-  });
-  tbody.querySelectorAll('.btn-delete-log-rep').forEach(btn => {
-    btn.addEventListener('click', () => deleteLogById(Number(btn.dataset.id)));
+    document.head.appendChild(s);
+  })();
+
+  const logs = (DB.get('daily_logs') || []).filter(l => l && typeof l === 'object');
+  
+  // === 1. Total Summary (All Time) ===
+  const totalDays = logs.length;
+  const totalProduced = logs.reduce((s, l) => s + (Number(l.produced) || 0), 0);
+  const totalBroken = logs.reduce((s, l) => s + (Number(l.broken) || 0), 0);
+  const totalNet = logs.reduce((s, l) => s + (Number(l.netEggs) || 0), 0);
+  const totalKartons = logs.reduce((s, l) => s + (Number(l.soldGroups) || 0), 0);
+  const totalDead = logs.reduce((s, l) => s + (Number(l.dead) || 0), 0);
+  const totalFeedIn = logs.reduce((s, l) => s + (Number(l.feedIn) || 0), 0);
+  const totalFeedUsed = logs.reduce((s, l) => s + (Number(l.feedUsed) || 0), 0);
+  // The spreadsheet's "egg sales" column includes both sold and broken
+  // eggs.  Keep the two fields for daily detail, but use their combined
+  // quantity for stock and all-time/monthly summaries.
+  const totalSoldEggs = logs.reduce((s, l) => s +
+    (Number(l.soldEggs) || Number(l.income) || 0) + (Number(l.brokenEggs) || Number(l.broken) || 0), 0);
+  const totalSpecial = logs.reduce((s, l) => s + (Number(l.specialEggs) || ((Number(l.specialPlates)||0)*30 + (Number(l.specialSingles)||0)) || 0), 0);
+  // البيض المتبقي = المنتج - المكسور - المباع - المجاني
+  // Imported workbooks carry an opening balance in totalProduction.  The
+  // remaining stock is that cumulative balance less the combined sales and
+  // breakage, not the sum of daily production alone.
+  const cumulativeProduction = logs.reduce((max, l) => Math.max(max, Number(l.totalProduction) || 0), 0);
+  const remainingBase = cumulativeProduction > 0 ? cumulativeProduction : totalProduced;
+  const totalRemaining = Math.max(0, remainingBase - totalSoldEggs);
+  const totalSpecialSold = logs.reduce((s, l) => s + (Number(l.specialSold) || 0), 0);
+  const totalRemainingSpecial = Math.max(0, totalSpecial - totalSpecialSold);
+
+  const totalSummary = document.getElementById('total-summary');
+  if (totalSummary) {
+    totalSummary.innerHTML = `
+      <div class="report-stat"><div class="rs-val">${totalDays}</div><div class="rs-lbl">إجمالي الأيام</div></div>
+      <div class="report-stat"><div class="rs-val">${fmt(totalProduced)}</div><div class="rs-lbl">إجمالي المنتج (بلاكة)</div></div>
+      <div class="report-stat"><div class="rs-val">${fmt(totalNet)}</div><div class="rs-lbl">إجمالي الصافي (بلاكة)</div></div>
+      <div class="report-stat"><div class="rs-val">${fmt(totalKartons)}</div><div class="rs-lbl">إجمالي الكرطونات</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--green)">${fmt(totalSoldEggs)}</div><div class="rs-lbl">المبيعات (بلاكة)</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--gold)">${fmt(totalSpecial)}</div><div class="rs-lbl">بيض خاص ⭐</div></div>
+      <div class="report-stat" style="border-color:rgba(100,220,130,0.35)"><div class="rs-val" style="color:#4ade80">${fmt(totalRemaining)}</div><div class="rs-lbl">🥚 البيض المتبقي (عادي)</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--gold)">${fmt(totalSpecialSold)}</div><div class="rs-lbl">🌟 مبيعات البيض الخاص</div></div>
+      <div class="report-stat" style="border-color:rgba(255,215,0,0.3)"><div class="rs-val" style="color:var(--gold)">${fmt(totalRemainingSpecial)}</div><div class="rs-lbl">🌟 المتبقي من الخاص</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(totalFeedIn)}</div><div class="rs-lbl">العلف الداخل (كغ)</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(totalFeedUsed)}</div><div class="rs-lbl">العلف المستهلك (كغ)</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(totalBroken)}</div><div class="rs-lbl">إجمالي المكسور</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(totalDead)}</div><div class="rs-lbl">إجمالي النفوق</div></div>
+    `;
+  }
+
+  // === 2. Monthly Summary ===
+  const now = new Date();
+  const monthLogs = logs.filter(l => {
+    if (!l.date) return false;
+    // Handle YYYY-MM-DD reliably
+    const [y, m, d] = l.date.split('-');
+    if (y && m) {
+      return parseInt(m, 10) === now.getMonth() + 1 && parseInt(y, 10) === now.getFullYear();
+    }
+    return false;
   });
 
-  // Render Partner Summary
+  const mProduced = monthLogs.reduce((s, l) => s + (Number(l.produced) || 0), 0);
+  const mBroken = monthLogs.reduce((s, l) => s + (Number(l.broken) || 0), 0);
+  const mNet = monthLogs.reduce((s, l) => s + (Number(l.netEggs) || 0), 0);
+  const mKartons = monthLogs.reduce((s, l) => s + (Number(l.soldGroups) || 0), 0);
+  const mDead = monthLogs.reduce((s, l) => s + (Number(l.dead) || 0), 0);
+  const mFeedIn = monthLogs.reduce((s, l) => s + (Number(l.feedIn) || 0), 0);
+  const mFeedUsed = monthLogs.reduce((s, l) => s + (Number(l.feedUsed) || 0), 0);
+  const mSoldEggs = monthLogs.reduce((s, l) => s +
+    (Number(l.soldEggs) || Number(l.income) || 0) + (Number(l.brokenEggs) || Number(l.broken) || 0), 0);
+  const mSpecial = monthLogs.reduce((s, l) => s + (Number(l.specialEggs) || ((Number(l.specialPlates)||0)*30 + (Number(l.specialSingles)||0)) || 0), 0);
+  const monthCumulativeProduction = monthLogs.reduce((max, l) => Math.max(max, Number(l.totalProduction) || 0), 0);
+  const mRemainingBase = monthCumulativeProduction > 0 ? monthCumulativeProduction : mProduced;
+  const mRemaining = Math.max(0, mRemainingBase - mSoldEggs);
+  const mSpecialSold = monthLogs.reduce((s, l) => s + (Number(l.specialSold) || 0), 0);
+  const mRemainingSpecial = Math.max(0, mSpecial - mSpecialSold);
+
+  const monthSummary = document.getElementById('monthly-summary');
+  if (monthSummary) {
+    monthSummary.innerHTML = `
+      <div class="report-stat"><div class="rs-val">${fmt(mProduced)}</div><div class="rs-lbl">المنتج هذا الشهر</div></div>
+      <div class="report-stat"><div class="rs-val">${fmt(mKartons)}</div><div class="rs-lbl">الكرطونات هذا الشهر</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--green)">${fmt(mSoldEggs)}</div><div class="rs-lbl">مبيعات الشهر</div></div>
+      <div class="report-stat" style="border-color:rgba(100,220,130,0.35)"><div class="rs-val" style="color:#4ade80">${fmt(mRemaining)}</div><div class="rs-lbl">🥚 البيض المتبقي (عادي)</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--gold)">${fmt(mSpecialSold)}</div><div class="rs-lbl">🌟 مبيعات الخاص (الشهر)</div></div>
+      <div class="report-stat" style="border-color:rgba(255,215,0,0.3)"><div class="rs-val" style="color:var(--gold)">${fmt(mRemainingSpecial)}</div><div class="rs-lbl">🌟 المتبقي من الخاص</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(mFeedUsed)}</div><div class="rs-lbl">الاستهلاك هذا الشهر</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(mDead)}</div><div class="rs-lbl">النفوق هذا الشهر</div></div>
+    `;
+  }
+
+  // === 3. Unified Table (with missing date fill) ===
+  const tbody = document.getElementById('unified-tbody');
+  if (tbody) {
+    // Build a map of existing logs by date
+    const logByDate = {};
+    logs.forEach(l => { if (l.date) logByDate[l.date] = l; });
+
+    // Generate all dates from first log to today
+    let allDates = [];
+    if (logs.length > 0) {
+      const firstDate = parseDateKey(logs.reduce((mn, l) => (!mn || l.date < mn) ? l.date : mn, null));
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      for (let d = new Date(firstDate); d <= today; d.setDate(d.getDate() + 1)) {
+        allDates.push(dateKeyLocal(d));
+      }
+    }
+    allDates.reverse(); // newest first
+
+    // Merge: use existing log or empty placeholder
+    const sorted = allDates.map(dateStr => logByDate[dateStr] || {
+      date: dateStr, produced: 0, broken: 0, netEggs: 0, soldGroups: 0, soldSingle: 0,
+      soldEggs: 0, specialEggs: 0, dead: 0, feedIn: 0, feedUsed: 0, notes: '', id: null,
+      _empty: true
+    });
+
+    if (!sorted.length) {
+      tbody.innerHTML = '<tr><td colspan="12" class="empty-cell">لا توجد سجلات</td></tr>';
+    } else {
+      tbody.innerHTML = '';
+      sorted.forEach(log => {
+        const tr = document.createElement('tr');
+        
+        const soldDisplay = (log.soldEggs !== undefined) ? log.soldEggs : log.income;
+        const specDisplay = (log.specialEggs !== undefined) ? log.specialEggs : log.specialIncome;
+        
+        tr.innerHTML = `
+          <td>${fmtDate(log.date)}</td>
+          <td>${fmt(log.produced)}</td>
+          <td>${fmt(log.soldGroups)}</td>
+          <td>${fmt(log.soldSingle)}</td>
+          <td><span style="color:var(--red)">${fmt(log.broken)}</span></td>
+          <td><strong style="color:var(--green)">${fmt(soldDisplay)}</strong></td>
+          <td><strong style="color:var(--gold)">${fmt(specDisplay)}</strong></td>
+          <td>${log.dead > 0 ? `<span style="color:var(--red)">💀 ${log.dead}</span>` : '<span style="color:var(--text-muted)">—</span>'}</td>
+          <td><span style="color:var(--blue)">${fmt(log.feedIn)}</span></td>
+          <td><span style="color:var(--orange)">${fmt(log.feedUsed)}</span></td>
+          <td style="color:var(--text-secondary);font-size:0.8rem;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${log.notes || ''}">${log.notes || '—'}</td>
+          <td class="admin-only" style="display:flex;gap:4px;">
+            <button class="btn btn-sm btn-edit-log-rep" data-date="${log.date}" style="background:var(--blue);color:white;border:none;border-radius:4px;padding:4px 8px;cursor:pointer;">✏️ تعديل</button>
+            <button class="btn btn-danger btn-sm btn-delete-log-rep" data-id="${log.id}">🗑</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+      
+      tbody.querySelectorAll('.btn-delete-log-rep').forEach(btn => {
+        btn.addEventListener('click', () => deleteLogById(Number(btn.dataset.id)));
+      });
+      tbody.querySelectorAll('.btn-edit-log-rep').forEach(btn => {
+        btn.addEventListener('click', () => window.editLogByDate(btn.dataset.date));
+      });
+    }
+  }
+
+  // Render Partner Summary (remains unchanged)
   const settings = DB.get('settings') || defaultSettings();
   renderPartnerFinancialSummary(logs, settings);
+}
+
+// ====== Clear daily logs and trigger reimport ======
+window.clearAndReimportLogs = async function() {
+  if (!confirm('سيتم مسح جميع بيانات التقارير الحالية وإعادة استيرادها من الملف الجديد. هل أنت متأكد؟')) return;
+  const uid = CURRENT_USER && CURRENT_USER.uid;
+  const fid = CURRENT_FACTORY && CURRENT_FACTORY.id;
+  if (!uid || !fid) { showToast('حدث خطأ، يرجى إعادة الدخول للمصنع', 'error'); return; }
+  
+  // Clear localStorage
+  localStorage.removeItem('zohir_' + fid + '_daily_logs');
+  DB.set('daily_logs', []);
+  
+  // Clear Firestore if available
+  if (typeof fs !== 'undefined' && auth.currentUser) {
+    fs.collection('app_data').doc(fid + '_daily_logs').delete().catch(function(){});
+  }
+  showToast('تم مسح السجلات. يرجى اختيار ملف Excel الآن...', 'info');
+  
+  // Open file picker
+  var inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.xlsx,.xls,.csv';
+  inp.onchange = async function(e) {
+    var f = e.target.files[0];
+    if (f) {
+      await handleFactoryImport(f);
+      window.location.reload(); // Force reload to ensure DB memory is updated and page is fresh
+    }
+  };
+  inp.click();
 }
 
 function renderPartnerFinancialSummary(logs, settings) {
@@ -5022,7 +5451,7 @@ function renderPartnerFinancialSummary(logs, settings) {
   let monthsDiff = 1;
   if (logs.length > 0) {
     const sorted = [...logs].sort((a, b) => a.date.localeCompare(b.date));
-    const firstDate = new Date(sorted[0].date);
+    const firstDate = parseDateKey(sorted[0].date);
     const now = new Date();
     monthsDiff = Math.max(1, (now.getFullYear() - firstDate.getFullYear()) * 12 + (now.getMonth() - firstDate.getMonth()) + 1);
   }
@@ -5417,6 +5846,56 @@ function resetAllData() {
     });
 }
 
+
+window.editLogByDate = function(dateStr) {
+  const logs = DB.get('daily_logs') || [];
+  const log = logs.find(l => l.date === dateStr);
+  
+  showPage('daily');
+  document.getElementById('inp-date').value = dateStr;
+  
+  if (log) {
+    document.getElementById('inp-produced').value = log.produced || '';
+    document.getElementById('inp-broken').value = log.broken || '';
+    document.getElementById('inp-sold-total').value = log.soldEggs || log.income || '';
+    document.getElementById('inp-special-plates').value = log.specialEggs || log.specialPlates || '';
+    document.getElementById('inp-special-sold').value = log.specialSold || '';
+    document.getElementById('inp-feed-in').value = log.feedIn || '';
+    document.getElementById('inp-feed-used').value = log.feedUsed || '';
+    document.getElementById('inp-dead').value = log.dead || '';
+    document.getElementById('inp-notes').value = log.notes || '';
+    document.getElementById('inp-owner-advance').value = log.ownerAdvance || '';
+    // Optional prices/other fields if they exist
+    document.getElementById('inp-price').value = log.price || '';
+  } else {
+    document.getElementById('inp-produced').value = '';
+    document.getElementById('inp-broken').value = '';
+    document.getElementById('inp-sold-total').value = '';
+    document.getElementById('inp-special-plates').value = '';
+    document.getElementById('inp-special-sold').value = '';
+    document.getElementById('inp-feed-in').value = '';
+    document.getElementById('inp-feed-used').value = '';
+    document.getElementById('inp-dead').value = '';
+    document.getElementById('inp-notes').value = '';
+    document.getElementById('inp-owner-advance').value = '';
+    document.getElementById('inp-price').value = '';
+  }
+  
+  // Trigger calculations to update totals visually
+  const evt = new Event('input');
+  document.getElementById('inp-produced').dispatchEvent(evt);
+  
+  showToast('يمكنك تعديل بيانات يوم ' + fmtDate(dateStr) + ' الآن', 'info');
+  window.scrollTo(0,0);
+  
+  const btnSave = document.getElementById('btn-save-day');
+  if (btnSave) {
+    btnSave.innerText = '💾 حفظ التعديلات والعودة للتقارير';
+    btnSave.dataset.editMode = 'true';
+    btnSave.classList.add('daily-save-visible');
+  }
+}
+
 /* ===================== BOOTSTRAP ===================== */
 document.addEventListener('DOMContentLoaded', () => {
   // Init password modal listeners
@@ -5788,7 +6267,7 @@ function renderCyclesPage() {
 
 /* ---------- New Cycle Modal ---------- */
 function openNewCycleModal() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayStr();
   document.getElementById('nc-start-date').value = today;
   document.getElementById('nc-name').value = `الدورة ${BroilerDB.getCycles().length + 1}`;
   ['nc-chicks','nc-chick-price','nc-supplier','nc-target-weight','nc-bedding-cost','nc-heating-cost'].forEach(id => {
@@ -5868,7 +6347,7 @@ function confirmCompleteCycle() {
   const cycle = cycles[idx];
   const logs  = BroilerDB.getLogsForCycle(cycle.id);
   cycle.status       = 'completed';
-  cycle.endDate      = new Date().toISOString().split('T')[0];
+  cycle.endDate      = todayStr();
   cycle.totalDays    = getDayOfCycle(cycle);
   cycle.closingNotes = notes;
 
@@ -5921,7 +6400,7 @@ function initBroilerDailyPage() {
 
   // Set today's date
   const dateEl = document.getElementById('binp-date');
-  if (dateEl && !dateEl.value) dateEl.value = new Date().toISOString().split('T')[0];
+  if (dateEl && !dateEl.value) dateEl.value = todayStr();
 
   updateBroilerCalc();
   renderBroilerRecentTable(cycle.id);
@@ -6211,7 +6690,7 @@ function updateSlaughterCalc() {
 }
 
 function openAddSlaughterModal() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayStr();
   document.getElementById('sl-date').value = today;
   ['sl-count','sl-live-weight','sl-price-per-kg','sl-buyer','sl-paid-amount'].forEach(id => {
     const el = document.getElementById(id); if (el) el.value = '';
@@ -6561,7 +7040,7 @@ function openBroilerPartnerExpense(partnerId) {
   if (title) title.textContent = `💸 معاملة — ${partner?.name || ''}`;
   document.getElementById('bpe-amount').value = '';
   document.getElementById('bpe-note').value   = '';
-  document.getElementById('bpe-date').value   = new Date().toISOString().split('T')[0];
+  document.getElementById('bpe-date').value   = todayStr();
   document.getElementById('bpe-type').value   = 'expense';
   document.getElementById('modal-broiler-partner-expense').classList.add('open');
   setTimeout(() => document.getElementById('bpe-amount').focus(), 300);
@@ -6742,7 +7221,9 @@ function getBusinessContextForAI() {
   const sumLayerLogs = (items) => items.reduce((acc, l) => {
     const produced = Number(l.produced) || 0;
     const broken = Number(l.broken) || 0;
-    const soldPlates = Number(l.soldTotal) || ((Number(l.soldGroups) || 0) * 12) + (Number(l.soldSingle) || 0);
+    const explicitSold = l.soldEggs !== undefined ? Number(l.soldEggs) : Number(l.soldTotal);
+    const soldPlates = (explicitSold || ((Number(l.soldGroups) || 0) * 12) + (Number(l.soldSingle) || 0)) +
+      (Number(l.brokenEggs) || broken);
     const baseProfit = Number(l.baseProfit ?? l.profit) || 0;
     const netProfit = Number(l.profit ?? l.baseProfit) || 0;
 
@@ -6792,7 +7273,9 @@ function getBusinessContextForAI() {
   const allTimeSummary = sumLayerLogs(logs);
 
   const feedBalance = typeof getCurrentFeedBalance === 'function' ? getCurrentFeedBalance() : 0;
-  const eggStockPlates = allTimeSummary.netPlates - allTimeSummary.soldPlates - allTimeSummary.freePlates;
+  const cumulativeProduction = logs.reduce((max, l) => Math.max(max, Number(l.totalProduction) || 0), 0);
+  const eggStockPlates = (cumulativeProduction > 0 ? cumulativeProduction : allTimeSummary.netPlates) -
+    allTimeSummary.soldPlates - allTimeSummary.freePlates;
   const initialChickensCost = (Number(settings.initialChickens) || 0) * (Number(settings.chickenPrice) || 0);
   const initialFeedCost = (Number(settings.initialFeed) || 0) * (Number(settings.feedPrice) || 0);
   const effectiveRent = Math.max(0, (Number(settings.loyer) || 0) - (Number(settings.repairLoyer) || 0));
@@ -7283,3 +7766,842 @@ document.addEventListener('keydown', function(e) {
     }
   }
 });
+/* =====================================================================
+   EXIT FACTORY
+   ===================================================================== */
+function exitFactory() {
+  document.getElementById('factory-screen').classList.remove('hidden');
+  document.body.classList.remove('sidebar-open');
+  CURRENT_FACTORY = null;
+}
+
+/* =====================================================================
+   GLOBAL CREDITS SYSTEM
+   ===================================================================== */
+function toggleGlobalCredits() {
+  const popup = document.getElementById('global-credits-popup');
+  if (!popup) return;
+  if (popup.style.display !== 'none') {
+    popup.style.display = 'none';
+  } else {
+    popup.style.display = 'block';
+    renderGlobalCredits();
+  }
+}
+
+function getGlobalCreditsKey() {
+  const uid = EFFECTIVE_OWNER_UID || CURRENT_USER?.uid;
+  return `zohir_global_credits_${uid}`;
+}
+
+function getGlobalCredits() {
+  return JSON.parse(localStorage.getItem(getGlobalCreditsKey()) || '[]');
+}
+
+function setGlobalCredits(arr) {
+  localStorage.setItem(getGlobalCreditsKey(), JSON.stringify(arr));
+}
+
+function renderGlobalCredits() {
+  const contentEl = document.getElementById('global-credits-content');
+  if (!contentEl) return;
+  const credits = getGlobalCredits();
+
+  if (!credits.length) {
+    contentEl.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px">Ù„Ø§ ØªÙˆØ¬Ø¯ Ø£ÙŠ Ø¯ÙŠÙˆÙ† Ù…Ø³Ø¬Ù„Ø©.</div>';
+    return;
+  }
+
+  // Aggregate by client
+  const clients = {};
+  credits.forEach(c => {
+    const name = c.clientName || 'Ø¨Ø¯ÙˆÙ† Ø§Ø³Ù…';
+    if (!clients[name]) clients[name] = 0;
+    // debts are positive, payments are negative
+    if (c.type === 'payment') {
+      clients[name] -= Number(c.amount);
+    } else {
+      clients[name] += Number(c.amount);
+    }
+  });
+
+  const activeClients = Object.keys(clients); // Fixed to include all clients
+
+  if (!activeClients.length) {
+    contentEl.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px">Ù„Ø§ ØªÙˆØ¬Ø¯ Ø¯ÙŠÙˆÙ† Ù†Ø´Ø·Ø©.</div>';
+    return;
+  }
+
+  let html = '<div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(200px, 1fr));gap:12px">';
+  activeClients.forEach(clientName => {
+    const totalDebt = clients[clientName];
+    html += `
+      <div class="kpi-card" style="cursor:pointer;border:1px solid rgba(72,187,120,0.3)" onclick="showClientDetails('${clientName}')">
+        <div style="font-size:1.1rem;font-weight:700;margin-bottom:8px">ðŸ‘¤ ${clientName}</div>
+        <div style="color:var(--red);font-weight:800;font-size:1.2rem">${fmt(totalDebt, 'Ø¯Ø¬')}</div>
+        <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:6px">Ø§Ù†Ù‚Ø± Ù„Ø¹Ø±Ø¶ Ø§Ù„Ø³Ø¬Ù„ Ø¨Ø§Ù„ØªÙØµÙŠÙ„</div>
+      </div>
+    `;
+  });
+  html += '</div>';
+
+  contentEl.innerHTML = html;
+}
+
+function addManualGlobalCredit() {
+  const clientInput = document.getElementById('gcredit-client');
+  const amountInput = document.getElementById('gcredit-amount');
+  const descInput = document.getElementById('gcredit-desc');
+
+  const clientName = clientInput.value.trim();
+  const amount = Number(amountInput.value) || 0; // Fixed to allow 0 amount
+  const desc = descInput.value.trim();
+
+  if (!clientName) {
+    return showToast('Ø§Ù„Ø±Ø¬Ø§Ø¡ Ø¥Ø¯Ø®Ø§Ù„ Ø§Ø³Ù… Ø§Ù„Ø²Ø¨ÙˆÙ†', 'error');
+  }
+
+  const credits = getGlobalCredits();
+  credits.push({
+    id: Date.now(),
+    date: todayStr(),
+    clientName,
+    factoryId: 'manual',
+    factoryName: 'Ø¥Ø¶Ø§ÙØ© ÙŠØ¯ÙˆÙŠØ©',
+    description: desc || 'Ø¯ÙŠÙ† Ù…Ù† Ø¥Ø¶Ø§ÙØ© ÙŠØ¯ÙˆÙŠØ©',
+    amount,
+    type: 'debt'
+  });
+  setGlobalCredits(credits);
+
+  clientInput.value = '';
+  amountInput.value = '';
+  descInput.value = '';
+
+  showToast('ØªÙ… Ø¥Ø¶Ø§ÙØ© Ø§Ù„Ø¯ÙŠÙ† Ø¨Ù†Ø¬Ø§Ø­');
+  renderGlobalCredits();
+}
+
+let _currentViewClient = null;
+
+function showClientDetails(clientName) {
+  _currentViewClient = clientName;
+  const credits = getGlobalCredits().filter(c => c.clientName === clientName);
+  
+  // Sort by date desc
+  credits.sort((a, b) => parseDateKey(b.date) - parseDateKey(a.date));
+
+  const modal = document.getElementById('modal-client-credits');
+  document.getElementById('client-credits-title').textContent = `Ø³Ø¬Ù„ Ø§Ù„Ø¯ÙŠÙˆÙ† Ù„Ø²Ø¨ÙˆÙ†: ${clientName}`;
+  document.getElementById('client-pay-amount').value = '';
+
+  let html = `
+    <table class="data-table" style="margin-top:10px">
+      <thead>
+        <tr>
+          <th>Ø§Ù„ØªØ§Ø±ÙŠØ®</th>
+          <th>Ø§Ù„Ù…ØµØ¯Ø±</th>
+          <th>Ø§Ù„ÙˆØµÙ</th>
+          <th>Ø¯ÙŠÙ† (Ø£Ø®Ø°)</th>
+          <th>Ø³Ø¯Ø§Ø¯ (Ø¯ÙØ¹)</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+
+  let totalDebt = 0;
+  credits.forEach(c => {
+    const isPay = c.type === 'payment';
+    if (isPay) totalDebt -= Number(c.amount);
+    else totalDebt += Number(c.amount);
+
+    html += `
+      <tr>
+        <td>${fmtDate(c.date)}</td>
+        <td><span class="chip chip-gray">${c.factoryName || 'ØºÙŠØ± Ù…Ø­Ø¯Ø¯'}</span></td>
+        <td style="font-size:0.8rem">${c.description || '-'}</td>
+        <td style="color:var(--red)">${!isPay ? fmt(c.amount) : '-'}</td>
+        <td style="color:var(--green);font-weight:bold">${isPay ? fmt(c.amount) : '-'}</td>
+      </tr>
+    `;
+  });
+
+  html += `
+      <tr style="background:rgba(0,0,0,0.2)">
+        <td colspan="3" style="text-align:left;font-weight:bold">Ø§Ù„Ø±ØµÙŠØ¯ Ø§Ù„ÙƒÙ„ÙŠ:</td>
+        <td colspan="2" style="font-weight:bold;font-size:1.1rem;color:var(--red)">${fmt(totalDebt, 'Ø¯Ø¬')}</td>
+      </tr>
+      </tbody>
+    </table>
+  `;
+
+  document.getElementById('client-credits-history').innerHTML = html;
+  modal.classList.add('open');
+}
+
+function addGlobalCreditPayment() {
+  if (!_currentViewClient) return;
+  const amountInput = document.getElementById('client-pay-amount');
+  const amount = Number(amountInput.value);
+
+  if (!amount || amount <= 0) {
+    return showToast('Ø§Ù„Ø±Ø¬Ø§Ø¡ Ø¥Ø¯Ø®Ø§Ù„ Ù…Ø¨Ù„Øº ØµØ­ÙŠØ­', 'error');
+  }
+
+  const credits = getGlobalCredits();
+  credits.push({
+    id: Date.now(),
+    date: todayStr(),
+    clientName: _currentViewClient,
+    factoryId: 'payment',
+    factoryName: 'ØªØ³Ø¯ÙŠØ¯ Ø¯ÙŠÙˆÙ†',
+    description: 'ØªØ³Ø¯ÙŠØ¯ Ø¯ÙØ¹Ø© Ù†Ù‚Ø¯ÙŠØ©',
+    amount,
+    type: 'payment'
+  });
+  setGlobalCredits(credits);
+
+  amountInput.value = '';
+  showToast('ØªÙ… ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø¯ÙØ¹Ø© Ø¨Ù†Ø¬Ø§Ø­!');
+  showClientDetails(_currentViewClient); // refresh modal
+  renderGlobalCredits(); // refresh cards behind it
+}
+
+function deleteCurrentGlobalClient() {
+  if (!_currentViewClient) return;
+  if (!confirm(`Ù‡Ù„ Ø£Ù†Øª Ù…ØªØ£ÙƒØ¯ Ù…Ù† Ø­Ø°Ù Ø­Ø³Ø§Ø¨ Ø§Ù„Ø²Ø¨ÙˆÙ† "${_currentViewClient}" Ø¨Ø¬Ù…ÙŠØ¹ Ø¹Ù…Ù„ÙŠØ§ØªÙ‡ØŸ Ù„Ø§ ÙŠÙ…ÙƒÙ† Ø§Ù„ØªØ±Ø§Ø¬Ø¹ Ø¹Ù† Ù‡Ø°Ø§ Ø§Ù„Ø¥Ø¬Ø±Ø§Ø¡.`)) return;
+  
+  const credits = getGlobalCredits().filter(c => c.clientName !== _currentViewClient);
+  setGlobalCredits(credits);
+  
+  document.getElementById('modal-client-credits').classList.remove('open');
+  showToast('ØªÙ… Ø­Ø°Ù Ø­Ø³Ø§Ø¨ Ø§Ù„Ø²Ø¨ÙˆÙ† Ø¨Ù†Ø¬Ø§Ø­');
+  renderGlobalCredits();
+}
+
+function migrateCreditsOnce() {
+  const uid = EFFECTIVE_OWNER_UID || CURRENT_USER?.uid;
+  if (!uid) return;
+  const migratedKey = `zohir_credits_migrated_${uid}`;
+  if (localStorage.getItem(migratedKey)) return; // already migrated
+
+  const factoriesKey = `zohir_factories_${uid}`;
+  const factories = JSON.parse(localStorage.getItem(factoriesKey) || '[]');
+  
+  let globalCredits = getGlobalCredits();
+  let migratedCount = 0;
+
+  for (const f of factories) {
+    const localDbKey = `zohir_${uid}_${f.id}`;
+    const rawLocal = localStorage.getItem(localDbKey);
+    if (!rawLocal) continue;
+    
+    try {
+      const localObj = JSON.parse(rawLocal);
+      if (localObj.credits && Array.isArray(localObj.credits) && localObj.credits.length > 0) {
+        // Move local credits to global
+        localObj.credits.forEach(c => {
+          globalCredits.push({
+            id: c.id || Date.now() + Math.random(),
+            date: c.date || todayStr(),
+            clientName: c.clientName || 'Ø²Ø¨ÙˆÙ† Ù…Ù† Ø§Ù„Ø£Ø±Ø´ÙŠÙ',
+            factoryId: f.id,
+            factoryName: f.name,
+            description: c.description || 'Ù†Ù‚Ù„ Ù…Ù† Ø§Ù„Ù†Ø¸Ø§Ù… Ø§Ù„Ù‚Ø¯ÙŠÙ…',
+            amount: c.amount,
+            type: 'debt'
+          });
+          migratedCount++;
+        });
+        // Clear local credits
+        localObj.credits = [];
+        localStorage.setItem(localDbKey, JSON.stringify(localObj));
+      }
+    } catch(err) {
+      console.warn("Migration error on factory", f.id, err);
+    }
+  }
+
+  if (migratedCount > 0) {
+    setGlobalCredits(globalCredits);
+    console.log(`Migrated ${migratedCount} credits to global system.`);
+  }
+
+  localStorage.setItem(migratedKey, 'true');
+}
+
+
+
+window.factoryToDelete = null;
+window.confirmDeleteFactory = function(e, id, name) {
+  e.stopPropagation();
+  e.preventDefault();
+  window.factoryToDelete = { id: id, name: name };
+  const safeName = name.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  document.getElementById('delete-factory-message').innerHTML = `هل أنت متأكد من حذف هذا المصنع "<b>${safeName}</b>"؟<br><strong style="color:var(--red)">تأكيد نهائي: سيتم مسح جميع بيانات المصنع بشكل دائم.</strong>`;
+  document.getElementById('modal-delete-factory').classList.add('open');
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('btn-confirm-delete-factory')?.addEventListener('click', () => {
+    if (!window.factoryToDelete) return;
+    document.getElementById('modal-delete-factory').classList.remove('open');
+    FactoryDB.deleteFactory(window.factoryToDelete.id);
+    renderFactoryScreen();
+    showToast('تم حذف المصنع بنجاح', 'warning');
+    window.factoryToDelete = null;
+  });
+});
+
+
+window.toggleProfitSummary = function() {
+  const popup = document.getElementById('profit-summary-popup');
+  if (popup.style.display === 'none' || popup.style.display === '') {
+    popup.style.display = 'block';
+    renderGlobalProfitSummary();
+  } else {
+    popup.style.display = 'none';
+  }
+};
+
+window.renderGlobalProfitSummary = function() {
+  const container = document.getElementById('profit-summary-content');
+  if (!container) return;
+  
+  const allFactories = FactoryDB.getFactories();
+  let totalFaida = 0;
+  
+  allFactories.forEach(f => {
+    try {
+      const logs = JSON.parse(localStorage.getItem(`zohir_${f.id}_daily_logs`)) || [];
+      const settings = JSON.parse(localStorage.getItem(`zohir_${f.id}_settings`)) || {};
+      
+      if (f.type === 'broiler') {
+        const cycles = JSON.parse(localStorage.getItem(`zohir_${f.id}_broiler_cycles`)) || [];
+        // calculate broiler profit...
+      } else {
+        const summary = sumLayerLogs(logs);
+        totalFaida += (summary.baseProfit || 0);
+      }
+    } catch(e){}
+  });
+  
+  container.innerHTML = `<div style="text-align:center">
+    <h3>إجمالي الأرباح لجميع المصانع</h3>
+    <p style="font-size:1.5rem;color:var(--gold);margin-top:10px">${fmt(totalFaida, 'دج')}</p>
+  </div>`;
+};
+
+
+/* ===================== SMART EXCEL FACTORY IMPORT ===================== */
+/**
+ * Smart import from Excel:
+ * - Reads all sheets in the file
+ * - Detects data type from sheet name or column headers
+ *   (production/daily_logs, workers, credits/debts, settings, broiler_cycles, etc.)
+ * - Groups rows by factory name column if present (separates multi-factory sheets)
+ * - Creates or updates a factory per unique factory name found
+ * - Saves data to localStorage and optionally syncs to cloud
+ */
+
+
+
+
+document.addEventListener('DOMContentLoaded', () => {
+  const btnImport = document.getElementById('btn-import-factory');
+  const inputImport = document.getElementById('factory-import-input');
+  if (btnImport && inputImport) {
+    // Keep the original input. Cloning it here can detach a listener that
+    // another page initializer has already attached, leaving the button
+    // apparently unresponsive.
+    btnImport.addEventListener('click', () => {
+      inputImport.value = '';
+      inputImport.click();
+    });
+
+    inputImport.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      await handleFactoryImport(file);
+    });
+  }
+});
+
+
+/* ===================== SMART EXCEL EXPORT ===================== */
+window.exportFactoryData = function() {
+  if (typeof XLSX === 'undefined') {
+    showToast('مكتبة Excel غير محملة. يرجى التحقق من اتصالك.', 'error');
+    return;
+  }
+  
+  const uid = CURRENT_USER?.uid;
+  if (!uid) {
+    showToast('يجب تسجيل الدخول أولاً', 'error');
+    return;
+  }
+
+  showToast('جاري تجهيز بيانات المصانع للتصدير...', 'info');
+  try {
+    const allFactories = JSON.parse(localStorage.getItem(`zohir_factories_${uid}`)) || [];
+    if (!allFactories.length) {
+      showToast('لا توجد مصانع لتصديرها.', 'error');
+      return;
+    }
+
+    const wb = XLSX.utils.book_new();
+
+    let allDaily = [];
+    let allWorkers = [];
+    let allCredits = [];
+    let allSettings = [];
+
+    allFactories.forEach(f => {
+      const logs = JSON.parse(localStorage.getItem(`zohir_${f.id}_daily_logs`)) || [];
+      const workers = JSON.parse(localStorage.getItem(`zohir_${f.id}_workers`)) || [];
+      const credits = JSON.parse(localStorage.getItem(`zohir_${f.id}_credits`)) || [];
+      const settings = JSON.parse(localStorage.getItem(`zohir_${f.id}_settings`)) || {};
+      
+      logs.forEach(l => { l['المصنع'] = f.name; allDaily.push(l); });
+      workers.forEach(w => { w['المصنع'] = f.name; allWorkers.push(w); });
+      credits.forEach(c => { c['المصنع'] = f.name; allCredits.push(c); });
+      settings['المصنع'] = f.name;
+      allSettings.push(settings);
+    });
+
+    if (allDaily.length) {
+      const wsDaily = XLSX.utils.json_to_sheet(allDaily);
+      XLSX.utils.book_append_sheet(wb, wsDaily, 'الإنتاج_والمبيعات');
+    }
+    if (allWorkers.length) {
+      const wsWorkers = XLSX.utils.json_to_sheet(allWorkers);
+      XLSX.utils.book_append_sheet(wb, wsWorkers, 'العمال');
+    }
+    if (allCredits.length) {
+      const wsCredits = XLSX.utils.json_to_sheet(allCredits);
+      XLSX.utils.book_append_sheet(wb, wsCredits, 'الديون_والتسديدات');
+    }
+    if (allSettings.length) {
+      const wsSettings = XLSX.utils.json_to_sheet(allSettings);
+      XLSX.utils.book_append_sheet(wb, wsSettings, 'إعدادات_المصانع');
+    }
+
+    XLSX.writeFile(wb, 'Zohir_Factories_Export_' + new Date().toISOString().slice(0,10) + '.xlsx');
+    showToast('تم تصدير البيانات بنجاح!', 'success');
+
+  } catch(e) {
+    console.error(e);
+    showToast('حدث خطأ أثناء التصدير: ' + e.message, 'error');
+  }
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  const btnExport = document.getElementById('btn-export-factory');
+  if (btnExport) {
+    const newExportBtn = btnExport.cloneNode(true);
+    btnExport.parentNode.replaceChild(newExportBtn, btnExport);
+    newExportBtn.addEventListener('click', () => {
+      exportFactoryData();
+    });
+  }
+});
+/* ===================== END SMART EXCEL EXPORT ===================== */
+
+async function handleFactoryImport(file) {
+  if (typeof XLSX === 'undefined') {
+    showToast('مكتبة Excel غير محملة', 'error');
+    return;
+  }
+  
+  showToast('جاري قراءة الملف وتحليل البيانات...', 'info');
+  
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    // Keep Excel dates as serial numbers.  Converting them to JavaScript
+    // Date objects first makes midnight timezone-dependent and shifts a
+    // row such as 23/07 to 22/07.  normalizeDate converts the serial using
+    // the Excel epoch in UTC instead.
+    const workbook = XLSX.read(arrayBuffer, { type: 'array', cellDates: false });
+    
+    const allLogs = {};
+    
+    function normAr(s) {
+      return String(s).toLowerCase().replace(/[أإآ]/g, 'ا').replace(/ة/g, 'ه').replace(/ى/g, 'ي').trim();
+    }
+    
+    function parseNumber(val) {
+      if (val === null || val === undefined || val === '') return 0;
+      if (typeof val === 'number') return val;
+      const s = String(val).replace(/,/g, '.').replace(/[^\d.\-]/g, '');
+      const n = parseFloat(s);
+      return isNaN(n) ? 0 : n;
+    }
+    
+    function normalizeDate(d) {
+      if (!d) return null;
+      // SheetJS returns Excel dates as Date objects.  Do not use
+      // toISOString() here: it converts local midnight to the previous
+      // calendar day in time zones east of UTC (e.g. Algeria/France).
+      const excelDateKey = (date) => {
+        if (!(date instanceof Date) || isNaN(date.getTime())) return null;
+        // SheetJS may materialize an Excel date at local midnight.  Reading
+        // its local fields or calling toISOString() can move it one day.
+        // UTC fields preserve the calendar date encoded by Excel.
+        return date.getUTCFullYear() + '-' +
+          String(date.getUTCMonth() + 1).padStart(2, '0') + '-' +
+          String(date.getUTCDate()).padStart(2, '0');
+      };
+
+      if (d instanceof Date) return excelDateKey(d);
+      
+      const s = String(d).trim();
+      
+      // French & Arabic dates: "1 juillet 2026" or "1 جويلية 2026"
+      const frMonths = {
+        'janvier':'01','fevrier':'02','février':'02','mars':'03','avril':'04',
+        'mai':'05','juin':'06','juillet':'07','aout':'08','août':'08',
+        'septembre':'09','octobre':'10','novembre':'11','decembre':'12','décembre':'12',
+        'جانفي':'01','فيفري':'02','مارس':'03','افريل':'04','أفريل':'04',
+        'ماي':'05','جوان':'06','جويلية':'07','اوت':'08','أوت':'08',
+        'سبتمبر':'09','اكتوبر':'10','أكتوبر':'10','نوفمبر':'11','ديسمبر':'12'
+      };
+      
+      const textMatch = s.match(/(\d{1,2})\s+([a-zéûôàèأ-ي]+)\s+(\d{4})/i);
+      if (textMatch) {
+        const day = textMatch[1].padStart(2,'0');
+        const month = frMonths[textMatch[2].toLowerCase()];
+        if (month) return textMatch[3] + '-' + month + '-' + day;
+      }
+      
+      // dd/mm/yyyy or dd-mm-yyyy
+      const parts = s.split(/[\/\-]/);
+      if (parts.length === 3) {
+        const a = parts[0].trim(), b = parts[1].trim(), c = parts[2].trim();
+        if (a.length === 4) return a + '-' + b.padStart(2,'0') + '-' + c.padStart(2,'0');
+        if (c.length === 4) return c + '-' + b.padStart(2,'0') + '-' + a.padStart(2,'0');
+        if (c.length === 2) return '20' + c + '-' + b.padStart(2,'0') + '-' + a.padStart(2,'0');
+      }
+      
+      // Excel serial number (e.g. 46205)
+      if (/^\d{4,5}$/.test(s)) {
+        const jsDate = new Date(Date.UTC(1899, 11, 30) + parseInt(s) * 86400000);
+        return excelDateKey(jsDate);
+      }
+      
+      return null;
+    }
+
+    // اسم المصنع = اسم الملف بدون الامتداد
+    const mainFactoryName = file.name.replace(/\.xlsx?|\.csv/i, '').trim();
+    const isMultiSheet = workbook.SheetNames.length > 1;
+    const childGroupNames = {};
+
+    workbook.SheetNames.forEach(sheetName => {
+      const ws = workbook.Sheets[sheetName];
+      const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      if (!rawRows.length) return;
+      
+      // === إيجاد سطر العناوين (يحتوي على تاريخ) ===
+      let H = 0;
+      for (let i = 0; i < Math.min(30, rawRows.length); i++) {
+        const rStr = rawRows[i].map(x => normAr(String(x || ''))).join(' ');
+        if (rStr.includes('تاريخ')) {
+          H = i;
+          break;
+        }
+      }
+      
+      const headers = rawRows[H].map(h => String(h || '').trim());
+      
+      // === إيجاد عمود التاريخ ===
+      let dateCol = headers.findIndex(h => normAr(h).includes('تاريخ'));
+      if (dateCol === -1) dateCol = 0;
+      
+      // === إيجاد بداية قسم "دوبل جون" ===
+      let djStartCol = -1;
+      for (let r = 0; r < H; r++) {
+        for (let c = 0; c < rawRows[r].length; c++) {
+          const val = normAr(String(rawRows[r][c] || ''));
+          if (val.includes('دوبل') || val.includes('double')) {
+            djStartCol = c;
+            break;
+          }
+        }
+        if (djStartCol >= 0) break;
+      }
+      
+      // === تقسيم الأعمدة: رئيسية و خاصة ===
+      const mainCols = [];
+      const specialCols = [];
+      for (let c = 0; c < headers.length; c++) {
+        if (c === dateCol || !headers[c]) continue;
+        if (djStartCol >= 0 && c >= djStartCol) {
+          specialCols.push(c);
+        } else {
+          mainCols.push(c);
+        }
+      }
+      
+      const targetFactoryName = isMultiSheet ? sheetName : mainFactoryName;
+      childGroupNames[targetFactoryName] = mainFactoryName;
+      if (!allLogs[targetFactoryName]) allLogs[targetFactoryName] = [];
+      
+      const dataRows = rawRows.slice(H + 1);
+      // Some workbooks keep the opening balance in the row immediately
+      // before the first dated row (for example: 431 dead birds, 37 kg
+      // feed-in and 5 special eggs).  It must be included in the import,
+      // while the undated rows after the last day must remain ignored.
+      const firstDatedIndex = dataRows.findIndex(row => normalizeDate(row[dateCol]));
+      const openingRow = firstDatedIndex > 0 ? dataRows[firstDatedIndex - 1] : null;
+      const openingValue = (keywords) => {
+        if (!openingRow) return 0;
+        for (const k of keywords) {
+          const nk = normAr(k);
+          for (let c = 0; c < headers.length; c++) {
+            if (normAr(headers[c]).includes(nk)) {
+              return parseNumber(openingRow[c]);
+            }
+          }
+        }
+        return 0;
+      };
+      let runningProduction = openingValue(['الانتاج الاجمالي', 'الاجمالي']);
+      
+      dataRows.forEach((rowArr, rowIndex) => {
+        const dateRaw = rowArr[dateCol];
+        const dateStr = normalizeDate(dateRaw);
+        if (!dateStr) return;
+        
+        // بناء كائن الصف الرئيسي
+        const mainRow = {};
+        const mainH = [];
+        for (const c of mainCols) {
+          mainRow[headers[c]] = rowArr[c];
+          mainH.push(headers[c]);
+        }
+        
+        const getMain = (keywords) => {
+          for (const k of keywords) {
+            const nk = normAr(k);
+            for (const h of mainH) {
+              if (normAr(h).includes(nk)) {
+                const v = mainRow[h];
+                return (v !== undefined && v !== null && v !== '') ? v : null;
+              }
+            }
+          }
+          return null;
+        };
+        
+        // === قراءة الكميات (بدون أسعار) ===
+        
+        // الإنتاج اليومي (بالبلاكات)
+        const producedPlates = parseNumber(getMain(['الانتاج اليومي', 'انتاج يومي', 'انتاج']));
+        // الإنتاج الإجمالي (التراكمي)
+        const importedTotalProd = parseNumber(getMain(['الانتاج الاجمالي', 'الاجمالي']));
+        const totalProd = importedTotalProd > 0 ? importedTotalProd : runningProduction + producedPlates;
+        runningProduction = totalProd;
+        // الوفيات
+        const isFirstDatedRow = rowIndex === firstDatedIndex;
+        const dead = parseNumber(getMain(['وفيات', 'وفاه', 'نفوق', 'موت'])) +
+          (isFirstDatedRow ? openingValue(['وفيات', 'وفاه', 'نفوق', 'موت']) : 0);
+        // الشعير الداخل
+        const feedIn = parseNumber(getMain(['دخول العلف', 'دخول'])) +
+          (isFirstDatedRow ? openingValue(['دخول العلف', 'دخول']) : 0);
+        // الشعير المستهلك
+        const feedUsed = parseNumber(getMain(['استهلاك العلف', 'استهلاك']));
+        // شراء البلاكة (مصاريف)
+        const expenses = parseNumber(getMain(['شراء البلاكه', 'شراء']));
+        // ملاحظات
+        const notes = String(getMain(['ملاحظات', 'ملاحظه']) || '');
+        
+        // بيع البيض (كمية فقط، ليس مبلغ مالي)
+        // إذا أقل من 10 = مكسور، أو إذا الملاحظة فيها "اكاص" أو "طيشوها"
+        const rawSale = getMain(['بيع البيض', 'بيع']);
+        const saleNum = parseNumber(rawSale);
+        const notesNorm = normAr(notes);
+        const isBroken = notesNorm.includes('اكاص') || notesNorm.includes('طيشوها') || notesNorm.includes('مكسور');
+        
+        let soldQty = 0, broken = 0;
+        if (isBroken) {
+          broken = saleNum;
+        } else if (saleNum > 0 && saleNum < 10) {
+          // أقل من 10 يعتبر بيض مكسور
+          broken = saleNum;
+        } else {
+          soldQty = saleNum;
+        }
+        
+        // 12 بلاكة = 1 كرطونة — نحسبها من المنتج اليومي
+        const soldGroups = Math.floor(producedPlates / 12);
+        const soldSingle = producedPlates % 12;
+        
+        // تخطي الصفوف الفارغة تماماً (يجب أن يكون هناك قيمة واحدة على الأقل)
+        // نتحقق أيضاً من الملاحظات لأن اليوم الأخير قد يكون له ملاحظة فقط
+        const hasData = producedPlates > 0 || saleNum > 0 || dead > 0 || 
+                        feedIn > 0 || feedUsed > 0 || totalProd > 0 || notes.trim().length > 0;
+        if (!hasData) return;
+        
+        // === بيض خاص (دوبل جون) ===
+        let specialQty = 0;
+        let specialSoldQty = 0;
+        let specNotes = '';
+        if (specialCols.length > 0) {
+          const specRow = {};
+          const specH = [];
+          for (const c of specialCols) {
+            specRow[headers[c]] = rowArr[c];
+            specH.push(headers[c]);
+          }
+          const getSpec = (keywords) => {
+            for (const k of keywords) {
+              const nk = normAr(k);
+              for (const h of specH) {
+                if (normAr(h).includes(nk)) {
+                  const v = specRow[h];
+                  return (v !== undefined && v !== null && v !== '') ? v : null;
+                }
+              }
+            }
+            return null;
+          };
+          specialQty = parseNumber(getSpec(['كميه', 'كمية'])) +
+            (isFirstDatedRow ? openingValue(['كميه', 'كمية']) : 0);
+          specialSoldQty = parseNumber(getSpec(['بيع البيض', 'بيع']));
+          specNotes = String(getSpec(['ملاحظات', 'ملاحظه']) || '');
+        }
+        
+        const entry = {
+          id: Date.now() + Math.random(),
+          date: dateStr,
+          produced: producedPlates,
+          broken: broken,
+          price: 0,
+          netEggs: producedPlates > 0 ? producedPlates - broken : 0,
+          soldGroups: soldGroups,
+          soldSingle: soldSingle,
+          income: 0,
+          specialSold: specialSoldQty || 0,
+          specialIncome: 0,
+          dead: dead,
+          feedUsed: feedUsed,
+          feedCost: 0,
+          waterCost: 0,
+          expenses: 0,
+          baseProfit: 0,
+          profit: 0,
+          ownerAdvance: 0,
+          notes: specNotes ? (notes + (notes ? ' | ' : '') + 'دوبل جون: ' + specNotes) : notes,
+          eggs: producedPlates,
+          mortality: dead,
+          isPaid: true,
+          feedIn: feedIn,
+          totalProduction: totalProd,
+          soldEggs: soldQty,
+          brokenEggs: broken,
+          specialEggs: specialQty
+        };
+        
+        allLogs[targetFactoryName].push(entry);
+      });
+    });
+
+    // === حفظ البيانات ===
+    const names = Object.keys(allLogs).filter(n => allLogs[n].length > 0);
+    if (!names.length) {
+      showToast('لم يتم العثور على بيانات صالحة.', 'error');
+      return;
+    }
+
+    let created = 0, updated = 0;
+    const uid = CURRENT_USER?.uid;
+    if (!uid) { showToast('يرجى تسجيل الدخول أولاً', 'error'); return; }
+
+    let allFactories = [];
+    try { allFactories = JSON.parse(localStorage.getItem('zohir_factories_' + uid)) || []; } catch(e) {}
+
+    for (const fname of names) {
+      const groupName = childGroupNames[fname];
+      let parentFactory = null;
+      if (isMultiSheet) {
+        parentFactory = allFactories.find(f => !f.parentId && normAr(f.name) === normAr(groupName));
+        if (parentFactory && !parentFactory.isGroup) {
+          parentFactory.isGroup = true;
+          parentFactory.type = 'group';
+          parentFactory.icon = '📁';
+        }
+        if (!parentFactory) {
+          const usedColors = allFactories.map(f => f.color);
+          const color = CARD_COLORS.find(c => !usedColors.includes(c)) || CARD_COLORS[allFactories.length % CARD_COLORS.length];
+          parentFactory = {
+            id: 'f_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+            name: groupName,
+            icon: '📁', color, type: 'group', isGroup: true,
+            ownerUid: uid, createdAt: new Date().toISOString()
+          };
+          allFactories.push(parentFactory);
+          created++;
+        }
+      }
+      let factory = allFactories.find(f => {
+        if (isMultiSheet) return f.parentId === parentFactory.id && normAr(f.name) === normAr(fname);
+        return !f.parentId && normAr(f.name) === normAr(fname);
+      });
+      if (!factory) {
+        const usedColors = allFactories.map(f => f.color);
+        const color = CARD_COLORS.find(c => !usedColors.includes(c)) || CARD_COLORS[allFactories.length % CARD_COLORS.length];
+        factory = {
+          id: 'f_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+          name: fname,
+          icon: '🥚',
+          color: color,
+          type: 'layer',
+          ...(isMultiSheet ? { parentId: parentFactory.id } : {}),
+          ownerUid: uid,
+          createdAt: new Date().toISOString()
+        };
+        allFactories.push(factory);
+        created++;
+      } else {
+        updated++;
+      }
+
+      const fid = factory.id;
+      let existing = [];
+      try { existing = JSON.parse(localStorage.getItem('zohir_' + fid + '_daily_logs')) || []; } catch(e) {}
+      
+      // دمج ذكي: البيانات الجديدة تحل محل القديمة لنفس التاريخ
+      const byDate = {};
+      // أولاً: نضع البيانات القديمة
+      existing.forEach(e => { if (e.date) byDate[e.date] = e; });
+      // ثانياً: البيانات الجديدة تستبدل القديمة (هذا يضمن ظهور الأيام الأخيرة الجديدة)
+      allLogs[fname].forEach(e => { if (e.date) byDate[e.date] = e; });
+      const merged = Object.values(byDate).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+      
+      localStorage.setItem('zohir_' + fid + '_daily_logs', JSON.stringify(merged));
+      if (typeof fs !== 'undefined' && auth.currentUser) {
+        fs.collection('app_data').doc(fid + '_daily_logs').set({ data: merged }).catch(function(){});
+      }
+    }
+
+    localStorage.setItem('zohir_factories_' + uid, JSON.stringify(allFactories));
+    if (typeof fs !== 'undefined' && auth.currentUser) {
+      fs.collection('app_data').doc('factories_list_' + uid).set({ data: allFactories }).catch(function(){});
+    }
+
+    renderFactoryScreen();
+
+    const msg = [];
+    if (created) msg.push('تم إنشاء ' + created + ' مصانع');
+    if (updated) msg.push('تم تحديث ' + updated + ' مصانع');
+    const total_logs = names.reduce(function(s, n) { return s + allLogs[n].length; }, 0);
+    if (total_logs) msg.push(total_logs + ' سجل يومي');
+    showToast(msg.join(' | '), 'success');
+
+  } catch (err) {
+    console.error('[handleFactoryImport] Error:', err);
+    showToast('خطأ أثناء قراءة الملف: ' + err.message, 'error');
+  }
+}
+
+/* ===================== END SMART EXCEL IMPORT ===================== */

@@ -10,7 +10,7 @@ const path = require('path');
 
 const app = express();
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5001;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const AI_MODEL = process.env.AI_MODEL || 'nvidia/nemotron-3-nano-omni-free';
 const FRONTEND_URL = process.env.FRONTEND_URL || `http://localhost:${PORT}`;
@@ -36,20 +36,27 @@ app.use(cors({
 
 app.use(express.json({ limit: '50kb' }));
 
-const SYSTEM_PROMPT = `أنت مساعد ذكي متخصص في إدارة مصانع إنتاج البيض. وظيفتك مساعدة صاحب المصنع في حساب الربح، الخسارة، الإنتاج اليومي، عدد البيض، عدد الدجاج البياض، نسبة الإنتاج، البيض المكسور، العلف، الأدوية، الفيتامينات، العمال، الكهرباء، الماء، النقل، المخزون، الفواتير، الزبائن، وتقديم نصائح عملية لتحسين الإنتاج وتقليل الخسارة.
+const SYSTEM_PROMPT = `أنت مساعد ذكي متخصص في إدارة مصانع إنتاج البيض. لديك الآن جميع الصلاحيات للتحكم في التطبيق.
+إذا طلب منك المستخدم إضافة، تعديل، أو حذف أي بيانات، يمكنك القيام بذلك بكتابة كود JavaScript سيقوم التطبيق بتنفيذه تلقائياً.
+يجب أن تضع الكود الذي تريد تنفيذه داخل كتلة كود بالشكل التالي:
+\`\`\`javascript
+// كود جافاسكريبت هنا
+\`\`\`
 
-أجب بالعربية البسيطة أو الدارجة الجزائرية حسب لغة المستخدم. لا تخترع أرقامًا غير موجودة. إذا احتجت بيانات، اطلبها من المستخدم بوضوح. عندما تعطي حسابات، اشرح العملية خطوة بخطوة وباختصار. لا تقم بتعديل أو حذف بيانات التطبيق، فقط قدّم اقتراحات وتحليلات.
+التطبيق يستخدم مكتبة تخزين محلية DB:
+- لقراءة البيانات: \`DB.get('اسم_الجدول')\`
+- لحفظ البيانات: \`DB.set('اسم_الجدول', القيمة_الجديدة)\`
 
-طريقة الحسابات:
-- نسبة الإنتاج = عدد البيض المنتج / عدد الدجاج البياض × 100
-- البيض الصالح = البيض المنتج - البيض المكسور
-- عدد الكرتونات = البيض الصالح / 30
-- المصاريف الكلية = العلف + الأدوية + الفيتامينات + العمال + الكهرباء + الماء + النقل + أي مصاريف أخرى
-- الربح الصافي = مجموع المبيعات - المصاريف الكلية
-- نسبة الربح = الربح الصافي / المصاريف الكلية × 100
-- تكلفة البيضة الواحدة = المصاريف الكلية / عدد البيض الصالح
-- سعر البيع مع هامش ربح 20% = تكلفة البيضة × 1.20
-- تكلفة الكرتونة = تكلفة البيضة × 30`;
+الجداول المتاحة: 'daily_logs' (التقارير اليومية)، 'workers' (العمال)، 'settings' (الإعدادات والشركاء)، 'credits' (الديون).
+مثال لإضافة عامل:
+\`\`\`javascript
+let workers = DB.get('workers') || [];
+workers.push({ id: Date.now(), name: 'عامل جديد', baseSalary: 30000 });
+DB.set('workers', workers);
+showToast('تم إضافة العامل بنجاح');
+\`\`\`
+
+أجب بالعربية البسيطة. اشرح حساباتك خطوة بخطوة. إذا أعطيت كود جافاسكريبت، فسيتم تنفيذه مباشرة، فلا تكتب أكواداً تجريبية بل أكواداً حقيقية تؤدي الغرض.`;
 
 const MAX_MESSAGE_LENGTH = 2000;
 
@@ -211,12 +218,33 @@ app.post('/api/ai/chat', async (req, res) => {
   }
 });
 
+// Force no-cache for HTML, CSS, JS so changes are always picked up
+app.use((req, res, next) => {
+  const ext = req.path.split('.').pop().toLowerCase();
+  if (['html', 'css', 'js'].includes(ext) || req.path === '/') {
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Surrogate-Control': 'no-store'
+    });
+  }
+  next();
+});
+
 app.use(express.static(APP_ROOT, {
   extensions: ['html'],
-  index: 'index.html'
+  index: 'index.html',
+  etag: false,
+  lastModified: false,
+  maxAge: 0
 }));
 
 app.get('*', (req, res) => {
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate',
+    'Pragma': 'no-cache'
+  });
   res.sendFile(path.join(APP_ROOT, 'index.html'));
 });
 
