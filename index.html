@@ -11,7 +11,7 @@
   <meta name="description" content="deku — إدارة مزارع الدواجن" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=48-remaining-eggs" />
+  <link rel="stylesheet" href="style.css?v=78" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/x-icon" href="favicon.ico" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
@@ -124,8 +124,9 @@
       <p class="factory-screen-tagline">اختر المصنع الذي تريد إدارته</p>
       <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px">
         <button class="btn btn-outline" id="btn-refresh-factories" style="font-size:0.85rem;padding:8px 16px">🔄 تحديث القائمة من السحابة</button>
-        <button class="btn btn-outline" id="btn-global-credits" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(72,187,120,0.4);color:var(--green)" onclick="toggleGlobalCredits()">💳 الكريديات (الديون)</button>
-        <button class="btn btn-outline" id="btn-profit-summary" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(245,197,24,0.4);color:var(--gold)" onclick="toggleProfitSummary()">💰 ملخص الأرباح</button>
+        <button class="btn btn-outline" id="btn-global-credits" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(99,179,237,0.5);color:var(--blue)" onclick="togglePurchaseBatches()">📦 دفعات الشراء</button>
+        <button class="btn btn-outline" id="btn-global-workers" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(154,117,234,0.5);color:#b794f4" onclick="toggleGlobalWorkersPanel()">👷 العمال</button>
+        
         <button class="btn btn-outline" id="btn-export-factory" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(72,187,120,0.5);color:var(--green)">📤 تصدير بيانات Excel</button>
           <button class="btn btn-outline" id="btn-import-factory" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(66,153,225,0.5);color:var(--blue)">📥 استيراد مصنع من Excel</button>
         <input type="file" id="factory-import-input" accept=".xlsx,.xls,.csv" style="display:none" />
@@ -133,49 +134,33 @@
     </div>
 
     <!-- Profit Summary Popup Card -->
-    <div id="profit-summary-popup" style="display:none;width:100%;max-width:600px;margin:0 auto 20px;background:rgba(21,28,46,0.97);border:1px solid rgba(245,197,24,0.35);border-radius:16px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,0.5)">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-        <div style="font-size:1.1rem;font-weight:800;color:var(--gold)">💰 ملخص أرباح جميع المصانع</div>
-        <button onclick="toggleProfitSummary()" style="background:none;border:none;color:var(--text-secondary);font-size:1.2rem;cursor:pointer">×</button>
-      </div>
-      <div id="profit-summary-content" style="font-size:0.9rem">
-        <div style="text-align:center;color:var(--text-secondary);padding:20px">⏳ جاري حساب الأرباح...</div>
-      </div>
-    </div>
+    
 
-    <!-- Global Credits Popup Card -->
-    <div id="global-credits-popup" style="display:none;width:100%;max-width:700px;margin:0 auto 20px;background:rgba(21,28,46,0.97);border:1px solid rgba(72,187,120,0.35);border-radius:16px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,0.5)">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-        <div style="font-size:1.1rem;font-weight:800;color:var(--green)">💳 نظام الكريديات والديون (شامل)</div>
-        <button onclick="toggleGlobalCredits()" style="background:none;border:none;color:var(--text-secondary);font-size:1.2rem;cursor:pointer">×</button>
+    <!-- ===== دفعات الشراء Popup ===== -->
+    <div id="global-credits-popup" style="display:none;width:100%;max-width:820px;margin:0 auto 20px;background:rgba(21,28,46,0.97);border:1px solid rgba(99,179,237,0.35);border-radius:16px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,0.5)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+        <div style="font-size:1.1rem;font-weight:800;color:var(--blue)">📦 دفعات الشراء — دفتر حسابات الموردين</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="openAddBuyerModal()">+ إضافة مورد</button>
+          <button onclick="togglePurchaseBatches()" style="background:none;border:none;color:var(--text-secondary);font-size:1.2rem;cursor:pointer;padding:4px 8px">×</button>
+        </div>
       </div>
-      <!-- Add new client/credit form -->
-      <div style="display:flex;gap:8px;margin-bottom:16px;background:rgba(0,0,0,0.2);padding:10px;border-radius:8px;flex-wrap:wrap">
-        <input type="text" id="gcredit-client" placeholder="اسم الزبون" style="flex:1;min-width:150px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:white"/>
-        <input type="number" id="gcredit-amount" placeholder="المبلغ (دج)" style="width:120px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:white"/>
-        <input type="text" id="gcredit-desc" placeholder="ملاحظة/السلعة" style="flex:2;min-width:150px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:white"/>
-        <button class="btn btn-primary" onclick="addManualGlobalCredit()">+ إضافة دين</button>
-      </div>
-
       <div id="global-credits-content">
-        <!-- Client cards rendered here -->
-        <div style="text-align:center;color:var(--text-secondary);padding:20px">⏳ جاري تحميل الكريديات...</div>
+        <div style="text-align:center;color:var(--text-secondary);padding:20px">لا يوجد موردين مسجلين حالياً.<br><br>💡 لاستيراد ملف Excel خاص بمورد، الرجاء إضافة المورد أولاً من زر (+ إضافة مورد)، ثم اضغط على بطاقته لفتح الدفتر وستجد زر الاستيراد هناك.</div>
       </div>
     </div>
 
-    <!-- Client Credit Details Modal -->
-    <div class="modal-overlay" id="modal-client-credits" style="z-index:99999">
-      <div class="modal-box" style="max-width:600px;max-height:88vh;overflow-y:auto">
-        <div class="modal-title" id="client-credits-title" style="color:var(--green)">📋 تفاصيل حساب: -</div>
-        <div style="display:flex;gap:8px;margin-bottom:16px">
-          <input type="number" id="client-pay-amount" placeholder="مبلغ التسديد (دج)" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:white" />
-          <button class="btn btn-primary" onclick="addGlobalCreditPayment()">💸 تسديد دين</button>
+    <!-- ===== لوحة العمال العالميين ===== -->
+    <div id="global-workers-panel" style="display:none;width:100%;max-width:720px;margin:0 auto 20px;background:rgba(21,28,46,0.97);border:1px solid rgba(154,117,234,0.4);border-radius:16px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,0.5)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+        <div style="font-size:1.1rem;font-weight:800;color:#b794f4">👷 إدارة العمال (مركزي — جميع المصانع)</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary btn-sm" onclick="openAddGlobalWorkerModal()">+ إضافة عامل</button>
+          <button onclick="toggleGlobalWorkersPanel()" style="background:none;border:none;color:var(--text-secondary);font-size:1.2rem;cursor:pointer;padding:4px 8px">×</button>
         </div>
-        <div id="client-credits-history" style="font-size:0.85rem"></div>
-        <div class="modal-actions" style="margin-top:14px;display:flex;justify-content:space-between;width:100%">
-          <button class="btn btn-outline" style="color:var(--red);border-color:rgba(255,0,0,0.3)" onclick="deleteCurrentGlobalClient()">🗑️ حذف الحساب بالكامل</button>
-          <button class="btn btn-outline" onclick="document.getElementById('modal-client-credits').classList.remove('open')">إغلاق</button>
-        </div>
+      </div>
+      <div id="global-workers-content">
+        <div style="text-align:center;color:var(--text-secondary);padding:20px">⏳ جاري تحميل العمال...</div>
       </div>
     </div>
 
@@ -358,7 +343,7 @@
       <span class="nav-icon">👷</span><span>الفريق</span>
     </button>
 
-    <button class="nav-item" data-page="workers" id="nav-workers">
+    <button class="nav-item" data-page="workers" id="nav-workers" style="display:none">
       <span class="nav-icon">👷</span><span>العمال</span>
     </button>
     <button class="nav-item" data-page="reports" id="nav-reports">
@@ -700,10 +685,8 @@
           <label>البلاكات المكسورة</label>
           <input type="number" id="inp-broken" placeholder="0" min="0" />
         </div>
-        <div class="form-group">
-          <label>سعر البلاكة اليوم (دج)</label>
-          <input type="number" id="inp-price" placeholder="0.00" min="0" step="0.01" />
-        </div>
+        <!-- inp-price removed: السعر يُسجَّل الآن في دفعات الشراء على مستوى التطبيق -->
+        <input type="hidden" id="inp-price" value="0" />
         <div class="calc-preview" id="prod-preview">
           <div class="calc-row"><span>الصافي:</span><strong id="prev-net">—</strong></div>
           <div class="calc-row"><span>الكرطونات (12×):</span><strong id="prev-koliates">—</strong></div>
@@ -759,17 +742,16 @@
           <label>الشعير الداخل / المشترى (كغ)</label>
           <input type="number" id="inp-feed-in" placeholder="0" min="0" />
         </div>
-        <div class="form-group">
-          <label>سعر شراء الشعير (دج/كغ)</label>
-          <input type="number" id="inp-feed-price" placeholder="0.00" min="0" step="0.01" />
-        </div>
+        <!-- inp-feed-price removed: سعر الشعير يُسجَّل خارج المصنع -->
+        <input type="hidden" id="inp-feed-price" value="0" />
         <div class="form-group">
           <label>الشعير المستهلك (كغ)</label>
           <input type="number" id="inp-feed-used" placeholder="0" min="0" />
         </div>
         <div class="calc-preview">
-          <div class="calc-row"><span>الرصيد الجديد:</span><strong id="prev-feed">—</strong></div>
-          <div class="calc-row"><span>تكلفة الشراء:</span><strong id="prev-feed-cost" style="color:var(--orange)">—</strong></div>
+          <div class="calc-row"><span>رصيد الشعير الجديد:</span><strong id="prev-feed">—</strong></div>
+          <!-- prev-feed-cost hidden: يُحسب خارج المصنع -->
+          <strong id="prev-feed-cost" style="display:none"></strong>
         </div>
       </div>
 
@@ -793,32 +775,18 @@
         </div>
       </div>
 
-      <div class="form-card" id="partner-expenses-card">
-        <div class="form-card-title">💸 مصاريف الشركاء / صاحب المصنع</div>
-        <div id="partner-expenses-section"><!-- يتم ملؤها ديناميكياً بواسطة الجافا سكريبت --></div>
-        <div class="form-group" style="margin-top:12px">
-          <label>سلفيات صاحب العمل (دج)</label>
-          <input type="number" id="inp-owner-advance" placeholder="0" min="0" />
-        </div>
-        <div class="calc-preview">
-          <div class="calc-row" style="border-top:1px solid rgba(255,255,255,0.08);margin-top:4px;padding-top:6px"><span>الربح الأساسي:</span><strong id="prev-base-profit" style="color:var(--blue)">—</strong></div>
-          <div id="prev-partner-shares"></div>
-          <div class="calc-row" style="border-top:1px solid rgba(255,255,255,0.08);margin-top:4px;padding-top:6px"><span>💰 صافي الربح اليومي:</span><strong id="prev-profit" style="font-size:1.05rem">—</strong></div>
-        </div>
+      <!-- partner-expenses-card وadvance-entries نُقلا إلى مستوى التطبيق العام -->
+      <!-- hidden placeholders للحفاظ على توافق الكود القديم -->
+      <div id="partner-expenses-card" style="display:none">
+        <div id="partner-expenses-section"></div>
+        <input type="hidden" id="inp-owner-advance" value="0" />
+        <strong id="prev-base-profit" style="display:none"></strong>
+        <div id="prev-partner-shares"></div>
+        <strong id="prev-profit" style="display:none"></strong>
       </div>
-
-      <div class="form-card form-card-wide">
-        <div class="form-card-title">👷 سلفيات العمال اليوم</div>
-        <div id="advance-entries">
-          <div class="advance-row" data-idx="0">
-            <select class="adv-worker-select">
-              <option value="">— اختر عاملاً —</option>
-            </select>
-            <input type="number" class="adv-amount" placeholder="المبلغ (دج)" min="0" />
-            <button class="btn-remove-adv" title="حذف">✕</button>
-          </div>
-        </div>
-        <button class="btn btn-outline btn-sm" id="add-advance-row">+ إضافة سلفية</button>
+      <div style="display:none">
+        <div id="advance-entries"><div class="advance-row"><select class="adv-worker-select"><option value="">—</option></select><input type="number" class="adv-amount" /><button class="btn-remove-adv">✕</button></div></div>
+        <button id="add-advance-row"></button>
       </div>
 
       <div class="form-card">
@@ -1124,7 +1092,7 @@
     <!-- === خلاصة أرباح الشركاء === -->
     <div class="section-card">
       <div class="section-title">🤝 خلاصة أرباح الشركاء</div>
-      <div id="partner-summary-faida-block" style="margin-bottom:16px;padding:14px 16px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid rgba(255,255,255,0.08);display:none"></div>
+      
       <div class="table-wrapper">
         <table class="data-table">
           <thead>
@@ -1323,10 +1291,7 @@
             <label>رصيد الشعير الابتدائي (كغ)</label>
             <input type="number" id="farm-feed-init" placeholder="0" min="0" />
           </div>
-          <div class="form-group">
-            <label>سعر شراء الدجاجة (دج)</label>
-            <input type="number" id="farm-chicken-price" placeholder="0" min="0" />
-          </div>
+          
           <div class="form-group">
             <label>سعر شراء الشعير الأساسي (دج/كغ)</label>
             <input type="number" id="farm-feed-price" placeholder="0" min="0" />
@@ -1641,9 +1606,10 @@
   ], 0);
 })();
 </script>
-<script src="app.js?v=59-report-curve-zoom"></script>
 <script>
-  var APP_VERSION = 'zohir-v59-report-curve-zoom';
+  // MUST match CACHE_NAME in sw.js, otherwise the cache the worker just
+  // created gets deleted on every load and caching silently thrashes.
+  var APP_VERSION = 'zohir-v62-suppliers-import';
   function initSW() {
     if (!('serviceWorker' in navigator)) return;
     Promise.resolve()
@@ -1660,7 +1626,7 @@
         });
       })
       .then(function() {
-        return navigator.serviceWorker.register('sw.js?v=47');
+        return navigator.serviceWorker.register('sw.js?v=103');
       })
       .catch(function(e){ console.warn('[SW]', e); });
   }
@@ -1694,5 +1660,221 @@
   </div>
 </div>
 
+
+<!-- ===== MODAL: إضافة مورد جديد ===== -->
+<div class="modal-overlay" id="modal-add-buyer" style="z-index:100000">
+  <div class="modal-box" style="max-width:440px">
+    <div class="modal-title" style="color:var(--blue)">📦 إضافة مورد جديد</div>
+    <div class="form-group">
+      <label>اسم المورد (تاجر الجملة)</label>
+      <input type="text" id="buyer-name-input" placeholder="مثال: Chelaghma" />
+    </div>
+    <div class="form-group">
+      <label>رصيد افتتاحي (دج) — اختياري</label>
+      <input type="number" id="buyer-opening-balance" placeholder="0" min="0" step="0.01" />
+      <div class="field-note">💡 إن كانت هناك معاملات سابقة قبل هذا النظام، أدخل الرصيد المتبقي هنا</div>
+    </div>
+    <div class="form-group">
+      <label>ملاحظات (اختياري)</label>
+      <input type="text" id="buyer-notes-input" placeholder="معلومات إضافية عن المورد" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btn-confirm-add-buyer">✅ إضافة المورد</button>
+      <button class="btn btn-outline" onclick="document.getElementById('modal-add-buyer').classList.remove('open')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: دفتر حسابات المورد ===== -->
+<div class="modal-overlay" id="modal-buyer-ledger" style="z-index:100000">
+  <div class="modal-box" style="max-width:900px;max-height:90vh;overflow-y:auto;width:95vw">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      <div class="modal-title" id="buyer-ledger-title" style="color:var(--blue);margin-bottom:0">📒 دفتر حساب: —</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" id="btn-add-pickup-for-buyer">+ سحب بيض</button>
+        <button class="btn btn-outline btn-sm" id="btn-add-payment-for-buyer" style="color:var(--green);border-color:rgba(72,187,120,0.5)">+ دفعة تسديد</button>
+        <button class="btn btn-outline btn-sm" id="btn-import-buyer-excel" style="color:var(--gold);border-color:rgba(245,197,24,0.4)" onclick="document.getElementById('buyer-excel-input').click()">📥 استيراد Excel</button>
+        <input type="file" id="buyer-excel-input" accept=".xlsx,.xlsm,.xls,.csv" style="display:none" />
+      </div>
+    </div>
+    <!-- ملخص الرصيد -->
+    <div id="buyer-balance-summary" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap"></div>
+    <!-- الجدول -->
+    <div id="buyer-ledger-content" style="font-size:0.9rem">
+      <div style="text-align:center;color:var(--text-secondary);padding:30px">⏳ جاري التحميل...</div>
+    </div>
+    <!-- pagination -->
+    <div id="buyer-ledger-pagination" style="display:flex;justify-content:center;gap:8px;margin-top:14px;flex-wrap:wrap"></div>
+    <div class="modal-actions" style="margin-top:16px;display:flex;justify-content:space-between">
+      <button class="btn btn-outline" id="btn-delete-buyer" style="color:var(--red);border-color:rgba(255,0,0,0.3)">🗑️ حذف المورد</button>
+      <button class="btn btn-outline" onclick="document.getElementById('modal-buyer-ledger').classList.remove('open')">إغلاق</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: إضافة سحب بيض ===== -->
+<div class="modal-overlay" id="modal-add-pickup" style="z-index:100001">
+  <div class="modal-box" style="max-width:480px">
+    <div class="modal-title" style="color:var(--gold)">🥚 تسجيل سحب بيض</div>
+    <div class="form-group">
+      <label>المصنع</label>
+      <select id="pickup-factory-select">
+        <option value="">— اختر المصنع —</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>فئة البيض (اختياري)</label>
+      <input type="text" id="pickup-category" placeholder="مثال: عادي / دوبل جون" />
+    </div>
+    <div class="form-group">
+      <label>التاريخ</label>
+      <input type="date" id="pickup-date" />
+    </div>
+    <div class="form-group">
+      <label>الكمية (بلاكة — يقبل الكسور)</label>
+      <input type="number" id="pickup-quantity" placeholder="0" min="0" step="0.5" oninput="updatePickupCalc()" />
+    </div>
+    <div class="form-group">
+      <label>السعر (دج/بلاكة)</label>
+      <input type="number" id="pickup-unit-price" placeholder="0" min="0" step="1" oninput="updatePickupCalc()" />
+    </div>
+    <div class="calc-preview">
+      <div class="calc-row"><span>القيمة الإجمالية:</span><strong id="pickup-total-preview" style="color:var(--green)">—</strong></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btn-confirm-add-pickup">✅ حفظ السحب</button>
+      <button class="btn btn-outline" onclick="document.getElementById('modal-add-pickup').classList.remove('open')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: إضافة دفعة تسديد ===== -->
+<div class="modal-overlay" id="modal-add-payment" style="z-index:100001">
+  <div class="modal-box" style="max-width:440px">
+    <div class="modal-title" style="color:var(--green)">💸 تسجيل دفعة تسديد</div>
+    <div class="form-group">
+      <label>التاريخ</label>
+      <input type="date" id="payment-date" />
+    </div>
+    <div class="form-group">
+      <label>المبلغ (دج)</label>
+      <input type="number" id="payment-amount" placeholder="0" min="0" step="1" />
+    </div>
+    <div class="form-group">
+      <label>ملاحظة حرة (اختياري)</label>
+      <input type="text" id="payment-note" placeholder="مثال: نذير — تسبيق — نخالة..." />
+      <div class="field-note">📝 حقل نصي حر — لا توجد قائمة مغلقة</div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btn-confirm-add-payment">✅ حفظ الدفعة</button>
+      <button class="btn btn-outline" onclick="document.getElementById('modal-add-payment').classList.remove('open')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: تعيين رصيد افتتاحي ===== -->
+<div class="modal-overlay" id="modal-set-opening-balance" style="z-index:100001">
+  <div class="modal-box" style="max-width:420px">
+    <div class="modal-title" style="color:var(--gold)">💰 رصيد افتتاحي</div>
+    <p style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:16px;line-height:1.6">
+      أول دفعة في ملف هذا المورد تسبق زمنياً أول عملية سحب — هل تريد تسجيل رصيد افتتاحي يدوي يمثّل ما كان عليه قبل هذه البيانات؟
+    </p>
+    <div class="form-group">
+      <label>الرصيد الافتتاحي (دج) — ما كان مستحقاً قبل هذه البيانات</label>
+      <input type="number" id="opening-balance-input" placeholder="0" min="0" step="1" />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btn-confirm-opening-balance">✅ تعيين الرصيد</button>
+      <button class="btn btn-outline" id="btn-skip-opening-balance">تخطي (يبدأ من صفر)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: استيراد Excel — مطابقة المصانع ===== -->
+<div class="modal-overlay" id="modal-factory-mapping" style="z-index:100002">
+  <div class="modal-box" style="max-width:680px;max-height:90vh;overflow-y:auto">
+    <div class="modal-title" style="color:var(--gold)">🏭 مطابقة أسماء المصانع</div>
+    <p style="color:var(--text-secondary);font-size:0.9rem;margin-bottom:16px;line-height:1.6">
+      الأسماء التالية وُجدت في الملف. حدد المصنع المقابل لكل اسم في نظامك، أو اختر "تجاهل" إن لم يكن ذا صلة.
+    </p>
+    <div id="factory-mapping-rows" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btn-confirm-factory-mapping">✅ تأكيد وعرض المعاينة</button>
+      <button class="btn btn-outline" onclick="document.getElementById('modal-factory-mapping').classList.remove('open')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: معاينة الاستيراد ===== -->
+<div class="modal-overlay" id="modal-import-preview" style="z-index:100002">
+  <div class="modal-box" style="max-width:820px;max-height:92vh;overflow-y:auto;width:95vw">
+    <div class="modal-title" style="color:var(--blue)">👁️ معاينة قبل الحفظ</div>
+    <div id="import-preview-summary" style="background:rgba(0,0,0,0.2);border-radius:10px;padding:14px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:12px"></div>
+    <!-- تحذيرات -->
+    <div id="import-preview-warnings" style="margin-bottom:14px"></div>
+    <!-- صفوف مشكوك فيها -->
+    <div id="import-preview-suspect" style="margin-bottom:14px"></div>
+    <!-- جدول المعاينة -->
+    <div id="import-preview-table" style="font-size:0.82rem;max-height:340px;overflow-y:auto"></div>
+    <!-- pagination -->
+    <div id="import-preview-pagination" style="display:flex;justify-content:center;gap:8px;margin-top:10px;flex-wrap:wrap"></div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-primary" id="btn-confirm-import">💾 حفظ في قاعدة البيانات</button>
+      <button class="btn btn-outline" onclick="document.getElementById('modal-import-preview').classList.remove('open')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: إضافة عامل عالمي ===== -->
+<div class="modal-overlay" id="modal-add-global-worker" style="z-index:100000">
+  <div class="modal-box" style="max-width:440px">
+    <div class="modal-title" style="color:#b794f4">👷 إضافة عامل جديد</div>
+    <div class="form-group">
+      <label>اسم العامل</label>
+      <input type="text" id="gworker-name-input" placeholder="اسم العامل الكامل" />
+    </div>
+    <div class="form-group">
+      <label>الراتب الشهري (دج) — اختياري</label>
+      <input type="number" id="gworker-salary-input" placeholder="0" min="0" />
+    </div>
+    <div class="form-group">
+      <label>ملاحظات (اختياري)</label>
+      <input type="text" id="gworker-notes-input" placeholder="معلومات إضافية..." />
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="btn-confirm-add-global-worker">✅ إضافة العامل</button>
+      <button class="btn btn-outline" onclick="document.getElementById('modal-add-global-worker').classList.remove('open')">إلغاء</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: تفاصيل عامل — سلفياته ===== -->
+<div class="modal-overlay" id="modal-worker-advances" style="z-index:100001">
+  <div class="modal-box" style="max-width:580px;max-height:88vh;overflow-y:auto">
+    <div class="modal-title" id="worker-advances-title" style="color:#b794f4">👷 سجل سلفيات العامل</div>
+    <!-- إجمالي السلف -->
+    <div id="worker-total-advances-bar" style="background:rgba(154,117,234,0.1);border:1px solid rgba(154,117,234,0.3);border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
+      <span style="color:var(--text-secondary)">إجمالي السلفيات:</span>
+      <strong id="worker-total-advances-val" style="color:#b794f4;font-size:1.1rem">0 دج</strong>
+    </div>
+    <!-- إضافة سلفية جديدة -->
+    <div style="background:rgba(0,0,0,0.2);border-radius:10px;padding:12px;margin-bottom:14px">
+      <div style="font-size:0.85rem;font-weight:700;color:var(--text-secondary);margin-bottom:10px">+ إضافة سلفية جديدة</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <input type="date" id="advance-date-input" style="flex:1;min-width:130px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:white" />
+        <input type="number" id="advance-amount-input" placeholder="المبلغ (دج)" min="0" style="flex:1;min-width:100px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:white" />
+        <input type="text" id="advance-note-input" placeholder="ملاحظة (اختياري)" style="flex:2;min-width:150px;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--bg-input);color:white" />
+        <button class="btn btn-primary btn-sm" id="btn-save-worker-advance">حفظ</button>
+      </div>
+    </div>
+    <!-- سجل السلفيات -->
+    <div id="worker-advances-list" style="font-size:0.88rem"></div>
+    <div class="modal-actions" style="margin-top:14px;display:flex;justify-content:space-between">
+      <button class="btn btn-outline" id="btn-delete-global-worker" style="color:var(--red);border-color:rgba(255,0,0,0.3)">🗑️ حذف العامل</button>
+      <button class="btn btn-outline" onclick="document.getElementById('modal-worker-advances').classList.remove('open')">إغلاق</button>
+    </div>
+  </div>
+</div>
+    <script src="app.js?v=103" defer></script>
 </body>
 </html>

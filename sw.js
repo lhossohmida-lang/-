@@ -1,5 +1,5 @@
 // ===== Zohir PWA Service Worker =====
-const CACHE_NAME = 'zohir-v59-report-curve-zoom';
+const CACHE_NAME = 'zohir-v62-suppliers-import';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

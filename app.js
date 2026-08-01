@@ -1311,8 +1311,8 @@ function defaultSettings() {
     owner: '',
     initialChickens: 0,
     initialFeed: 0,
-    chickenPrice: 0,
-    feedPrice: 0,
+    
+    
     feedAlertThreshold: 100,
     brokenAlertPct: 5,
     deletePassword: '1234',
@@ -1519,8 +1519,8 @@ function getTotalNetProfit() {
   const totalDailyProfit = logs.reduce((s, l) => s + (Number(l.baseProfit ?? l.profit) || 0), 0);
 
   // One-time initial costs
-  const chickensCost = (Number(settings.initialChickens) || 0) * (Number(settings.chickenPrice) || 0);
-  const feedCost     = (Number(settings.initialFeed)     || 0) * (Number(settings.feedPrice)     || 0);
+  
+  
   const loyer        = Number(settings.loyer)        || 0;
   const repairLoyer  = Number(settings.repairLoyer)  || 0;
   const repairTotal  = Number(settings.repairTotal)  || 0;
@@ -1811,10 +1811,7 @@ function buildFactoryCard(factory, idx, isPrimaryOwner, container) {
     <span class="factory-card-icon">${factory.icon || '🐔'}</span>
     <div class="factory-card-name">${factory.name}</div>
     <div class="factory-card-meta">${isPrimaryOwner ? '👔 تملك هذا المصنع' : `🤝 شريك${myShareRaw ? ' — حصتك ' + myShareRaw + '%' : ''}`}</div>
-    <div class="factory-card-stat">
-      <span class="label">${fType === 'broiler' ? 'الدورة الحالية' : 'مدخول اليوم'}</span>
-      <span class="value">${fType === 'broiler' ? '—' : (todayLog ? fmt(todayLog.income, 'دج') : '—')}</span>
-    </div>
+    
   `;
 
   card.addEventListener('click', (e) => {
@@ -2711,7 +2708,7 @@ function renderDashboard() {
   const totalAdv = getTotalAdvances();
 
   document.getElementById('kpi-eggs').textContent = todayLogs.length ? fmt(todaySummary.netEggs) : '0';
-  document.getElementById('kpi-income').textContent = todayLogs.length ? fmt(todaySummary.income, 'دج') : '0 دج';
+  
   document.getElementById('kpi-feed').textContent = fmt(feedBal, 'كغ');
   document.getElementById('kpi-dead').textContent = deadMonth;
   document.getElementById('kpi-broken').textContent = fmt(brokenLoss, 'دج');
@@ -2779,10 +2776,10 @@ function renderLastReport(log, customTitle = null) {
     </div>
     <div class="report-block">
       <div class="report-block-title">💰 المبيعات والمدخول</div>
-      <div class="report-row"><span>سعر البلاكة</span><strong>${fmt(log.price, 'دج')}</strong></div>
+      
       <div class="report-row"><span>الكرطونات المباعة</span><strong>${fmt(log.soldGroups)}</strong></div>
       <div class="report-row"><span>الفردي المباع</span><strong>${fmt(log.soldSingle)}</strong></div>
-      <div class="report-row"><span>المدخول الإجمالي</span><strong class="positive">${fmt(log.income, 'دج')}</strong></div>
+      
     </div>
     <div class="accountant-note">
       <strong>💼 ملاحظة المحاسب:</strong>
@@ -2834,7 +2831,7 @@ function renderPersonalProfitKpi(totalNetProfit, settings) {
   card.innerHTML = `
     <div class="kpi-icon">💎</div>
     <div class="kpi-info">
-      <span class="kpi-value" style="color:${myProfit >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt(myProfit, 'دج')}</span>
+      <span class="kpi-value">-</span>
       <span class="kpi-label">${label}</span>
     </div>
     <div class="kpi-bar"><div class="kpi-bar-fill" style="width:100%; opacity:0.3"></div></div>
@@ -2866,7 +2863,7 @@ function initDailyForm() {
   }
   initDailyWizard();
 
-  const calcFields = ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates', 'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-expenses', 'inp-owner-advance', 'inp-water-cost', 'inp-manure-income', 'inp-special-plates', 'inp-special-singles', 'inp-special-price'];
+  const calcFields = ['inp-produced', 'inp-broken', 'inp-sold-total', 'inp-free-plates', 'inp-feed-in', 'inp-feed-used', ];
   calcFields.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', updateDailyCalc);
@@ -2945,7 +2942,7 @@ function validateDailyWizardStep(step) {
     if (!document.getElementById('inp-date')?.value) { showToast('اختر تاريخ اليوم أولاً', 'error'); return false; }
     if (produced <= 0) { showToast('أدخل إنتاج اليوم أولاً', 'error'); return false; }
     if (broken > produced) { showToast('المكسور لا يمكن أن يكون أكبر من الإنتاج', 'error'); return false; }
-    if (price <= 0) { showToast('أدخل سعر البلاكة قبل المبيعات', 'error'); return false; }
+    
   }
 
   if (step === 1) {
@@ -3003,19 +3000,19 @@ function setPaymentStatus(status) {
 }
 
 function updateDailyCalc() {
-  const produced = Number(document.getElementById('inp-produced').value) || 0;
-  const broken = Number(document.getElementById('inp-broken').value) || 0;
-  const price = Number(document.getElementById('inp-price').value) || 0;
-  const soldTotal = Number(document.getElementById('inp-sold-total').value) || 0;
-  const feedIn = Number(document.getElementById('inp-feed-in').value) || 0;
-  const feedPrice = Number(document.getElementById('inp-feed-price').value) || 0;
-  const feedUsed = Number(document.getElementById('inp-feed-used').value) || 0;
+  const produced = Number(document.getElementById('inp-produced')?.value) || 0;
+  const broken = Number(document.getElementById('inp-broken')?.value) || 0;
+  const price = 0; // Removed
+  const soldTotal = Number(document.getElementById('inp-sold-total')?.value) || 0;
+  const feedIn = Number(document.getElementById('inp-feed-in')?.value) || 0;
+  const feedPrice = 0; // Removed
+  const feedUsed = Number(document.getElementById('inp-feed-used')?.value) || 0;
   const manureIncome = Number(document.getElementById('inp-manure-income')?.value) || 0;
   const waterCost = Number(document.getElementById('inp-water-cost')?.value) || 0;
   const specialPlates = Number(document.getElementById('inp-special-plates')?.value) || 0;
   const specialSingles = Number(document.getElementById('inp-special-singles')?.value) || 0;
   const specialSold = Number(document.getElementById('inp-special-sold')?.value) || 0;
-  const specialPrice = Number(document.getElementById('inp-special-price')?.value) || 0;
+  const specialPrice = 0; // Removed
 
   const net = produced - broken;
   const koliates = Math.floor(net / 12);
@@ -3024,7 +3021,7 @@ function updateDailyCalc() {
   const soldSingle = soldTotal % 12;
   const income = soldTotal * price;
   const feedBal = getCurrentFeedBalance() + feedIn - feedUsed;
-  const feedCost = feedIn * feedPrice;
+  
   const specialIncome = specialPlates * specialPrice + specialSingles * (specialPrice / 12);
 
   const settings = DB.get('settings') || defaultSettings();
@@ -3037,15 +3034,6 @@ function updateDailyCalc() {
 
   let workerAdvancesTotal = 0;
   let dustWorkerAdvancesToday = 0;
-  document.querySelectorAll('.advance-row').forEach(row => {
-    const wid = row.querySelector('.adv-worker-select')?.value;
-    const amt = Number(row.querySelector('.adv-amount').value) || 0;
-    if (wid && _dustWorkerIds.has(String(wid))) {
-      dustWorkerAdvancesToday += amt;
-    } else {
-      workerAdvancesTotal += amt;
-    }
-  });
 
   const ownerAdvance = Number(document.getElementById('inp-owner-advance')?.value) || 0;
 
@@ -3169,24 +3157,24 @@ function saveDayData() {
     return;
   }
   const date = document.getElementById('inp-date').value;
-  const produced = Number(document.getElementById('inp-produced').value) || 0;
-  const broken = Number(document.getElementById('inp-broken').value) || 0;
-  const price = Number(document.getElementById('inp-price').value) || 0;
-  const soldTotal = Number(document.getElementById('inp-sold-total').value) || 0;
-  const freePlates = Number(document.getElementById('inp-free-plates').value) || 0;
-  const feedIn = Number(document.getElementById('inp-feed-in').value) || 0;
-  const feedPrice = Number(document.getElementById('inp-feed-price').value) || 0;
-  const feedUsed = Number(document.getElementById('inp-feed-used').value) || 0;
+  const produced = Number(document.getElementById('inp-produced')?.value) || 0;
+  const broken = Number(document.getElementById('inp-broken')?.value) || 0;
+  const price = 0; // Removed
+  const soldTotal = Number(document.getElementById('inp-sold-total')?.value) || 0;
+  const freePlates = Number(document.getElementById('inp-free-plates')?.value) || 0;
+  const feedIn = Number(document.getElementById('inp-feed-in')?.value) || 0;
+  const feedPrice = 0; // Removed
+  const feedUsed = Number(document.getElementById('inp-feed-used')?.value) || 0;
   const dead = Number(document.getElementById('inp-dead').value) || 0;
-  const waterCost = Number(document.getElementById('inp-water-cost').value) || 0;
-  const manureIncome = Number(document.getElementById('inp-manure-income').value) || 0;
+  const waterCost = 0;
+  const manureIncome = 0;
   const expenses = 0; // ملغى — أصبحت مصاريف منفصلة لكل شريك
   const ownerAdvance = Number(document.getElementById('inp-owner-advance')?.value) || 0;
   const notes = document.getElementById('inp-notes').value.trim();
   const specialPlates = Number(document.getElementById('inp-special-plates')?.value) || 0;
   const specialSingles = Number(document.getElementById('inp-special-singles')?.value) || 0;
   const specialSold = Number(document.getElementById('inp-special-sold')?.value) || 0;
-  const specialPrice = Number(document.getElementById('inp-special-price')?.value) || 0;
+  const specialPrice = 0;
   const specialIncome = specialPlates * specialPrice + specialSingles * (specialPrice / 12);
   const isPaid = _paymentStatus === 'paid';
   const farsimon = isPaid ? 0 : (Number(document.getElementById('inp-farsimon')?.value) || 0);
@@ -3200,28 +3188,15 @@ function saveDayData() {
   const soldGroups = Math.floor(soldTotal / 12);
   const soldSingle = soldTotal % 12;
   const income = soldTotal * price;
-  const feedCost = feedIn * feedPrice;
+  
 
   // Collect advances
   // Dust-worker advances are tracked separately and NOT deducted from baseProfit (they come out of dust profit)
   const _workersForCalc = DB.get('workers') || [];
   const _dustIds = new Set(_workersForCalc.filter(w => w.isDustWorker).map(w => String(w.id)));
-  const advRows = document.querySelectorAll('.advance-row');
   const advancesThisDay = [];
   let workerAdvancesTotal = 0;
   let dustWorkerAdvancesToday = 0;
-  advRows.forEach(row => {
-    const workerId = row.querySelector('.adv-worker-select').value;
-    const amount = Number(row.querySelector('.adv-amount').value) || 0;
-    if (workerId && amount > 0) {
-      advancesThisDay.push({ workerId, amount, date });
-      if (_dustIds.has(String(workerId))) {
-        dustWorkerAdvancesToday += amount;
-      } else {
-        workerAdvancesTotal += amount;
-      }
-    }
-  });
 
   const settings = DB.get('settings') || defaultSettings();
   const baseFeedPrice = Number(settings.feedPrice) || 0;
@@ -3325,7 +3300,7 @@ function showSaleReceipt(log) {
     <div class="receipt-divider"></div>
     <div class="receipt-row"><span>الكرطونات المباعة</span><span>${fmt(log.soldGroups)} كرطون</span></div>
     ${log.soldSingle > 0 ? `<div class="receipt-row"><span>الفردي المباع</span><span>${fmt(log.soldSingle)} بلاكة</span></div>` : ''}
-    <div class="receipt-row no-print"><span>سعر البلاكة</span><span>${fmt(log.price, 'دج')}</span></div>
+    
     <div class="receipt-divider no-print"></div>
     <div class="receipt-row receipt-total no-print"><span>المبلغ الكلي</span><span>${fmt(log.income, 'دج')}</span></div>
     <div class="receipt-row" style="color:var(--blue)"><span>الفارسمون (المدفوع)</span><span><strong>${fmt(log.farsimon || 0, 'دج')}</strong></span></div>
@@ -3353,7 +3328,7 @@ function renderDailyReportOutput(log) {
         <div class="report-row"><span>الصافي</span><strong class="positive">${fmt(log.netEggs)} بلاكة</strong></div>
         <div class="report-row"><span>الكرطونات (12×)</span><strong>${fmt(log.koliates)} كرطون</strong></div>
         <div class="report-row"><span>الفردي المتبقي</span><strong>${fmt(log.singleLeft)} بلاكة</strong></div>
-        <div class="report-row"><span>سعر البلاكة</span><strong>${fmt(log.price, 'دج')}</strong></div>
+        
         <div class="report-row"><span>الكرطونات المباعة</span><strong>${fmt(log.soldGroups)}</strong></div>
         <div class="report-row"><span>الفردي المباع</span><strong>${fmt(log.soldSingle)}</strong></div>
         <div class="report-row"><span>مجاني/استهلاك</span><strong>${fmt(log.freePlates || 0)} بلاكة</strong></div>
@@ -3444,7 +3419,7 @@ function showDailyLogDetails(id) {
         <div class="report-row"><span>الصافي</span><strong class="positive">${fmt(log.netEggs)} بلاكة</strong></div>
         <div class="report-row"><span>الكرطونات (12×)</span><strong>${fmt(log.koliates)} كرطون</strong></div>
         <div class="report-row"><span>الفردي المتبقي</span><strong>${fmt(log.singleLeft)} بلاكة</strong></div>
-        <div class="report-row"><span>سعر البلاكة</span><strong>${fmt(log.price, 'دج')}</strong></div>
+        
         <div class="report-row"><span>الكرطونات المباعة</span><strong>${fmt(log.soldGroups)}</strong></div>
         <div class="report-row"><span>الفردي المباع</span><strong>${fmt(log.soldSingle)}</strong></div>
         <div class="report-row"><span>مجاني/استهلاك</span><strong>${fmt(log.freePlates || 0)} بلاكة</strong></div>
@@ -3564,10 +3539,7 @@ function printDailyLogDetails() {
 
 function clearDailyForm() {
   setPaymentStatus('paid');
-  ['inp-produced', 'inp-broken', 'inp-price', 'inp-sold-total', 'inp-free-plates',
-    'inp-feed-in', 'inp-feed-price', 'inp-feed-used', 'inp-dead', 'inp-water-cost', 'inp-manure-income',
-    'inp-owner-advance', 'inp-notes', 'inp-special-plates', 'inp-special-singles', 'inp-special-price',
-    'inp-farsimon', 'inp-sale-client'].forEach(id => {
+  ['inp-produced', 'inp-broken', 'inp-sold-total', 'inp-free-plates', 'inp-feed-in', 'inp-feed-used', 'inp-dead', 'inp-notes', 'inp-farsimon', 'inp-sale-client'].forEach(id => {
       const el = document.getElementById(id);
       if (el) el.value = '';
     });
@@ -3614,6 +3586,7 @@ function renderSalesFeedPage() {
 function renderSalesTable() {
   const logs = DB.get('daily_logs') || [];
   const tbody = document.getElementById('sales-tbody');
+  if (!tbody) return;   // sales page not present in this build
   let totalIncome = 0;
   let totalSpecialIncome = 0;
   let totalProfit = 0;
@@ -4554,6 +4527,7 @@ function renderFeedPage() {
   const logs = DB.get('daily_logs') || [];
   const settings = DB.get('settings') || defaultSettings();
   const tbody = document.getElementById('feed-tbody');
+  if (!tbody) return;   // feed page not present in this build
   const threshold = Number(settings.feedAlertThreshold) || 100;
 
   let runningBal = Number(settings.initialFeed) || 0;
@@ -5438,7 +5412,7 @@ function renderPartnerFinancialSummary(logs, settings) {
 
   // ── Fixed cost deductions (same formula as getTotalNetProfit) ──
   const chickensCost   = (Number(settings.initialChickens) || 0) * (Number(settings.chickenPrice) || 0);
-  const feedCost       = (Number(settings.initialFeed)     || 0) * (Number(settings.feedPrice)    || 0);
+  
   const loyer          = Number(settings.loyer)       || 0;
   const repairLoyer    = Number(settings.repairLoyer)  || 0;
   const repairTotal    = Number(settings.repairTotal)  || 0;
@@ -5636,9 +5610,7 @@ function loadSettingsForm() {
   document.getElementById('farm-owner').value = s.owner || '';
   document.getElementById('farm-chickens').value = s.initialChickens || '';
   document.getElementById('farm-feed-init').value = s.initialFeed || '';
-  document.getElementById('farm-chicken-price').value = s.chickenPrice || '';
-  document.getElementById('farm-feed-price').value = s.feedPrice || '';
-  document.getElementById('feed-alert-threshold').value = s.feedAlertThreshold || 100;
+      document.getElementById('feed-alert-threshold').value = s.feedAlertThreshold || 100;
   document.getElementById('broken-alert-pct').value = s.brokenAlertPct || 5;
   const loyerEl = document.getElementById('farm-loyer');
   const elecEl  = document.getElementById('farm-electricity');
@@ -5711,8 +5683,8 @@ function saveSettings() {
     owner: document.getElementById('farm-owner').value || '',
     initialChickens: Number(document.getElementById('farm-chickens').value) || 0,
     initialFeed: Number(document.getElementById('farm-feed-init').value) || 0,
-    chickenPrice: Number(document.getElementById('farm-chicken-price').value) || 0,
-    feedPrice: Number(document.getElementById('farm-feed-price').value) || 0,
+    
+    
     feedAlertThreshold: Number(document.getElementById('feed-alert-threshold').value) || 100,
     brokenAlertPct: Number(document.getElementById('broken-alert-pct').value) || 5,
     deletePassword: existing.deletePassword || '1234',
@@ -6426,7 +6398,7 @@ function updateBroilerCalc() {
 
   const feedKg    = parseFloat(el('binp-feed-kg')?.value) || 0;
   const feedPrice = parseFloat(el('binp-feed-price')?.value) || 0;
-  const feedCost  = feedKg * feedPrice;
+  
   const totalFeedKg = logs.reduce((s,l) => s+(l.feedKg||0), 0) + feedKg;
 
   if (el('bprev-feed-cost')) el('bprev-feed-cost').textContent = feedCost ? fmt(feedCost,'دج') : '—';
@@ -6784,7 +6756,7 @@ function renderBroilerReportsPage() {
 
   // Financials
   const chicksInitial = (cycle.chicksCount || 0) * (cycle.chickPrice || 0);
-  const feedCost = logs.reduce((s, l) => s + (l.feedKg * (l.feedPrice || 0)), 0);
+  
   const waterMeds = logs.reduce((s, l) => s + ((l.waterCost || 0) + (l.medsCost || 0)), 0);
   const beddingHeating = (cycle.beddingCost || 0) + (cycle.heatingCost || 0);
   const totalCost = chicksInitial + feedCost + waterMeds + beddingHeating;
@@ -7084,7 +7056,7 @@ function openBroilerStatement(partnerId) {
   const bS = DB.get('broiler_settings') || {};
   const fixedCosts = (bS.loyer||0)+(bS.electricity||0)+(bS.misc||0);
   const chiCost = cycle ? (cycle.chicksCount||0)*(cycle.chickPrice||0) : 0;
-  const feedCost = logs.reduce((s,l)=>s+(l.feedKg*(l.feedPrice||0)),0);
+  
   const waterMeds = logs.reduce((s,l)=>s+((l.waterCost||0)+(l.medsCost||0)),0);
   const totalCost = chiCost+feedCost+waterMeds+(cycle?.beddingCost||0)+(cycle?.heatingCost||0)+fixedCosts;
   const profit = totalIncome - totalCost;
@@ -7778,7 +7750,7 @@ function exitFactory() {
 /* =====================================================================
    GLOBAL CREDITS SYSTEM
    ===================================================================== */
-function toggleGlobalCredits() {
+function toggleGlobalCreditsOLD() {
   const popup = document.getElementById('global-credits-popup');
   if (!popup) return;
   if (popup.style.display !== 'none') {
@@ -7808,14 +7780,14 @@ function renderGlobalCredits() {
   const credits = getGlobalCredits();
 
   if (!credits.length) {
-    contentEl.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px">Ù„Ø§ ØªÙˆØ¬Ø¯ Ø£ÙŠ Ø¯ÙŠÙˆÙ† Ù…Ø³Ø¬Ù„Ø©.</div>';
+    contentEl.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px">لا توجد أي ديون مسجلة.</div>';
     return;
   }
 
   // Aggregate by client
   const clients = {};
   credits.forEach(c => {
-    const name = c.clientName || 'Ø¨Ø¯ÙˆÙ† Ø§Ø³Ù…';
+    const name = c.clientName || 'بدون اسم';
     if (!clients[name]) clients[name] = 0;
     // debts are positive, payments are negative
     if (c.type === 'payment') {
@@ -7828,7 +7800,7 @@ function renderGlobalCredits() {
   const activeClients = Object.keys(clients); // Fixed to include all clients
 
   if (!activeClients.length) {
-    contentEl.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px">Ù„Ø§ ØªÙˆØ¬Ø¯ Ø¯ÙŠÙˆÙ† Ù†Ø´Ø·Ø©.</div>';
+    contentEl.innerHTML = '<div style="text-align:center;color:var(--text-secondary);padding:20px">لا توجد ديون نشطة.</div>';
     return;
   }
 
@@ -7837,9 +7809,9 @@ function renderGlobalCredits() {
     const totalDebt = clients[clientName];
     html += `
       <div class="kpi-card" style="cursor:pointer;border:1px solid rgba(72,187,120,0.3)" onclick="showClientDetails('${clientName}')">
-        <div style="font-size:1.1rem;font-weight:700;margin-bottom:8px">ðŸ‘¤ ${clientName}</div>
-        <div style="color:var(--red);font-weight:800;font-size:1.2rem">${fmt(totalDebt, 'Ø¯Ø¬')}</div>
-        <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:6px">Ø§Ù†Ù‚Ø± Ù„Ø¹Ø±Ø¶ Ø§Ù„Ø³Ø¬Ù„ Ø¨Ø§Ù„ØªÙØµÙŠÙ„</div>
+        <div style="font-size:1.1rem;font-weight:700;margin-bottom:8px">👤 ${clientName}</div>
+        <div style="color:var(--red);font-weight:800;font-size:1.2rem">${fmt(totalDebt, 'دج')}</div>
+        <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:6px">انقر لعرض السجل بالتفصيل</div>
       </div>
     `;
   });
@@ -7858,7 +7830,7 @@ function addManualGlobalCredit() {
   const desc = descInput.value.trim();
 
   if (!clientName) {
-    return showToast('Ø§Ù„Ø±Ø¬Ø§Ø¡ Ø¥Ø¯Ø®Ø§Ù„ Ø§Ø³Ù… Ø§Ù„Ø²Ø¨ÙˆÙ†', 'error');
+    return showToast('الرجاء إدخال اسم الزبون', 'error');
   }
 
   const credits = getGlobalCredits();
@@ -7867,8 +7839,8 @@ function addManualGlobalCredit() {
     date: todayStr(),
     clientName,
     factoryId: 'manual',
-    factoryName: 'Ø¥Ø¶Ø§ÙØ© ÙŠØ¯ÙˆÙŠØ©',
-    description: desc || 'Ø¯ÙŠÙ† Ù…Ù† Ø¥Ø¶Ø§ÙØ© ÙŠØ¯ÙˆÙŠØ©',
+    factoryName: 'إضافة يدوية',
+    description: desc || 'دين من إضافة يدوية',
     amount,
     type: 'debt'
   });
@@ -7878,7 +7850,7 @@ function addManualGlobalCredit() {
   amountInput.value = '';
   descInput.value = '';
 
-  showToast('ØªÙ… Ø¥Ø¶Ø§ÙØ© Ø§Ù„Ø¯ÙŠÙ† Ø¨Ù†Ø¬Ø§Ø­');
+  showToast('تم إضافة الدين بنجاح');
   renderGlobalCredits();
 }
 
@@ -7892,18 +7864,18 @@ function showClientDetails(clientName) {
   credits.sort((a, b) => parseDateKey(b.date) - parseDateKey(a.date));
 
   const modal = document.getElementById('modal-client-credits');
-  document.getElementById('client-credits-title').textContent = `Ø³Ø¬Ù„ Ø§Ù„Ø¯ÙŠÙˆÙ† Ù„Ø²Ø¨ÙˆÙ†: ${clientName}`;
+  document.getElementById('client-credits-title').textContent = `سجل الديون لزبون: ${clientName}`;
   document.getElementById('client-pay-amount').value = '';
 
   let html = `
     <table class="data-table" style="margin-top:10px">
       <thead>
         <tr>
-          <th>Ø§Ù„ØªØ§Ø±ÙŠØ®</th>
-          <th>Ø§Ù„Ù…ØµØ¯Ø±</th>
-          <th>Ø§Ù„ÙˆØµÙ</th>
-          <th>Ø¯ÙŠÙ† (Ø£Ø®Ø°)</th>
-          <th>Ø³Ø¯Ø§Ø¯ (Ø¯ÙØ¹)</th>
+          <th>التاريخ</th>
+          <th>المصدر</th>
+          <th>الوصف</th>
+          <th>دين (أخذ)</th>
+          <th>سداد (دفع)</th>
         </tr>
       </thead>
       <tbody>
@@ -7918,7 +7890,7 @@ function showClientDetails(clientName) {
     html += `
       <tr>
         <td>${fmtDate(c.date)}</td>
-        <td><span class="chip chip-gray">${c.factoryName || 'ØºÙŠØ± Ù…Ø­Ø¯Ø¯'}</span></td>
+        <td><span class="chip chip-gray">${c.factoryName || 'غير محدد'}</span></td>
         <td style="font-size:0.8rem">${c.description || '-'}</td>
         <td style="color:var(--red)">${!isPay ? fmt(c.amount) : '-'}</td>
         <td style="color:var(--green);font-weight:bold">${isPay ? fmt(c.amount) : '-'}</td>
@@ -7928,8 +7900,8 @@ function showClientDetails(clientName) {
 
   html += `
       <tr style="background:rgba(0,0,0,0.2)">
-        <td colspan="3" style="text-align:left;font-weight:bold">Ø§Ù„Ø±ØµÙŠØ¯ Ø§Ù„ÙƒÙ„ÙŠ:</td>
-        <td colspan="2" style="font-weight:bold;font-size:1.1rem;color:var(--red)">${fmt(totalDebt, 'Ø¯Ø¬')}</td>
+        <td colspan="3" style="text-align:left;font-weight:bold">الرصيد الكلي:</td>
+        <td colspan="2" style="font-weight:bold;font-size:1.1rem;color:var(--red)">${fmt(totalDebt, 'دج')}</td>
       </tr>
       </tbody>
     </table>
@@ -7945,7 +7917,7 @@ function addGlobalCreditPayment() {
   const amount = Number(amountInput.value);
 
   if (!amount || amount <= 0) {
-    return showToast('Ø§Ù„Ø±Ø¬Ø§Ø¡ Ø¥Ø¯Ø®Ø§Ù„ Ù…Ø¨Ù„Øº ØµØ­ÙŠØ­', 'error');
+    return showToast('الرجاء إدخال مبلغ صحيح', 'error');
   }
 
   const credits = getGlobalCredits();
@@ -7954,28 +7926,28 @@ function addGlobalCreditPayment() {
     date: todayStr(),
     clientName: _currentViewClient,
     factoryId: 'payment',
-    factoryName: 'ØªØ³Ø¯ÙŠØ¯ Ø¯ÙŠÙˆÙ†',
-    description: 'ØªØ³Ø¯ÙŠØ¯ Ø¯ÙØ¹Ø© Ù†Ù‚Ø¯ÙŠØ©',
+    factoryName: 'تسديد ديون',
+    description: 'تسديد دفعة نقدية',
     amount,
     type: 'payment'
   });
   setGlobalCredits(credits);
 
   amountInput.value = '';
-  showToast('ØªÙ… ØªØ³Ø¬ÙŠÙ„ Ø§Ù„Ø¯ÙØ¹Ø© Ø¨Ù†Ø¬Ø§Ø­!');
+  showToast('تم تسجيل الدفعة بنجاح!');
   showClientDetails(_currentViewClient); // refresh modal
   renderGlobalCredits(); // refresh cards behind it
 }
 
 function deleteCurrentGlobalClient() {
   if (!_currentViewClient) return;
-  if (!confirm(`Ù‡Ù„ Ø£Ù†Øª Ù…ØªØ£ÙƒØ¯ Ù…Ù† Ø­Ø°Ù Ø­Ø³Ø§Ø¨ Ø§Ù„Ø²Ø¨ÙˆÙ† "${_currentViewClient}" Ø¨Ø¬Ù…ÙŠØ¹ Ø¹Ù…Ù„ÙŠØ§ØªÙ‡ØŸ Ù„Ø§ ÙŠÙ…ÙƒÙ† Ø§Ù„ØªØ±Ø§Ø¬Ø¹ Ø¹Ù† Ù‡Ø°Ø§ Ø§Ù„Ø¥Ø¬Ø±Ø§Ø¡.`)) return;
+  if (!confirm(`هل أنت متأكد من حذف حساب الزبون "${_currentViewClient}" بجميع عملياته؟ لا يمكن التراجع عن هذا الإجراء.`)) return;
   
   const credits = getGlobalCredits().filter(c => c.clientName !== _currentViewClient);
   setGlobalCredits(credits);
   
   document.getElementById('modal-client-credits').classList.remove('open');
-  showToast('ØªÙ… Ø­Ø°Ù Ø­Ø³Ø§Ø¨ Ø§Ù„Ø²Ø¨ÙˆÙ† Ø¨Ù†Ø¬Ø§Ø­');
+  showToast('تم حذف حساب الزبون بنجاح');
   renderGlobalCredits();
 }
 
@@ -8004,10 +7976,10 @@ function migrateCreditsOnce() {
           globalCredits.push({
             id: c.id || Date.now() + Math.random(),
             date: c.date || todayStr(),
-            clientName: c.clientName || 'Ø²Ø¨ÙˆÙ† Ù…Ù† Ø§Ù„Ø£Ø±Ø´ÙŠÙ',
+            clientName: c.clientName || 'زبون من الأرشيف',
             factoryId: f.id,
             factoryName: f.name,
-            description: c.description || 'Ù†Ù‚Ù„ Ù…Ù† Ø§Ù„Ù†Ø¸Ø§Ù… Ø§Ù„Ù‚Ø¯ÙŠÙ…',
+            description: c.description || 'نقل من النظام القديم',
             amount: c.amount,
             type: 'debt'
           });
@@ -8605,3 +8577,1123 @@ async function handleFactoryImport(file) {
 }
 
 /* ===================== END SMART EXCEL IMPORT ===================== */
+
+
+function togglePurchaseBatches() {
+  const popup = document.getElementById('global-credits-popup');
+  if (popup) {
+    if (popup.style.display === 'none' || popup.style.display === '') {
+      popup.style.display = 'block';
+      if (typeof renderSuppliersList === 'function') renderSuppliersList();
+    } else {
+      popup.style.display = 'none';
+    }
+  }
+}
+
+function toggleGlobalWorkersPanel() {
+  const p = document.getElementById('global-workers-panel');
+  if (p) {
+    if (p.style.display === 'none' || p.style.display === '') {
+      p.style.display = 'block';
+      if (typeof renderGlobalWorkers === 'function') renderGlobalWorkers();
+    } else {
+      p.style.display = 'none';
+    }
+  }
+}
+
+
+/* =====================================================================
+   دفعات الشراء — دفتر حسابات الموردين
+   Suppliers ledger + Excel invoice import.
+   Storage is global (per owner), mirroring the factory-list pattern.
+   ===================================================================== */
+
+const SUP_COLL = { suppliers: 'supplier_list', tx: 'supplier_tx', invoices: 'supplier_invoices' };
+
+function supOwnerUid() {
+  return EFFECTIVE_OWNER_UID || (CURRENT_USER && CURRENT_USER.uid) || 'default';
+}
+function supStoreKey(coll) { return `zohir_${coll}_${supOwnerUid()}`; }
+function supCloudId(coll) { return `${coll}_${supOwnerUid()}`; }
+
+function supRead(coll) {
+  try { return JSON.parse(localStorage.getItem(supStoreKey(coll))) || []; }
+  catch (e) { return []; }
+}
+function supWrite(coll, arr) {
+  localStorage.setItem(supStoreKey(coll), JSON.stringify(arr));
+  try {
+    fs.collection('app_data').doc(supCloudId(coll))
+      .set({ data: arr, lastUpdated: new Date().toISOString() })
+      .catch(e => console.warn('[suppliers] cloud sync', coll, e));
+  } catch (e) { console.warn('[suppliers] cloud sync', coll, e); }
+}
+
+function getSuppliers() { return supRead(SUP_COLL.suppliers); }
+function setSuppliers(a) { supWrite(SUP_COLL.suppliers, a); }
+function getSupplierTx() { return supRead(SUP_COLL.tx); }
+function setSupplierTx(a) { supWrite(SUP_COLL.tx, a); }
+function getSupplierInvoices() { return supRead(SUP_COLL.invoices); }
+function setSupplierInvoices(a) { supWrite(SUP_COLL.invoices, a); }
+
+let _currentSupplierId = null;
+let _supplierLedgerPage = 0;
+let _supplierImportPreview = null;
+
+/* ---------------------------------------------------------------
+   Balance:  goods (+) and adjustments (+) raise what we owe,
+             payments (−) reduce it.
+   Positive = the factory owes the supplier.
+   --------------------------------------------------------------- */
+function supplierTxOf(supplierId) {
+  return getSupplierTx().filter(t => t.supplierId === supplierId);
+}
+function supplierBalance(supplierId) {
+  const sup = getSuppliers().find(s => s.id === supplierId);
+  let bal = Number(sup && sup.openingBalance) || 0;
+  supplierTxOf(supplierId).forEach(t => {
+    const amt = Number(t.amount) || 0;
+    bal += (t.kind === 'payment') ? -amt : amt;
+  });
+  return bal;
+}
+
+/* =====================================================================
+   INVOICE FILE PARSER
+   ---------------------------------------------------------------------
+   Input: rows = XLSX.utils.sheet_to_json(ws, { header:1, defval:'' })
+   Columns: A=0 التاريخ | B=1 المستودع | C=2 الكمية | D=3 السعر
+            E=4 الناتج | F=5 الدفع    | G=6 الملاحظات      (H+ ignored)
+
+   Each block is one weekly invoice, anchored on a row whose column E
+   starts with "Facture". Blocks are processed in PHYSICAL order — the
+   dates contain entry errors and duplicates, so sorting by date would
+   break the carry-over chain.
+   ===================================================================== */
+const SUP_COL = { DATE: 0, WH: 1, QTY: 2, PRICE: 3, GOODS: 4, PAY: 5, NOTE: 6 };
+const SUP_EPS = 0.005;
+
+function supCell(row, i) {
+  if (!row) return '';
+  const v = row[i];
+  return (v === null || v === undefined) ? '' : v;
+}
+function supStr(v) {
+  if (v === null || v === undefined) return '';
+  if (v instanceof Date) return v.toISOString();
+  return String(v).trim();
+}
+function supNormAr(v) {
+  return supStr(v).toLowerCase()
+    .replace(/[ً-ْـ]/g, '')
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/[ىي]/g, 'ي')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function supEq(a, b) { return Math.abs(a - b) < SUP_EPS; }
+function supBlank(v) { return v === null || v === undefined || String(v).trim() === ''; }
+
+// Handles 448400, "448,400.00", "1 605 000,00", "(1200)", "1200-"
+function supParseNum(raw) {
+  if (raw === null || raw === undefined || raw === '') return 0;
+  if (typeof raw === 'number') return isFinite(raw) ? raw : 0;
+  if (raw instanceof Date) return 0;
+  let s = String(raw).trim();
+  if (!s) return 0;
+
+  let sign = 1;
+  let m = s.match(/^\(\s*(.+?)\s*\)$/);
+  if (m) { sign = -1; s = m[1]; }
+  m = s.match(/^(.+?)\s*-$/);
+  if (m) { sign = -1; s = m[1]; }
+  if (/^-/.test(s)) { sign = -1; s = s.replace(/^-\s*/, ''); }
+
+  s = s.replace(/[\s  ٬]/g, '');
+  s = s.replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x0660));
+  s = s.replace(/[^\d.,]/g, '');
+  if (!s) return 0;
+
+  const dots = (s.match(/\./g) || []).length;
+  const commas = (s.match(/,/g) || []).length;
+  if (dots && commas) {
+    if (s.lastIndexOf('.') > s.lastIndexOf(',')) s = s.replace(/,/g, '');
+    else s = s.replace(/\./g, '').replace(',', '.');
+  } else if (commas) {
+    const parts = s.split(',');
+    if (commas > 1 || parts[parts.length - 1].length === 3) s = s.replace(/,/g, '');
+    else s = s.replace(',', '.');
+  } else if (dots > 1) {
+    s = s.replace(/\./g, '');
+  }
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : sign * n;
+}
+
+const SUP_MONTHS = {
+  'janvier': 1, 'janv': 1, 'fevrier': 2, 'février': 2, 'fevr': 2, 'mars': 3,
+  'avril': 4, 'avr': 4, 'mai': 5, 'juin': 6, 'juillet': 7, 'juil': 7,
+  'aout': 8, 'août': 8, 'septembre': 9, 'sept': 9, 'octobre': 10, 'oct': 10,
+  'novembre': 11, 'nov': 11, 'decembre': 12, 'décembre': 12, 'dec': 12, 'déc': 12,
+  'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
+  'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12,
+  'جانفي': 1, 'يناير': 1, 'فيفري': 2, 'فبراير': 2, 'مارس': 3, 'افريل': 4, 'ابريل': 4,
+  'ماي': 5, 'مايو': 5, 'جوان': 6, 'يونيو': 6, 'جويلية': 7, 'يوليو': 7,
+  'اوت': 8, 'اغسطس': 8, 'سبتمبر': 9, 'اكتوبر': 10, 'نوفمبر': 11, 'ديسمبر': 12
+};
+
+function supIso(y, mo, d) {
+  return String(y).padStart(4, '0') + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+}
+function supFromSerial(n) {
+  const d = new Date(Date.UTC(1899, 11, 30) + Math.round(n) * 86400000);
+  if (isNaN(d.getTime())) return null;
+  return supIso(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+}
+
+// → 'YYYY-MM-DD' or null. Day always comes first (d/m/yyyy).
+function supParseDate(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (v instanceof Date) {
+    if (isNaN(v.getTime())) return null;
+    return supIso(v.getUTCFullYear(), v.getUTCMonth() + 1, v.getUTCDate());
+  }
+  if (typeof v === 'number') return (v > 20000 && v < 80000) ? supFromSerial(v) : null;
+
+  const s = String(v).trim();
+  if (!s) return null;
+
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return supIso(+m[1], +m[2], +m[3]);
+
+  m = s.match(/^(\d{1,2})\s+([^\s\d]+)\.?\s+(\d{4})$/);
+  if (m) {
+    const mo = SUP_MONTHS[m[2].toLowerCase()];
+    if (mo) return supIso(+m[3], mo, +m[1]);
+  }
+
+  m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (m) {
+    let y = +m[3];
+    if (y < 100) y += 2000;
+    return supIso(y, +m[2], +m[1]);
+  }
+
+  if (/^\d{5}$/.test(s)) return supFromSerial(+s);
+  return null;
+}
+
+function supIsAnchor(row) { return /^facture/i.test(supStr(supCell(row, SUP_COL.GOODS))); }
+function supIsHeader(row) { return supNormAr(supCell(row, SUP_COL.DATE)) === 'التاريخ'; }
+function supIsTotalRow(row) { return supNormAr(supCell(row, SUP_COL.NOTE)) === 'المجموع'; }
+function supIsBalanceRow(row) { return supNormAr(supCell(row, SUP_COL.NOTE)) === 'الباقي'; }
+function supIsEmptyRow(row) {
+  if (!row) return true;
+  for (let i = SUP_COL.DATE; i <= SUP_COL.NOTE; i++) if (!supBlank(supCell(row, i))) return false;
+  return true;
+}
+// "Reste" / "Rerste" in column B is a carry marker, not a warehouse.
+function supIsResteMarker(v) { return /^re+r?ste$/i.test(supStr(v).replace(/\s+/g, '')); }
+
+function supInvoiceDateFrom(text) {
+  const m = String(text).match(/(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{2,4})/);
+  if (m) {
+    let y = +m[3];
+    if (y < 100) y += 2000;
+    return supIso(y, +m[2], +m[1]);
+  }
+  return supParseDate(String(text).replace(/^[^:]*:\s*/, '').trim());
+}
+
+function parseSupplierSheet(rows, supplierName, options) {
+  options = options || {};
+  rows = rows || [];
+
+  const warnings = [];
+  const transactions = [];
+  const invoices = [];
+  const warn = (code, message, row) => warnings.push({ code, message, row: row == null ? null : row });
+
+  /* 1. every block anchor, in physical order */
+  const anchors = [];
+  for (let r = 0; r < rows.length; r++) if (supIsAnchor(rows[r])) anchors.push(r);
+
+  if (!anchors.length) {
+    return {
+      ok: false, supplierName, invoices: [], transactions: [],
+      warnings: [{ code: 'no-invoices', message: 'لم يُعثر على أي فاتورة — لا يوجد صف يبدأ بـ «Facture» في العمود E.', row: null }],
+      warehouses: [], totals: { goods: 0, payments: 0, goodsCount: 0, paymentCount: 0, adjustCount: 0 },
+      finalBalance: 0
+    };
+  }
+
+  /* name written inside the file (row just above the first anchor) */
+  let declaredName = '';
+  for (let k = anchors[0] - 1; k >= 0 && k >= anchors[0] - 4; k--) {
+    const nm = supStr(supCell(rows[k], SUP_COL.DATE));
+    if (nm) { declaredName = nm; break; }
+  }
+  if (declaredName && supplierName && supNormAr(declaredName) !== supNormAr(supplierName)) {
+    warn('name-mismatch',
+      `اسم المورد داخل الملف («${declaredName}») يخالف اسم الملف («${supplierName}»). تم اعتماد اسم الملف.`,
+      anchors[0]);
+  }
+
+  let running = Number(options.openingBalance) || 0;
+  let totalGoods = 0, totalPayments = 0;
+  let goodsCount = 0, paymentCount = 0, adjustCount = 0;
+  const warehouses = {};
+  const thisYear = new Date().getFullYear();
+
+  for (let bi = 0; bi < anchors.length; bi++) {
+    const start = anchors[bi];
+    const end = (bi + 1 < anchors.length) ? anchors[bi + 1] - 1 : rows.length - 1;
+
+    const invoiceDate = supInvoiceDateFrom(supStr(supCell(rows[start], SUP_COL.GOODS)));
+    if (!invoiceDate) {
+      warn('bad-invoice-date',
+        `تعذّر قراءة تاريخ الفاتورة من «${supStr(supCell(rows[start], SUP_COL.GOODS))}».`, start);
+    }
+
+    let headerIdx = -1, totalIdx = -1, balanceIdx = -1;
+    for (let i = start; i <= end; i++) {
+      if (headerIdx === -1 && supIsHeader(rows[i])) headerIdx = i;
+      if (totalIdx === -1 && supIsTotalRow(rows[i])) totalIdx = i;
+      if (balanceIdx === -1 && supIsBalanceRow(rows[i])) balanceIdx = i;
+    }
+
+    const dataStart = (headerIdx !== -1 ? headerIdx : start) + 1;
+    const dataEnd = (totalIdx !== -1 ? totalIdx : (balanceIdx !== -1 ? balanceIdx : end + 1)) - 1;
+
+    if (headerIdx === -1) warn('no-header', `فاتورة ${invoiceDate || '?'}: لا يوجد صف رأس (التاريخ).`, start);
+    if (totalIdx === -1) warn('no-total', `فاتورة ${invoiceDate || '?'}: لا يوجد صف «المجموع».`, start);
+
+    const fileTotalGoods = totalIdx !== -1 ? supParseNum(supCell(rows[totalIdx], SUP_COL.GOODS)) : 0;
+    const fileTotalPay = totalIdx !== -1 ? supParseNum(supCell(rows[totalIdx], SUP_COL.PAY)) : 0;
+
+    const hasFileBalance = balanceIdx !== -1;
+    let fileBalance = 0;
+    if (hasFileBalance) fileBalance = supParseNum(supCell(rows[balanceIdx], SUP_COL.PAY));
+    else warn('no-balance', `فاتورة ${invoiceDate || '?'}: لا يوجد صف «الباقي» — اعتُمد الرصيد المحسوب.`, start);
+
+    const dataRows = [];
+    for (let d = dataStart; d <= dataEnd && d < rows.length; d++) {
+      if (supIsEmptyRow(rows[d])) continue;
+      dataRows.push({
+        idx: d,
+        goods: supParseNum(supCell(rows[d], SUP_COL.GOODS)),
+        pay: supParseNum(supCell(rows[d], SUP_COL.PAY)),
+        qty: supParseNum(supCell(rows[d], SUP_COL.QTY)),
+        price: supParseNum(supCell(rows[d], SUP_COL.PRICE)),
+        rawDate: supCell(rows[d], SUP_COL.DATE),
+        warehouse: supStr(supCell(rows[d], SUP_COL.WH)),
+        note: supStr(supCell(rows[d], SUP_COL.NOTE))
+      });
+    }
+
+    /* carry-over line: the previous invoice's balance re-entered by hand.
+       Not a real transaction — excluding it is what keeps the total honest. */
+    let carryRowIdx = -1, carrySide = null;
+    if (!supEq(running, 0)) {
+      const wantGoods = running > 0;
+      const target = Math.abs(running);
+      for (let c = 0; c < dataRows.length; c++) {
+        const dr = dataRows[c];
+        if (!supEq(dr.qty, 0) || !supEq(dr.price, 0)) continue;   // a real goods line
+        if (wantGoods ? supEq(dr.goods, target) : supEq(dr.pay, target)) {
+          carryRowIdx = dr.idx;
+          carrySide = wantGoods ? 'goods' : 'pay';
+          break;
+        }
+      }
+      if (carryRowIdx === -1) {
+        warn('carry-not-found',
+          `فاتورة ${invoiceDate || '?'}: لم يُعثر على سطر ترحيل الرصيد السابق (${fmt(running)}) — سيُعالَج الفرق بسطر تسوية.`,
+          start);
+      }
+    }
+
+    let sumGoods = 0, sumPay = 0, seq = 0;
+    for (const row of dataRows) {
+      let g = row.goods, p = row.pay;
+      if (row.idx === carryRowIdx) {
+        if (carrySide === 'goods') g = 0; else p = 0;
+      }
+
+      const rowDate = supParseDate(row.rawDate);
+      if (rowDate) {
+        const yr = +rowDate.slice(0, 4);
+        if (yr < 2000 || yr > thisYear + 2) {
+          warn('date-out-of-range',
+            `تاريخ خارج المدى المعقول (${rowDate}) في فاتورة ${invoiceDate || '?'} — استُورد كما هو.`, row.idx);
+        }
+      }
+      const effDate = rowDate || invoiceDate;
+
+      // E and F are independent — one row can yield two movements.
+      if (!supEq(g, 0)) {
+        if (row.warehouse && !supIsResteMarker(row.warehouse)) {
+          const key = supNormAr(row.warehouse);
+          if (!warehouses[key]) warehouses[key] = { label: row.warehouse, count: 0 };
+          warehouses[key].count++;
+        }
+        transactions.push({
+          kind: 'goods', date: effDate, warehouse: row.warehouse,
+          qty: supEq(row.qty, 0) ? null : row.qty,
+          price: supEq(row.price, 0) ? null : row.price,
+          amount: g, note: row.note,
+          invoiceDate, invoiceIndex: bi, excelRow: row.idx + 1, seq: seq++
+        });
+        sumGoods += g; totalGoods += g; goodsCount++;
+      }
+      if (!supEq(p, 0)) {
+        transactions.push({
+          kind: 'payment', date: effDate, warehouse: '', qty: null, price: null,
+          amount: p, note: row.note,
+          invoiceDate, invoiceIndex: bi, excelRow: row.idx + 1, seq: seq++
+        });
+        sumPay += p; totalPayments += p; paymentCount++;
+      }
+    }
+
+    /* reconcile against the file's own «الباقي» */
+    const computed = running + sumGoods - sumPay;
+    const effectiveBalance = hasFileBalance ? fileBalance : computed;
+    let adjustment = 0;
+
+    if (!supEq(computed, effectiveBalance)) {
+      adjustment = effectiveBalance - computed;
+      transactions.push({
+        kind: 'adjust', date: invoiceDate, warehouse: '', qty: null, price: null,
+        amount: adjustment,
+        note: 'تسوية افتتاحية للفاتورة ' + (invoiceDate || '?'),
+        invoiceDate, invoiceIndex: bi,
+        excelRow: (balanceIdx !== -1 ? balanceIdx : end) + 1, seq: seq++
+      });
+      adjustCount++;
+    }
+
+    if (totalIdx !== -1 &&
+        !supEq(fileTotalGoods, sumGoods + (carrySide === 'goods' ? Math.abs(running) : 0))) {
+      warn('total-mismatch',
+        `فاتورة ${invoiceDate || '?'}: مجموع الأسطر لا يطابق صف «المجموع» — اعتُمدت قيمة «الباقي».`, totalIdx);
+    }
+
+    invoices.push({
+      index: bi, date: invoiceDate, anchorRow: start + 1,
+      openingBalance: running, sumGoods, sumPayments: sumPay,
+      fileTotalGoods, fileTotalPayments: fileTotalPay,
+      fileBalance: hasFileBalance ? fileBalance : null,
+      computedBalance: computed, adjustment, closingBalance: effectiveBalance,
+      carryRow: carryRowIdx === -1 ? null : carryRowIdx + 1, carrySide
+    });
+
+    // MANDATORY: pin the running balance to the file's own value.
+    running = effectiveBalance;
+  }
+
+  return {
+    ok: true, supplierName, declaredName, invoices, transactions, warnings,
+    warehouses: Object.keys(warehouses).map(k => warehouses[k].label)
+      .sort((a, b) => a.localeCompare(b)),
+    totals: {
+      goods: totalGoods, payments: totalPayments,
+      goodsCount, paymentCount, adjustCount
+    },
+    finalBalance: running
+  };
+}
+
+/* =====================================================================
+   IMPORT FLOW
+   ===================================================================== */
+async function handleSupplierExcelImport(file) {
+  if (!file) return;
+  if (typeof XLSX === 'undefined') {
+    showToast('مكتبة Excel غير محمّلة — تحقّق من الاتصال بالإنترنت', 'error');
+    return;
+  }
+  if (!_currentSupplierId) {
+    showToast('افتح دفتر المورد أولاً', 'error');
+    return;
+  }
+
+  showToast('جاري تحليل الملف...', 'info');
+  try {
+    let workbook;
+    if (/\.csv$/i.test(file.name)) {
+      workbook = XLSX.read(await file.text(), { type: 'string', raw: true });
+    } else {
+      workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: false });
+    }
+
+    // Always the first sheet.
+    const ws = workbook.Sheets[workbook.SheetNames[0]];
+    if (!ws) { showToast('الملف لا يحتوي على أي ورقة', 'error'); return; }
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+    // Supplier name comes from the FILE NAME (one file = one supplier).
+    const fileSupplierName = file.name.replace(/\.(xlsx|xlsm|xls|csv)$/i, '').trim();
+    const sup = getSuppliers().find(s => s.id === _currentSupplierId);
+
+    const result = parseSupplierSheet(rows, fileSupplierName, { openingBalance: 0 });
+
+    if (!result.ok) {
+      showToast(result.warnings[0].message, 'error');
+      return;
+    }
+    if (sup && supNormAr(sup.name) !== supNormAr(fileSupplierName)) {
+      result.warnings.unshift({
+        code: 'target-mismatch',
+        message: `اسم الملف («${fileSupplierName}») يخالف اسم المورد المفتوح («${sup.name}»). سيُستورد إلى «${sup.name}».`,
+        row: null
+      });
+    }
+
+    // Known warehouses → flag genuinely new ones.
+    const known = new Set(
+      getSupplierTx().filter(t => t.kind === 'goods' && t.warehouse)
+        .map(t => supNormAr(t.warehouse))
+    );
+    result.newWarehouses = result.warehouses.filter(w => !known.has(supNormAr(w)));
+
+    _supplierImportPreview = { result, fileName: file.name, supplierId: _currentSupplierId };
+    showSupplierImportPreview();
+  } catch (err) {
+    console.error('[handleSupplierExcelImport]', err);
+    showToast('خطأ أثناء قراءة الملف: ' + err.message, 'error');
+  }
+}
+
+const SUP_WARN_LABEL = {
+  'name-mismatch': '⚠️ اسم المورد',
+  'target-mismatch': '⚠️ المورد الهدف',
+  'date-out-of-range': '📅 تاريخ شاذّ',
+  'carry-not-found': '🔗 ترحيل مفقود',
+  'total-mismatch': '➕ فرق في المجموع',
+  'no-total': '❓ بدون مجموع',
+  'no-balance': '❓ بدون باقي',
+  'no-header': '❓ بدون رأس',
+  'bad-invoice-date': '📅 تاريخ فاتورة'
+};
+
+function showSupplierImportPreview() {
+  const p = _supplierImportPreview;
+  if (!p) return;
+  const r = p.result;
+  const inv = r.invoices;
+  const lastBalance = inv.length ? inv[inv.length - 1].closingBalance : 0;
+
+  const chip = (label, value, color) => `
+    <div style="flex:1;min-width:130px;background:rgba(0,0,0,0.25);border-radius:8px;padding:10px 12px;text-align:center">
+      <div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:4px">${label}</div>
+      <div style="font-weight:800;font-size:1.05rem;color:${color || 'var(--text-primary)'}">${value}</div>
+    </div>`;
+
+  document.getElementById('import-preview-summary').innerHTML =
+    chip('الملف', p.fileName, 'var(--blue)') +
+    chip('عدد الفواتير', inv.length) +
+    chip('حركات بضاعة', r.totals.goodsCount, 'var(--gold)') +
+    chip('حركات دفع', r.totals.paymentCount, 'var(--green)') +
+    chip('إجمالي البضاعة', fmt(r.totals.goods)) +
+    chip('إجمالي المدفوع', fmt(r.totals.payments)) +
+    chip('أسطر تسوية', r.totals.adjustCount, r.totals.adjustCount ? 'var(--gold)' : 'var(--text-secondary)') +
+    chip('الرصيد النهائي', fmt(lastBalance, 'دج'), lastBalance < 0 ? 'var(--red)' : 'var(--green)');
+
+  /* warnings, grouped by code */
+  const wEl = document.getElementById('import-preview-warnings');
+  if (r.warnings.length || (r.newWarehouses || []).length) {
+    const groups = {};
+    r.warnings.forEach(w => { (groups[w.code] = groups[w.code] || []).push(w); });
+    let h = `<div style="border:1px solid rgba(245,197,24,0.35);background:rgba(245,197,24,0.07);border-radius:10px;padding:12px">
+      <div style="font-weight:800;color:var(--gold);margin-bottom:8px">التحذيرات (${r.warnings.length})</div>`;
+    Object.keys(groups).forEach(code => {
+      const list = groups[code];
+      h += `<details style="margin-bottom:6px">
+        <summary style="cursor:pointer;color:var(--text-secondary);font-size:0.85rem">
+          ${SUP_WARN_LABEL[code] || code} — ${list.length}
+        </summary>
+        <div style="max-height:130px;overflow-y:auto;font-size:0.78rem;color:var(--text-secondary);padding:6px 10px 0">
+          ${list.slice(0, 60).map(w => `<div>• ${w.message}${w.row != null ? ` <span style="opacity:.6">(سطر ${w.row + 1})</span>` : ''}</div>`).join('')}
+          ${list.length > 60 ? `<div style="opacity:.6">… و${list.length - 60} أخرى</div>` : ''}
+        </div></details>`;
+    });
+    if ((r.newWarehouses || []).length) {
+      h += `<div style="margin-top:8px;font-size:0.82rem;color:var(--text-secondary)">
+        🏬 مستودعات جديدة (${r.newWarehouses.length}): ${r.newWarehouses.join('، ')}</div>`;
+    }
+    h += '</div>';
+    wEl.innerHTML = h;
+  } else {
+    wEl.innerHTML = '';
+  }
+
+  /* replace-mode switch */
+  const own = supplierTxOf(p.supplierId);
+  const existing = own.filter(t => t.source === 'import').length;
+  const manualCount = own.filter(t => t.source !== 'import').length;
+  const sup = getSuppliers().find(s => s.id === p.supplierId);
+  const opening = Number(sup && sup.openingBalance) || 0;
+
+  let extra = '';
+  if (manualCount || opening) {
+    extra = `<div style="margin-top:8px;font-size:0.8rem;color:var(--gold)">
+      ℹ️ رصيد المورد المعروض سيساوي «الباقي» في الملف زائد
+      ${opening ? `الرصيد الافتتاحي (${fmt(opening)})` : ''}${opening && manualCount ? ' و' : ''}${manualCount ? `${manualCount} حركة يدوية` : ''}.
+    </div>`;
+  }
+
+  document.getElementById('import-preview-suspect').innerHTML = `
+    <label style="display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.2);border-radius:8px;padding:10px 12px;cursor:pointer">
+      <input type="checkbox" id="sup-import-replace" ${existing ? 'checked' : ''} style="width:16px;height:16px" />
+      <span style="font-size:0.86rem">استبدال بيانات هذا المورد بالكامل
+        <span style="color:var(--text-secondary)">(يوجد حالياً ${existing} حركة مستوردة)</span></span>
+    </label>${extra}`;
+
+  /* per-invoice table — the app balance next to the file's own «الباقي» */
+  let t = `<table class="data-table" style="width:100%;font-size:0.8rem">
+    <thead><tr>
+      <th>#</th><th>تاريخ الفاتورة</th><th>بضاعة</th><th>دفع</th>
+      <th>الباقي (الملف)</th><th>رصيد التطبيق</th><th>تسوية</th>
+    </tr></thead><tbody>`;
+  inv.forEach(i => {
+    const match = i.fileBalance === null || supEq(i.closingBalance, i.fileBalance);
+    t += `<tr${i.adjustment ? ' style="background:rgba(245,197,24,0.07)"' : ''}>
+      <td>${i.index + 1}</td>
+      <td>${i.date || '—'}</td>
+      <td style="color:var(--gold)">${fmt(i.sumGoods)}</td>
+      <td style="color:var(--green)">${fmt(i.sumPayments)}</td>
+      <td>${i.fileBalance === null ? '—' : fmt(i.fileBalance)}</td>
+      <td style="font-weight:700;color:${i.closingBalance < 0 ? 'var(--red)' : 'inherit'}">${fmt(i.closingBalance)}</td>
+      <td>${i.adjustment ? fmt(i.adjustment) : '—'} ${match ? '✅' : '❌'}</td>
+    </tr>`;
+  });
+  t += '</tbody></table>';
+  document.getElementById('import-preview-table').innerHTML = t;
+  document.getElementById('import-preview-pagination').innerHTML = '';
+
+  document.getElementById('modal-import-preview').classList.add('open');
+}
+
+/* Atomic commit: build everything in memory, verify, then write once. */
+function commitSupplierImport() {
+  const p = _supplierImportPreview;
+  if (!p) return;
+  const r = p.result;
+  const supplierId = p.supplierId;
+  const sup = getSuppliers().find(s => s.id === supplierId);
+  if (!sup) { showToast('المورد غير موجود', 'error'); return; }
+
+  const replace = !!(document.getElementById('sup-import-replace') || {}).checked;
+
+  const allTx = getSupplierTx();
+  const allInv = getSupplierInvoices();
+
+  // Rows belonging to this supplier that we keep.
+  const keptTx = allTx.filter(t => t.supplierId !== supplierId ||
+    (!replace ? true : t.source !== 'import'));
+  const keptInv = allInv.filter(i => i.supplierId !== supplierId || !replace);
+
+  // Unique key: supplier + invoice date + row inside the invoice + kind.
+  const seen = new Set(
+    keptTx.filter(t => t.supplierId === supplierId && t.source === 'import')
+      .map(t => t.importKey)
+  );
+
+  const newTx = [];
+  let skipped = 0;
+  r.transactions.forEach(t => {
+    const key = `${supplierId}|${t.invoiceDate}|${t.invoiceIndex}|${t.seq}|${t.kind}`;
+    if (seen.has(key)) { skipped++; return; }
+    seen.add(key);
+    newTx.push({
+      id: 'stx_' + t.invoiceIndex + '_' + t.seq + '_' + t.kind + '_' + Date.now().toString(36),
+      supplierId, source: 'import', importKey: key,
+      kind: t.kind, date: t.date, warehouse: t.warehouse,
+      qty: t.qty, price: t.price, amount: t.amount, note: t.note,
+      invoiceDate: t.invoiceDate, invoiceIndex: t.invoiceIndex,
+      excelRow: t.excelRow, seq: t.seq
+    });
+  });
+
+  const newInv = r.invoices.map(i => ({
+    id: 'sinv_' + supplierId + '_' + i.index,
+    supplierId, index: i.index, date: i.date,
+    fileTotalGoods: i.fileTotalGoods, fileTotalPayments: i.fileTotalPayments,
+    fileBalance: i.fileBalance, computedBalance: i.computedBalance,
+    adjustment: i.adjustment, closingBalance: i.closingBalance,
+    openingBalance: i.openingBalance, sumGoods: i.sumGoods, sumPayments: i.sumPayments,
+    carryRow: i.carryRow, anchorRow: i.anchorRow
+  })).filter(i => !keptInv.some(k => k.id === i.id));
+
+  /* MANDATORY verification — replay the imported rows exactly the way the
+     ledger will, and check EVERY invoice against the file's own «الباقي»,
+     not just the last one. Abort the whole import on any mismatch. */
+  const importRows = keptTx
+    .filter(t => t.supplierId === supplierId && t.source === 'import')
+    .concat(newTx);
+
+  let replay = 0;
+  let badInvoice = null;
+  for (const i of r.invoices) {
+    importRows.filter(t => t.invoiceIndex === i.index).forEach(t => {
+      const a = Number(t.amount) || 0;
+      replay += (t.kind === 'payment') ? -a : a;
+    });
+    if (!supEq(replay, i.closingBalance)) { badInvoice = { i, replay }; break; }
+  }
+
+  const expected = r.invoices.length ? r.invoices[r.invoices.length - 1].closingBalance : 0;
+  if (badInvoice || !supEq(replay, expected)) {
+    document.getElementById('modal-import-preview').classList.remove('open');
+    const msg = badInvoice
+      ? `❌ فشل التحقّق عند فاتورة ${badInvoice.i.date}: رصيد التطبيق ${fmt(badInvoice.replay)} لا يطابق «الباقي» ${fmt(badInvoice.i.closingBalance)}. أُلغي الاستيراد.`
+      : `❌ فشل التحقّق: الرصيد النهائي ${fmt(replay)} لا يطابق آخر «الباقي» ${fmt(expected)}. أُلغي الاستيراد.`;
+    showToast(msg, 'error');
+    console.error('[supplier import] verification failed', { badInvoice, replay, expected });
+    return;
+  }
+
+  // Single write per collection — nothing is persisted before this point.
+  setSupplierTx(keptTx.concat(newTx));
+  setSupplierInvoices(keptInv.concat(newInv));
+
+  _supplierImportPreview = null;
+  document.getElementById('modal-import-preview').classList.remove('open');
+  const fileInput = document.getElementById('buyer-excel-input');
+  if (fileInput) fileInput.value = '';
+
+  openSupplierLedger(supplierId);
+  renderSuppliersList();
+  showToast(`✅ تم الاستيراد: ${newInv.length} فاتورة، ${newTx.length} حركة` +
+    (skipped ? ` (تُخُطّي ${skipped} مكرّرة)` : '') + ` — الرصيد ${fmt(expected, 'دج')}`);
+}
+
+/* =====================================================================
+   SUPPLIERS LIST
+   ===================================================================== */
+function renderSuppliersList() {
+  const el = document.getElementById('global-credits-content');
+  if (!el) return;
+  const list = getSuppliers();
+
+  if (!list.length) {
+    el.innerHTML = `<div style="text-align:center;color:var(--text-secondary);padding:20px">
+      لا يوجد موردين مسجلين حالياً.<br><br>
+      💡 لاستيراد ملف Excel خاص بمورد، أضف المورد أولاً من زر (+ إضافة مورد)،
+      ثم اضغط على بطاقته لفتح الدفتر وستجد زر الاستيراد هناك.</div>`;
+    return;
+  }
+
+  el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">
+    ${list.map(s => {
+      const bal = supplierBalance(s.id);
+      const txCount = supplierTxOf(s.id).length;
+      const color = bal > 0 ? 'var(--red)' : (bal < 0 ? 'var(--green)' : 'var(--text-secondary)');
+      return `<div onclick="openSupplierLedger('${s.id}')"
+        style="cursor:pointer;background:rgba(0,0,0,0.25);border:1px solid rgba(99,179,237,0.25);border-radius:12px;padding:14px">
+        <div style="font-weight:800;font-size:1rem;margin-bottom:6px">${escapeHtmlSup(s.name)}</div>
+        <div style="font-size:1.15rem;font-weight:800;color:${color}">${fmt(bal, 'دج')}</div>
+        <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:6px">
+          ${bal > 0 ? 'مستحق للمورد' : (bal < 0 ? 'دفعنا زيادة' : 'مُسوّى')} • ${txCount} حركة
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function escapeHtmlSup(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function openAddBuyerModal() {
+  const n = document.getElementById('buyer-name-input');
+  const o = document.getElementById('buyer-opening-balance');
+  const t = document.getElementById('buyer-notes-input');
+  if (n) n.value = '';
+  if (o) o.value = '';
+  if (t) t.value = '';
+  document.getElementById('modal-add-buyer').classList.add('open');
+  if (n) n.focus();
+}
+
+function confirmAddSupplier() {
+  const name = (document.getElementById('buyer-name-input').value || '').trim();
+  if (!name) { showToast('أدخل اسم المورد', 'error'); return; }
+  const list = getSuppliers();
+  if (list.some(s => supNormAr(s.name) === supNormAr(name))) {
+    showToast('يوجد مورد بنفس الاسم', 'error');
+    return;
+  }
+  list.push({
+    id: 'sup_' + Date.now(),
+    name,
+    openingBalance: Number(document.getElementById('buyer-opening-balance').value) || 0,
+    notes: (document.getElementById('buyer-notes-input').value || '').trim(),
+    createdAt: new Date().toISOString()
+  });
+  setSuppliers(list);
+  document.getElementById('modal-add-buyer').classList.remove('open');
+  renderSuppliersList();
+  showToast('تمت إضافة المورد');
+}
+
+/* =====================================================================
+   SUPPLIER LEDGER — grouped by invoice, exactly like the file
+   ===================================================================== */
+const SUP_INVOICES_PER_PAGE = 8;
+
+function openSupplierLedger(supplierId) {
+  _currentSupplierId = supplierId;
+  _supplierLedgerPage = 0;
+  renderSupplierLedger();
+  document.getElementById('modal-buyer-ledger').classList.add('open');
+}
+
+function renderSupplierLedger() {
+  const sup = getSuppliers().find(s => s.id === _currentSupplierId);
+  if (!sup) return;
+
+  document.getElementById('buyer-ledger-title').textContent = '📒 دفتر حساب: ' + sup.name;
+
+  const tx = supplierTxOf(sup.id);
+  const goods = tx.filter(t => t.kind === 'goods').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const paid = tx.filter(t => t.kind === 'payment').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const bal = supplierBalance(sup.id);
+
+  const box = (label, val, color) => `
+    <div style="flex:1;min-width:140px;background:rgba(0,0,0,0.25);border-radius:10px;padding:12px;text-align:center">
+      <div style="font-size:0.75rem;color:var(--text-secondary)">${label}</div>
+      <div style="font-weight:800;font-size:1.1rem;color:${color}">${val}</div>
+    </div>`;
+
+  document.getElementById('buyer-balance-summary').innerHTML =
+    box('إجمالي البضاعة', fmt(goods, 'دج'), 'var(--gold)') +
+    box('إجمالي المدفوع', fmt(paid, 'دج'), 'var(--green)') +
+    box(bal >= 0 ? 'الرصيد (مستحق للمورد)' : 'الرصيد (دفعنا زيادة)', fmt(bal, 'دج'),
+      bal > 0 ? 'var(--red)' : (bal < 0 ? 'var(--green)' : 'var(--text-secondary)'));
+
+  const content = document.getElementById('buyer-ledger-content');
+  if (!tx.length) {
+    content.innerHTML = `<div style="text-align:center;color:var(--text-secondary);padding:30px">
+      لا توجد معاملات بعد. استخدم «📥 استيراد Excel» أو أضف حركة يدوياً.</div>`;
+    document.getElementById('buyer-ledger-pagination').innerHTML = '';
+    return;
+  }
+
+  const invoices = getSupplierInvoices()
+    .filter(i => i.supplierId === sup.id)
+    .sort((a, b) => a.index - b.index);
+
+  // Invoice groups first (physical order), then any manual entries.
+  const groups = invoices.map(i => ({
+    invoice: i,
+    rows: tx.filter(t => t.source === 'import' && t.invoiceIndex === i.index)
+      .sort((a, b) => a.seq - b.seq)
+  }));
+  const manual = tx.filter(t => t.source !== 'import')
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  if (manual.length) groups.push({ invoice: null, rows: manual });
+
+  const pages = Math.max(1, Math.ceil(groups.length / SUP_INVOICES_PER_PAGE));
+  if (_supplierLedgerPage >= pages) _supplierLedgerPage = pages - 1;
+  const slice = groups.slice(_supplierLedgerPage * SUP_INVOICES_PER_PAGE,
+    (_supplierLedgerPage + 1) * SUP_INVOICES_PER_PAGE);
+
+  content.innerHTML = slice.map(g => {
+    const i = g.invoice;
+    const head = i
+      ? `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;background:rgba(99,179,237,0.1);padding:8px 12px;border-radius:8px 8px 0 0">
+           <strong style="color:var(--blue)">🧾 فاتورة ${i.date || '—'}</strong>
+           <span style="font-size:0.8rem;color:var(--text-secondary)">
+             المجموع: <b style="color:var(--gold)">${fmt(i.sumGoods)}</b> /
+             <b style="color:var(--green)">${fmt(i.sumPayments)}</b>
+             &nbsp;•&nbsp; الباقي:
+             <b style="color:${i.closingBalance < 0 ? 'var(--red)' : 'var(--text-primary)'}">${fmt(i.closingBalance, 'دج')}</b>
+           </span>
+         </div>`
+      : `<div style="background:rgba(154,117,234,0.12);padding:8px 12px;border-radius:8px 8px 0 0">
+           <strong style="color:#b794f4">✍️ حركات يدوية</strong></div>`;
+
+    const body = g.rows.map(t => {
+      const isPay = t.kind === 'payment';
+      const isAdj = t.kind === 'adjust';
+      const label = isAdj ? 'تسوية' : (isPay ? 'دفعة' : 'بضاعة');
+      const color = isAdj ? 'var(--gold)' : (isPay ? 'var(--green)' : 'var(--text-primary)');
+      return `<tr>
+        <td style="white-space:nowrap">${t.date || '—'}</td>
+        <td>${escapeHtmlSup(t.warehouse || '')}</td>
+        <td>${t.qty == null ? '' : fmt(t.qty)}</td>
+        <td>${t.price == null ? '' : fmt(t.price)}</td>
+        <td style="color:${color};font-weight:700">${label}</td>
+        <td style="text-align:left;font-weight:700;color:${color}">${fmt(t.amount)}</td>
+        <td style="font-size:0.78rem;color:var(--text-secondary)">${escapeHtmlSup(t.note || '')}</td>
+      </tr>`;
+    }).join('');
+
+    return `<div style="margin-bottom:14px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;overflow:hidden">
+      ${head}
+      <table class="data-table" style="width:100%;font-size:0.8rem">
+        <thead><tr><th>التاريخ</th><th>المستودع</th><th>الكمية</th><th>السعر</th><th>النوع</th><th>المبلغ</th><th>الملاحظات</th></tr></thead>
+        <tbody>${body || '<tr><td colspan="7" style="text-align:center;color:var(--text-secondary)">لا أسطر</td></tr>'}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+
+  document.getElementById('buyer-ledger-pagination').innerHTML = pages > 1
+    ? `<button class="btn btn-outline btn-sm" ${_supplierLedgerPage === 0 ? 'disabled' : ''}
+         onclick="supplierLedgerPage(-1)">‹ السابق</button>
+       <span style="align-self:center;color:var(--text-secondary);font-size:0.85rem">
+         ${_supplierLedgerPage + 1} / ${pages}</span>
+       <button class="btn btn-outline btn-sm" ${_supplierLedgerPage >= pages - 1 ? 'disabled' : ''}
+         onclick="supplierLedgerPage(1)">التالي ›</button>`
+    : '';
+}
+
+function supplierLedgerPage(delta) {
+  _supplierLedgerPage += delta;
+  if (_supplierLedgerPage < 0) _supplierLedgerPage = 0;
+  renderSupplierLedger();
+}
+
+function deleteCurrentSupplier() {
+  const sup = getSuppliers().find(s => s.id === _currentSupplierId);
+  if (!sup) return;
+  if (!confirm(`حذف المورد «${sup.name}» وجميع معاملاته؟ لا يمكن التراجع.`)) return;
+  setSuppliers(getSuppliers().filter(s => s.id !== sup.id));
+  setSupplierTx(getSupplierTx().filter(t => t.supplierId !== sup.id));
+  setSupplierInvoices(getSupplierInvoices().filter(i => i.supplierId !== sup.id));
+  _currentSupplierId = null;
+  document.getElementById('modal-buyer-ledger').classList.remove('open');
+  renderSuppliersList();
+  showToast('تم حذف المورد');
+}
+
+/* ---------------- manual entries ---------------- */
+function updatePickupCalc() {
+  const q = Number((document.getElementById('pickup-quantity') || {}).value) || 0;
+  const p = Number((document.getElementById('pickup-unit-price') || {}).value) || 0;
+  const el = document.getElementById('pickup-total-preview');
+  if (el) el.textContent = (q && p) ? fmt(q * p, 'دج') : '—';
+}
+
+function openPickupModal() {
+  if (!_currentSupplierId) return;
+  const sel = document.getElementById('pickup-factory-select');
+  if (sel) {
+    const facs = (typeof FactoryDB !== 'undefined') ? FactoryDB.getFactories() : [];
+    sel.innerHTML = '<option value="">— اختر المصنع —</option>' +
+      facs.map(f => `<option value="${f.id}">${escapeHtmlSup(f.name)}</option>`).join('');
+  }
+  const d = document.getElementById('pickup-date');
+  if (d) d.value = todayStr();
+  ['pickup-quantity', 'pickup-unit-price', 'pickup-category'].forEach(id => {
+    const e = document.getElementById(id); if (e) e.value = '';
+  });
+  updatePickupCalc();
+  document.getElementById('modal-add-pickup').classList.add('open');
+}
+
+function confirmAddPickup() {
+  if (!_currentSupplierId) return;
+  const qty = Number(document.getElementById('pickup-quantity').value) || 0;
+  const price = Number(document.getElementById('pickup-unit-price').value) || 0;
+  const date = document.getElementById('pickup-date').value || todayStr();
+  const cat = (document.getElementById('pickup-category').value || '').trim();
+  const sel = document.getElementById('pickup-factory-select');
+  const facName = sel && sel.selectedIndex > 0 ? sel.options[sel.selectedIndex].text : '';
+  if (!qty || !price) { showToast('أدخل الكمية والسعر', 'error'); return; }
+
+  const list = getSupplierTx();
+  list.push({
+    id: 'stx_m_' + Date.now(), supplierId: _currentSupplierId, source: 'manual',
+    kind: 'goods', date, warehouse: facName || cat, qty, price,
+    amount: qty * price, note: cat, invoiceDate: null, invoiceIndex: null,
+    excelRow: null, seq: null
+  });
+  setSupplierTx(list);
+  document.getElementById('modal-add-pickup').classList.remove('open');
+  renderSupplierLedger();
+  renderSuppliersList();
+  showToast('تم تسجيل السحب');
+}
+
+function openSupplierPaymentModal() {
+  if (!_currentSupplierId) return;
+  const d = document.getElementById('payment-date');
+  if (d) d.value = todayStr();
+  ['payment-amount', 'payment-note'].forEach(id => {
+    const e = document.getElementById(id); if (e) e.value = '';
+  });
+  document.getElementById('modal-add-payment').classList.add('open');
+}
+
+function confirmAddSupplierPayment() {
+  if (!_currentSupplierId) return;
+  const amount = Number(document.getElementById('payment-amount').value) || 0;
+  if (!amount) { showToast('أدخل المبلغ', 'error'); return; }
+  const list = getSupplierTx();
+  list.push({
+    id: 'stx_p_' + Date.now(), supplierId: _currentSupplierId, source: 'manual',
+    kind: 'payment', date: document.getElementById('payment-date').value || todayStr(),
+    warehouse: '', qty: null, price: null, amount,
+    note: (document.getElementById('payment-note').value || '').trim(),
+    invoiceDate: null, invoiceIndex: null, excelRow: null, seq: null
+  });
+  setSupplierTx(list);
+  document.getElementById('modal-add-payment').classList.remove('open');
+  renderSupplierLedger();
+  renderSuppliersList();
+  showToast('تم تسجيل الدفعة');
+}
+
+/* =====================================================================
+   GLOBAL WORKERS PANEL
+   ===================================================================== */
+function getGlobalWorkers() { return supRead('global_workers'); }
+function setGlobalWorkers(a) { supWrite('global_workers', a); }
+let _currentWorkerId = null;
+
+function renderGlobalWorkers() {
+  const el = document.getElementById('global-workers-content');
+  if (!el) return;
+  const list = getGlobalWorkers();
+  if (!list.length) {
+    el.innerHTML = `<div style="text-align:center;color:var(--text-secondary);padding:20px">
+      لا يوجد عمال مسجلين. أضف عاملاً من زر (+ إضافة عامل).</div>`;
+    return;
+  }
+  el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">
+    ${list.map(w => {
+      const adv = (w.advances || []).reduce((s, a) => s + (Number(a.amount) || 0), 0);
+      return `<div onclick="openWorkerAdvances('${w.id}')"
+        style="cursor:pointer;background:rgba(0,0,0,0.25);border:1px solid rgba(154,117,234,0.3);border-radius:12px;padding:14px">
+        <div style="font-weight:800;margin-bottom:6px">${escapeHtmlSup(w.name)}</div>
+        <div style="font-size:0.8rem;color:var(--text-secondary)">الراتب: ${fmt(Number(w.salary) || 0, 'دج')}</div>
+        <div style="font-size:0.8rem;color:#b794f4;margin-top:4px">السلفيات: ${fmt(adv, 'دج')}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function openAddGlobalWorkerModal() {
+  ['gworker-name-input', 'gworker-salary-input', 'gworker-notes-input'].forEach(id => {
+    const e = document.getElementById(id); if (e) e.value = '';
+  });
+  document.getElementById('modal-add-global-worker').classList.add('open');
+}
+
+function confirmAddGlobalWorker() {
+  const name = (document.getElementById('gworker-name-input').value || '').trim();
+  if (!name) { showToast('أدخل اسم العامل', 'error'); return; }
+  const list = getGlobalWorkers();
+  list.push({
+    id: 'gw_' + Date.now(), name,
+    salary: Number(document.getElementById('gworker-salary-input').value) || 0,
+    notes: (document.getElementById('gworker-notes-input').value || '').trim(),
+    advances: []
+  });
+  setGlobalWorkers(list);
+  document.getElementById('modal-add-global-worker').classList.remove('open');
+  renderGlobalWorkers();
+  showToast('تمت إضافة العامل');
+}
+
+function openWorkerAdvances(id) {
+  _currentWorkerId = id;
+  renderWorkerAdvances();
+  const d = document.getElementById('advance-date-input');
+  if (d) d.value = todayStr();
+  document.getElementById('modal-worker-advances').classList.add('open');
+}
+
+function renderWorkerAdvances() {
+  const w = getGlobalWorkers().find(x => x.id === _currentWorkerId);
+  if (!w) return;
+  document.getElementById('worker-advances-title').textContent = '👷 سجل سلفيات: ' + w.name;
+  const advances = w.advances || [];
+  const total = advances.reduce((s, a) => s + (Number(a.amount) || 0), 0);
+  document.getElementById('worker-total-advances-val').textContent = fmt(total, 'دج');
+  document.getElementById('worker-advances-list').innerHTML = advances.length
+    ? `<table class="data-table" style="width:100%;font-size:0.82rem">
+        <thead><tr><th>التاريخ</th><th>المبلغ</th><th>ملاحظة</th><th></th></tr></thead>
+        <tbody>${advances.map((a, idx) => `<tr>
+          <td>${a.date || '—'}</td><td style="color:#b794f4;font-weight:700">${fmt(a.amount)}</td>
+          <td>${escapeHtmlSup(a.note || '')}</td>
+          <td><button class="btn btn-outline btn-sm" style="color:var(--red)"
+              onclick="deleteWorkerAdvance(${idx})">حذف</button></td>
+        </tr>`).join('')}</tbody></table>`
+    : '<div style="text-align:center;color:var(--text-secondary);padding:16px">لا توجد سلفيات.</div>';
+}
+
+function saveWorkerAdvance() {
+  const list = getGlobalWorkers();
+  const w = list.find(x => x.id === _currentWorkerId);
+  if (!w) return;
+  const amount = Number(document.getElementById('advance-amount-input').value) || 0;
+  if (!amount) { showToast('أدخل مبلغ السلفية', 'error'); return; }
+  w.advances = w.advances || [];
+  w.advances.push({
+    date: document.getElementById('advance-date-input').value || todayStr(),
+    amount,
+    note: (document.getElementById('advance-note-input').value || '').trim()
+  });
+  setGlobalWorkers(list);
+  document.getElementById('advance-amount-input').value = '';
+  document.getElementById('advance-note-input').value = '';
+  renderWorkerAdvances();
+  renderGlobalWorkers();
+  showToast('تمت إضافة السلفية');
+}
+
+function deleteWorkerAdvance(idx) {
+  const list = getGlobalWorkers();
+  const w = list.find(x => x.id === _currentWorkerId);
+  if (!w || !w.advances) return;
+  w.advances.splice(idx, 1);
+  setGlobalWorkers(list);
+  renderWorkerAdvances();
+  renderGlobalWorkers();
+}
+
+function deleteCurrentGlobalWorker() {
+  const w = getGlobalWorkers().find(x => x.id === _currentWorkerId);
+  if (!w) return;
+  if (!confirm(`حذف العامل «${w.name}» وجميع سلفياته؟`)) return;
+  setGlobalWorkers(getGlobalWorkers().filter(x => x.id !== _currentWorkerId));
+  _currentWorkerId = null;
+  document.getElementById('modal-worker-advances').classList.remove('open');
+  renderGlobalWorkers();
+  showToast('تم حذف العامل');
+}
+
+/* =====================================================================
+   WIRING
+   ===================================================================== */
+document.addEventListener('DOMContentLoaded', () => {
+  const on = (id, ev, fn) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(ev, fn);
+  };
+
+  on('btn-confirm-add-buyer', 'click', confirmAddSupplier);
+  on('btn-delete-buyer', 'click', deleteCurrentSupplier);
+  on('btn-add-pickup-for-buyer', 'click', openPickupModal);
+  on('btn-confirm-add-pickup', 'click', confirmAddPickup);
+  on('btn-add-payment-for-buyer', 'click', openSupplierPaymentModal);
+  on('btn-confirm-add-payment', 'click', confirmAddSupplierPayment);
+  on('btn-confirm-import', 'click', commitSupplierImport);
+  on('buyer-excel-input', 'change', e => {
+    const f = e.target.files && e.target.files[0];
+    if (f) handleSupplierExcelImport(f);
+  });
+
+  on('btn-confirm-add-global-worker', 'click', confirmAddGlobalWorker);
+  on('btn-save-worker-advance', 'click', saveWorkerAdvance);
+  on('btn-delete-global-worker', 'click', deleteCurrentGlobalWorker);
+});
