@@ -1,5 +1,5 @@
 // ===== Zohir PWA Service Worker =====
-const CACHE_NAME = 'zohir-v62-suppliers-import';
+const CACHE_NAME = 'zohir-v66-sw-offline-fix';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -40,6 +40,21 @@ self.addEventListener('activate', event => {
   );
 });
 
+// A cache miss makes caches.match() resolve to undefined, and passing
+// undefined to respondWith() throws "Failed to convert value to 'Response'",
+// which the browser surfaces as net::ERR_FAILED — the page then loads with no
+// CSS and no JS. Every path below must therefore end in a real Response.
+const OFFLINE_RESPONSE = () => new Response(
+  '// offline: asset unavailable and not in cache',
+  { status: 503, statusText: 'Offline', headers: { 'Content-Type': 'text/plain; charset=utf-8' } }
+);
+
+// Cache lookups are query-sensitive, so "style.css?v=106" never matches a
+// cached "style.css?v=105". Ignore the query when falling back.
+function cacheLookup(request) {
+  return caches.match(request).then(hit => hit || caches.match(request, { ignoreSearch: true }));
+}
+
 // ===== FETCH: Network first, fallback to cache =====
 self.addEventListener('fetch', event => {
   const { request } = event;
@@ -70,27 +85,35 @@ self.addEventListener('fetch', event => {
         .then(response => {
           if (response.ok) {
             const clone = response.clone();
-            caches.open(CACHE_NAME).then(cache => cache.put(request, clone));
+            caches.open(CACHE_NAME).then(cache => cache.put(request, clone)).catch(() => {});
           }
           return response;
         })
-        .catch(() => caches.match(request))
+        .catch(() => cacheLookup(request).then(cached => {
+          if (cached) return cached;
+          // a navigation with nothing cached for it still needs the shell
+          if (request.mode === 'navigate') {
+            return caches.match('/index.html').then(shell => shell || caches.match('/'))
+              .then(shell => shell || OFFLINE_RESPONSE());
+          }
+          return OFFLINE_RESPONSE();
+        }))
     );
     return;
   }
 
   // For fonts and icons — cache first
   event.respondWith(
-    caches.match(request).then(cached => {
+    cacheLookup(request).then(cached => {
       if (cached) return cached;
       return fetch(request).then(response => {
         if (response.ok) {
           const clone = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(request, clone));
+          caches.open(CACHE_NAME).then(cache => cache.put(request, clone)).catch(() => {});
         }
         return response;
-      });
-    })
+      }).catch(() => OFFLINE_RESPONSE());
+    }).catch(() => OFFLINE_RESPONSE())
   );
 });
 

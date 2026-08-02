@@ -1089,6 +1089,91 @@ function stopGlobalSync() {
   GLOBAL_SYNC_UNSUBS = [];
 }
 
+/* Account-level collections: they belong to the user, not to a factory, and
+   are therefore never covered by initCloudSync(). */
+const GLOBAL_LEDGER_COLLS = [
+  'supplier_list', 'supplier_tx', 'supplier_invoices',
+  'worker_types', 'worker_months', 'worker_draws',
+  'plaka_suppliers', 'plaka_locations', 'plaka_tx'
+];
+
+function refreshGlobalLedgerUI() {
+  const vis = id => {
+    const el = document.getElementById(id);
+    return el && el.style.display && el.style.display !== 'none';
+  };
+  try { if (vis('global-credits-popup') && typeof renderSuppliersList === 'function') renderSuppliersList(); } catch (e) {}
+  try { if (vis('global-workers-panel') && typeof renderWorkerTypes === 'function') renderWorkerTypes(); } catch (e) {}
+  try { if (vis('plaka-panel') && typeof renderPlakaPanel === 'function') renderPlakaPanel(); } catch (e) {}
+}
+
+/* Anything saved before signing in lands under the "default" uid. Adopt it
+   once, so work done while logged out is not stranded. */
+function adoptAnonymousLedgers(uid) {
+  if (!uid || uid === 'default') return;
+  GLOBAL_LEDGER_COLLS.forEach(coll => {
+    try {
+      const anonKey = `zohir_${coll}_default`;
+      const ownKey = `zohir_${coll}_${uid}`;
+      const anon = JSON.parse(localStorage.getItem(anonKey) || '[]');
+      const own = JSON.parse(localStorage.getItem(ownKey) || '[]');
+      if (anon.length && !own.length) {
+        localStorage.setItem(ownKey, JSON.stringify(anon));
+        localStorage.removeItem(anonKey);
+        fs.collection('app_data').doc(`${coll}_${uid}`)
+          .set({ data: anon, lastUpdated: new Date().toISOString() })
+          .catch(() => {});
+        console.log('[ledgers] adopted', anon.length, 'rows of', coll, 'from the signed-out session');
+      }
+    } catch (e) {}
+  });
+}
+
+function syncGlobalLedgers(ownerUids) {
+  if (!CURRENT_USER) return;
+  adoptAnonymousLedgers(CURRENT_USER.uid);
+
+  const uids = [...new Set(ownerUids && ownerUids.length ? ownerUids : [CURRENT_USER.uid])];
+
+  uids.forEach(uid => {
+    GLOBAL_LEDGER_COLLS.forEach(coll => {
+      const docId = `${coll}_${uid}`;
+      const lsKey = `zohir_${coll}_${uid}`;
+      const ref = fs.collection('app_data').doc(docId);
+
+      // pull whatever the account already has on the server
+      ref.get({ source: 'server' })
+        .then(doc => {
+          if (doc.exists) {
+            const cloud = doc.data().data || [];
+            if (localStorage.getItem(lsKey) !== JSON.stringify(cloud)) {
+              localStorage.setItem(lsKey, JSON.stringify(cloud));
+              refreshGlobalLedgerUI();
+            }
+          } else {
+            // first run on the cloud: push whatever this device holds
+            const local = JSON.parse(localStorage.getItem(lsKey) || '[]');
+            if (local.length) {
+              ref.set({ data: local, lastUpdated: new Date().toISOString() }).catch(() => {});
+            }
+          }
+        })
+        .catch(e => console.warn('[ledgers] initial fetch failed for', coll, e && e.code));
+
+      // keep it live across devices
+      const unsub = ref.onSnapshot({ includeMetadataChanges: false }, doc => {
+        if (!doc.exists) return;
+        const cloud = doc.data().data || [];
+        if (localStorage.getItem(lsKey) !== JSON.stringify(cloud)) {
+          localStorage.setItem(lsKey, JSON.stringify(cloud));
+          refreshGlobalLedgerUI();
+        }
+      }, () => {});
+      GLOBAL_SYNC_UNSUBS.push(unsub);
+    });
+  });
+}
+
 async function initGlobalSync() {
   if (!CURRENT_USER) return;
   stopGlobalSync();
@@ -1144,6 +1229,11 @@ async function initGlobalSync() {
       }, () => {});
     GLOBAL_SYNC_UNSUBS.push(unsub);
   });
+
+  // STEP 2b: the account-level ledgers (suppliers, workers, بلاكة) live outside
+  // any factory, so initCloudSync() never touches them. Without this they only
+  // ever existed in localStorage — invisible on another origin or device.
+  syncGlobalLedgers(ownersToSync);
 
   // STEP 3: Live listener on partner_link queue — picks up brand-new partnerships
   // added by an owner while this partner is currently online. When triggered, we
@@ -1518,9 +1608,12 @@ function getTotalNetProfit() {
   // Sum all daily BASE profits (before partner expenses)
   const totalDailyProfit = logs.reduce((s, l) => s + (Number(l.baseProfit ?? l.profit) || 0), 0);
 
-  // One-time initial costs
-  
-  
+  // One-time initial costs. The price fields were dropped from the settings
+  // form (prices now live in دفعات الشراء), so these read 0 on new factories
+  // while still honouring the values older factories already saved.
+  const chickensCost = (Number(settings.initialChickens) || 0) * (Number(settings.chickenPrice) || 0);
+  const feedCost     = (Number(settings.initialFeed) || 0) * (Number(settings.feedPrice) || 0);
+
   const loyer        = Number(settings.loyer)        || 0;
   const repairLoyer  = Number(settings.repairLoyer)  || 0;
   const repairTotal  = Number(settings.repairTotal)  || 0;
@@ -1585,7 +1678,6 @@ function renderCurrentPage() {
     'broiler-sales': renderBroilerSalesPage,
     'broiler-reports': renderBroilerReportsPage,
     'broiler-workers': renderBroilerWorkersPage,
-    'ai-chat': renderAIChatPage
   };
   if (refreshers[pageId]) {
     try {
@@ -2096,7 +2188,8 @@ function enterFactory(factory, sourceCard = null) {
     const appWrapper = document.getElementById('app-wrapper');
     appWrapper.style.display = 'flex';
 
-    showPage('dashboard');
+    // Land straight on the reports page — that is what the factory is opened for.
+    showPage(factoryType === 'broiler' ? 'broiler-reports' : 'reports');
     updateLiveDate();
     initCloudSync();
     populateWorkerSelects();
@@ -2650,7 +2743,6 @@ function showPage(pageId) {
     'broiler-sales': renderBroilerSalesPage,
     'broiler-reports': renderBroilerReportsPage,
     'broiler-workers': renderBroilerWorkersPage,
-    'ai-chat': renderAIChatPage
   };
   if (refreshers[pageId]) refreshers[pageId]();
   if (pageId === 'daily' && CURRENT_FACTORY?.type === 'broiler') {
@@ -5412,7 +5504,7 @@ function renderPartnerFinancialSummary(logs, settings) {
 
   // ── Fixed cost deductions (same formula as getTotalNetProfit) ──
   const chickensCost   = (Number(settings.initialChickens) || 0) * (Number(settings.chickenPrice) || 0);
-  
+  const feedCost       = (Number(settings.initialFeed) || 0) * (Number(settings.feedPrice) || 0);
   const loyer          = Number(settings.loyer)       || 0;
   const repairLoyer    = Number(settings.repairLoyer)  || 0;
   const repairTotal    = Number(settings.repairTotal)  || 0;
@@ -7501,6 +7593,111 @@ function getBusinessContextForAI() {
   return context;
 }
 
+/* The assistant now lives on the factory-selection screen, so it must see
+   EVERYTHING: every factory, every supplier invoice, every worker month and
+   the بلاكة ledger — not just the factory that happens to be open. */
+function getGlobalContextForAI() {
+  const savedFactory = CURRENT_FACTORY;
+  const savedOwner = EFFECTIVE_OWNER_UID;
+  const ctx = { scope: 'global', generatedAt: new Date().toISOString(), factories: [] };
+
+  try {
+    const factories = (typeof FactoryDB !== 'undefined') ? FactoryDB.getFactories() : [];
+    factories.forEach(f => {
+      try {
+        CURRENT_FACTORY = f;
+        if (f.ownerUid) EFFECTIVE_OWNER_UID = f.ownerUid;
+        ctx.factories.push({
+          id: f.id, name: f.name, type: f.type || 'layer',
+          data: getBusinessContextForAI()
+        });
+      } catch (e) {
+        ctx.factories.push({ id: f.id, name: f.name, error: String(e && e.message || e) });
+      }
+    });
+  } finally {
+    CURRENT_FACTORY = savedFactory;
+    EFFECTIVE_OWNER_UID = savedOwner;
+  }
+
+  // ---- suppliers (دفعات الشراء) ----
+  try {
+    const sups = getSuppliers();
+    const tx = getSupplierTx();
+    const invs = getSupplierInvoices();
+    ctx.suppliers = sups.map(s => {
+      const mine = tx.filter(t => t.supplierId === s.id);
+      return {
+        name: s.name,
+        balance: supplierBalance(s.id),
+        totalGoods: mine.filter(t => t.kind === 'goods').reduce((a, t) => a + (Number(t.amount) || 0), 0),
+        totalPaid: mine.filter(t => t.kind === 'payment').reduce((a, t) => a + (Number(t.amount) || 0), 0),
+        transactionCount: mine.length,
+        invoices: invs.filter(i => i.supplierId === s.id).map(i => ({
+          date: i.date, goods: i.sumGoods, payments: i.sumPayments, balance: i.closingBalance
+        })),
+        recentTransactions: mine.slice(-40).map(t => ({
+          date: t.date, kind: t.kind, amount: t.amount,
+          warehouse: t.warehouse, note: t.note, invoiceDate: t.invoiceDate
+        }))
+      };
+    });
+  } catch (e) { ctx.suppliersError = String(e && e.message || e); }
+
+  // ---- workers by type ----
+  try {
+    const types = getWorkerTypes();
+    const months = getWorkerMonths();
+    const draws = getWorkerDraws();
+    ctx.workerTypes = types.map(t => {
+      const tm = months.filter(m => m.typeId === t.id);
+      const accounts = {};
+      tm.forEach(m => {
+        if (!accounts[m.accountKey]) {
+          accounts[m.accountKey] = { name: m.name, assign: m.assign, months: [] };
+        }
+        accounts[m.accountKey].months.push({
+          month: m.monthKey, wage: m.wage, withdrawn: m.total, balance: m.balance
+        });
+      });
+      return {
+        type: t.name,
+        workerCount: Object.keys(accounts).length,
+        totalWithdrawn: tm.reduce((a, m) => a + (Number(m.total) || 0), 0),
+        workers: Object.keys(accounts).map(k => accounts[k]),
+        drawCount: draws.filter(d => d.typeId === t.id).length
+      };
+    });
+  } catch (e) { ctx.workersError = String(e && e.message || e); }
+
+  // ---- بلاكة ----
+  try {
+    const locs = getPlakaLocations();
+    const ptx = getPlakaTx();
+    ctx.plaka = {
+      suppliers: [...new Set(locs.map(l => l.supplier || 'سليم'))],
+      totalGoods: locs.reduce((a, l) => a + (Number(l.fileGoods) || 0), 0),
+      totalPaid: locs.reduce((a, l) => a + (Number(l.filePay) || 0), 0),
+      balance: locs.reduce((a, l) => a + (Number(l.fileBalance) || 0), 0),
+      locations: locs.map(l => ({
+        name: l.name, goods: l.fileGoods, paid: l.filePay, balance: l.fileBalance,
+        transactions: ptx.filter(t => t.locationId === l.id).length
+      }))
+    };
+  } catch (e) { ctx.plakaError = String(e && e.message || e); }
+
+  return ctx;
+}
+
+function openAIAssistant() {
+  const modal = document.getElementById('modal-ai-chat');
+  if (!modal) return;
+  modal.classList.add('open');
+  if (typeof checkAIStatus === 'function') checkAIStatus();
+  const input = document.getElementById('ai-input');
+  if (input) setTimeout(() => input.focus(), 100);
+}
+
 async function checkAIStatus() {
   const dot = document.querySelector('#ai-status-indicator .ai-status-dot');
   const text = document.getElementById('ai-status-text');
@@ -7605,7 +7802,9 @@ async function sendAIMessage(messageText) {
   showAITyping();
 
   try {
-    const businessContext = getBusinessContextForAI();
+    // Global scope: the assistant answers about any factory, supplier,
+    // worker or بلاكة record in the app, not only the open factory.
+    const businessContext = getGlobalContextForAI();
     const res = await fetch(`${AI_BACKEND_URL}/api/ai/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -8596,7 +8795,7 @@ function toggleGlobalWorkersPanel() {
   if (p) {
     if (p.style.display === 'none' || p.style.display === '') {
       p.style.display = 'block';
-      if (typeof renderGlobalWorkers === 'function') renderGlobalWorkers();
+      if (typeof renderWorkerTypes === 'function') renderWorkerTypes();
     } else {
       p.style.display = 'none';
     }
@@ -8622,13 +8821,25 @@ function supRead(coll) {
   try { return JSON.parse(localStorage.getItem(supStoreKey(coll))) || []; }
   catch (e) { return []; }
 }
+let _ledgerCloudWarned = false;
+function warnLedgerCloudFailure(coll, e) {
+  console.warn('[ledgers] cloud sync failed for', coll, e);
+  if (_ledgerCloudWarned) return;
+  _ledgerCloudWarned = true;
+  // Silent local-only saves are how data "disappears" on another device.
+  const msg = (e && e.code === 'permission-denied')
+    ? '⚠️ لم تُحفظ البيانات في السحابة — سجّل الدخول، وإلا ستبقى على هذا الجهاز فقط'
+    : '⚠️ تعذّر الحفظ في السحابة — البيانات محفوظة محلياً فقط حالياً';
+  try { showToast(msg, 'error'); } catch (_) {}
+}
+
 function supWrite(coll, arr) {
   localStorage.setItem(supStoreKey(coll), JSON.stringify(arr));
   try {
     fs.collection('app_data').doc(supCloudId(coll))
       .set({ data: arr, lastUpdated: new Date().toISOString() })
-      .catch(e => console.warn('[suppliers] cloud sync', coll, e));
-  } catch (e) { console.warn('[suppliers] cloud sync', coll, e); }
+      .catch(e => warnLedgerCloudFailure(coll, e));
+  } catch (e) { warnLedgerCloudFailure(coll, e); }
 }
 
 function getSuppliers() { return supRead(SUP_COLL.suppliers); }
@@ -8745,7 +8956,11 @@ const SUP_MONTHS = {
   'اوت': 8, 'اغسطس': 8, 'سبتمبر': 9, 'اكتوبر': 10, 'نوفمبر': 11, 'ديسمبر': 12
 };
 
+// Returns null for impossible dates (month 47, day 0, ...). Hand-typed
+// sheets contain them, and silently accepting one poisons every downstream
+// sort, grouping and month check.
 function supIso(y, mo, d) {
+  if (!(y >= 1900 && y <= 2999) || !(mo >= 1 && mo <= 12) || !(d >= 1 && d <= 31)) return null;
   return String(y).padStart(4, '0') + '-' + String(mo).padStart(2, '0') + '-' + String(d).padStart(2, '0');
 }
 function supFromSerial(n) {
@@ -9553,126 +9768,6 @@ function confirmAddSupplierPayment() {
 }
 
 /* =====================================================================
-   GLOBAL WORKERS PANEL
-   ===================================================================== */
-function getGlobalWorkers() { return supRead('global_workers'); }
-function setGlobalWorkers(a) { supWrite('global_workers', a); }
-let _currentWorkerId = null;
-
-function renderGlobalWorkers() {
-  const el = document.getElementById('global-workers-content');
-  if (!el) return;
-  const list = getGlobalWorkers();
-  if (!list.length) {
-    el.innerHTML = `<div style="text-align:center;color:var(--text-secondary);padding:20px">
-      لا يوجد عمال مسجلين. أضف عاملاً من زر (+ إضافة عامل).</div>`;
-    return;
-  }
-  el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px">
-    ${list.map(w => {
-      const adv = (w.advances || []).reduce((s, a) => s + (Number(a.amount) || 0), 0);
-      return `<div onclick="openWorkerAdvances('${w.id}')"
-        style="cursor:pointer;background:rgba(0,0,0,0.25);border:1px solid rgba(154,117,234,0.3);border-radius:12px;padding:14px">
-        <div style="font-weight:800;margin-bottom:6px">${escapeHtmlSup(w.name)}</div>
-        <div style="font-size:0.8rem;color:var(--text-secondary)">الراتب: ${fmt(Number(w.salary) || 0, 'دج')}</div>
-        <div style="font-size:0.8rem;color:#b794f4;margin-top:4px">السلفيات: ${fmt(adv, 'دج')}</div>
-      </div>`;
-    }).join('')}
-  </div>`;
-}
-
-function openAddGlobalWorkerModal() {
-  ['gworker-name-input', 'gworker-salary-input', 'gworker-notes-input'].forEach(id => {
-    const e = document.getElementById(id); if (e) e.value = '';
-  });
-  document.getElementById('modal-add-global-worker').classList.add('open');
-}
-
-function confirmAddGlobalWorker() {
-  const name = (document.getElementById('gworker-name-input').value || '').trim();
-  if (!name) { showToast('أدخل اسم العامل', 'error'); return; }
-  const list = getGlobalWorkers();
-  list.push({
-    id: 'gw_' + Date.now(), name,
-    salary: Number(document.getElementById('gworker-salary-input').value) || 0,
-    notes: (document.getElementById('gworker-notes-input').value || '').trim(),
-    advances: []
-  });
-  setGlobalWorkers(list);
-  document.getElementById('modal-add-global-worker').classList.remove('open');
-  renderGlobalWorkers();
-  showToast('تمت إضافة العامل');
-}
-
-function openWorkerAdvances(id) {
-  _currentWorkerId = id;
-  renderWorkerAdvances();
-  const d = document.getElementById('advance-date-input');
-  if (d) d.value = todayStr();
-  document.getElementById('modal-worker-advances').classList.add('open');
-}
-
-function renderWorkerAdvances() {
-  const w = getGlobalWorkers().find(x => x.id === _currentWorkerId);
-  if (!w) return;
-  document.getElementById('worker-advances-title').textContent = '👷 سجل سلفيات: ' + w.name;
-  const advances = w.advances || [];
-  const total = advances.reduce((s, a) => s + (Number(a.amount) || 0), 0);
-  document.getElementById('worker-total-advances-val').textContent = fmt(total, 'دج');
-  document.getElementById('worker-advances-list').innerHTML = advances.length
-    ? `<table class="data-table" style="width:100%;font-size:0.82rem">
-        <thead><tr><th>التاريخ</th><th>المبلغ</th><th>ملاحظة</th><th></th></tr></thead>
-        <tbody>${advances.map((a, idx) => `<tr>
-          <td>${a.date || '—'}</td><td style="color:#b794f4;font-weight:700">${fmt(a.amount)}</td>
-          <td>${escapeHtmlSup(a.note || '')}</td>
-          <td><button class="btn btn-outline btn-sm" style="color:var(--red)"
-              onclick="deleteWorkerAdvance(${idx})">حذف</button></td>
-        </tr>`).join('')}</tbody></table>`
-    : '<div style="text-align:center;color:var(--text-secondary);padding:16px">لا توجد سلفيات.</div>';
-}
-
-function saveWorkerAdvance() {
-  const list = getGlobalWorkers();
-  const w = list.find(x => x.id === _currentWorkerId);
-  if (!w) return;
-  const amount = Number(document.getElementById('advance-amount-input').value) || 0;
-  if (!amount) { showToast('أدخل مبلغ السلفية', 'error'); return; }
-  w.advances = w.advances || [];
-  w.advances.push({
-    date: document.getElementById('advance-date-input').value || todayStr(),
-    amount,
-    note: (document.getElementById('advance-note-input').value || '').trim()
-  });
-  setGlobalWorkers(list);
-  document.getElementById('advance-amount-input').value = '';
-  document.getElementById('advance-note-input').value = '';
-  renderWorkerAdvances();
-  renderGlobalWorkers();
-  showToast('تمت إضافة السلفية');
-}
-
-function deleteWorkerAdvance(idx) {
-  const list = getGlobalWorkers();
-  const w = list.find(x => x.id === _currentWorkerId);
-  if (!w || !w.advances) return;
-  w.advances.splice(idx, 1);
-  setGlobalWorkers(list);
-  renderWorkerAdvances();
-  renderGlobalWorkers();
-}
-
-function deleteCurrentGlobalWorker() {
-  const w = getGlobalWorkers().find(x => x.id === _currentWorkerId);
-  if (!w) return;
-  if (!confirm(`حذف العامل «${w.name}» وجميع سلفياته؟`)) return;
-  setGlobalWorkers(getGlobalWorkers().filter(x => x.id !== _currentWorkerId));
-  _currentWorkerId = null;
-  document.getElementById('modal-worker-advances').classList.remove('open');
-  renderGlobalWorkers();
-  showToast('تم حذف العامل');
-}
-
-/* =====================================================================
    WIRING
    ===================================================================== */
 document.addEventListener('DOMContentLoaded', () => {
@@ -9692,8 +9787,1569 @@ document.addEventListener('DOMContentLoaded', () => {
     const f = e.target.files && e.target.files[0];
     if (f) handleSupplierExcelImport(f);
   });
+});
 
-  on('btn-confirm-add-global-worker', 'click', confirmAddGlobalWorker);
-  on('btn-save-worker-advance', 'click', saveWorkerAdvance);
-  on('btn-delete-global-worker', 'click', deleteCurrentGlobalWorker);
+
+/* =====================================================================
+   العمال (حسب النوع)  +  بلاكة
+   Panel-based Excel importers. Both workbooks lay data out as panels
+   scattered over a grid, so everything is discovered by LABEL, never by
+   fixed row numbers (the rows genuinely move between sheets).
+   ===================================================================== */
+
+/* ---------- shared grid helpers (0-based rows/cols) ---------- */
+function wpCell(rows, r, c) {
+  const row = rows[r];
+  if (!row) return null;
+  const v = row[c];
+  return (v === undefined || v === '') ? null : v;
+}
+function wpLabel(rows, r, c) { return supNormAr(wpCell(rows, r, c)); }
+
+// Excel-style address for messages: (0,0) -> A1
+function wpAddr(r, c) {
+  let s = '', n = c + 1;
+  while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = (n - m - 1) / 26; }
+  return s + (r + 1);
+}
+
+// Numeric cell, or null when blank/non-numeric. Blank must stay distinct
+// from 0 — an empty wage means "no fixed wage", not "wage of zero".
+function wpNum(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number') return isFinite(v) ? v : null;
+  if (v instanceof Date) return null;
+  const n = supParseNum(v);
+  return (n === 0 && !/\d/.test(String(v))) ? null : n;
+}
+function wpEq(a, b) { return Math.abs((a || 0) - (b || 0)) < 0.005; }
+
+const WP_MONTHS = {
+  'septembre': 9, 'séptembre': 9, 'octobre': 10, 'novembre': 11,
+  'decembre': 12, 'décembre': 12, 'janvier': 1, 'fevrier': 2, 'février': 2,
+  'mars': 3, 'avril': 4, 'mai': 5, 'juin': 6,
+  'juillet': 7, 'juillrt': 7, 'aout': 8, 'août': 8
+};
+
+// Sheet name -> {month, year|null}. Tolerates the misspellings in the files
+// (Séptembre / AVril / Juillrt / Fevrier).
+function wpParseSheetName(name) {
+  const s = String(name || '').trim();
+  const ym = s.match(/(19|20)\d{2}/);
+  const year = ym ? +ym[0] : null;
+  const word = s.replace(/[\d\s]+/g, '').toLowerCase();
+  let month = null;
+  for (const k in WP_MONTHS) {
+    if (word && (word.indexOf(k) === 0 || k.indexOf(word) === 0)) { month = WP_MONTHS[k]; break; }
+  }
+  if (month === null) {
+    for (const k in WP_MONTHS) if (s.toLowerCase().indexOf(k) >= 0) { month = WP_MONTHS[k]; break; }
+  }
+  return { month, year };
+}
+
+/* Fill in missing years by walking the sheets in PHYSICAL order and
+   bumping the year whenever the month goes backwards (Dec -> Jan). */
+function wpResolveMonths(sheetNames) {
+  const parsed = sheetNames.map(wpParseSheetName);
+  let anchor = -1;
+  for (let i = 0; i < parsed.length; i++) if (parsed[i].year) { anchor = i; break; }
+  if (anchor === -1) return parsed.map(p => ({ month: p.month, year: null }));
+
+  const years = new Array(parsed.length).fill(null);
+  let cur = parsed[anchor].year;
+  years[anchor] = cur;
+  for (let i = anchor - 1; i >= 0; i--) {
+    if (parsed[i].month !== null && parsed[i + 1].month !== null &&
+        parsed[i].month > parsed[i + 1].month) cur--;
+    years[i] = parsed[i].year || cur;
+  }
+  cur = parsed[anchor].year;
+  for (let i = anchor + 1; i < parsed.length; i++) {
+    if (parsed[i].year) cur = parsed[i].year;
+    else if (parsed[i].month !== null && parsed[i - 1].month !== null &&
+             parsed[i].month < parsed[i - 1].month) cur++;
+    years[i] = cur;
+  }
+  return parsed.map((p, i) => ({ month: p.month, year: years[i] }));
+}
+
+function wpMonthKey(m) {
+  if (!m || m.month === null || !m.year) return null;
+  return m.year + '-' + String(m.month).padStart(2, '0');
+}
+
+/* =====================================================================
+   WORKER WORKBOOK PARSER
+   Panel anchor = a cell reading «الأجرة» at (r, c):
+     name (r-3,c) | assignment (r-2,c) | wage (r+1,c) | balance (r+1,c+1)
+     header  = first row > r in column c reading «التاريخ»
+     closing = first row > r in column c reading «المجموع», total at (row,c+1)
+   ===================================================================== */
+function parseWorkerWorkbook(sheets, typeName) {
+  // sheets: [{ name, rows }]
+  const warnings = [];
+  const panels = [];
+  const inherited = {};      // "band|col" -> last name seen at that slot
+  const months = wpResolveMonths(sheets.map(s => s.name));
+  const warn = (code, message, sheet) => warnings.push({ code, message, sheet: sheet || null });
+
+  sheets.forEach((sh, si) => {
+    const rows = sh.rows || [];
+    const mo = months[si];
+    const monthKey = wpMonthKey(mo);
+    if (!monthKey) warn('bad-sheet-name', `تعذّر استنتاج الشهر من اسم الورقة «${sh.name}».`, sh.name);
+
+    // find every «الأجرة» anchor
+    const anchors = [];
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row) continue;
+      for (let c = 0; c < row.length; c++) {
+        if (supNormAr(row[c]) === supNormAr('الأجرة')) anchors.push([r, c]);
+      }
+    }
+    const bandRows = [...new Set(anchors.map(a => a[0]))].sort((a, b) => a - b);
+
+    anchors.sort((a, b) => a[0] - b[0] || a[1] - b[1]).forEach(([r, c]) => {
+      const band = bandRows.indexOf(r);
+      const slot = band + '|' + c;
+      let name = supStr(wpCell(rows, r - 3, c));
+      let assign = supStr(wpCell(rows, r - 2, c));
+
+      // «العلف» panels are paid by tonnage: wage = qty * price
+      const isFeed = supNormAr(assign) === supNormAr('العلف');
+      let qty = null, price = null;
+      if (isFeed) {
+        qty = wpNum(wpCell(rows, r - 2, c + 1));
+        price = wpNum(wpCell(rows, r - 2, c + 2));
+        if (qty === null && price === null) {
+          qty = wpNum(wpCell(rows, r - 3, c + 1));
+          price = wpNum(wpCell(rows, r - 3, c + 2));
+        }
+        assign = '';
+      }
+
+      if (name) {
+        inherited[slot] = name;
+      } else if (inherited[slot]) {
+        name = inherited[slot];
+        warn('inherited-name',
+          `${sh.name}: لوحة بلا اسم في ${wpAddr(r, c)} — ورثت الاسم «${name}» من ورقة سابقة.`, sh.name);
+      } else {
+        warn('no-name',
+          `${sh.name}: لوحة بلا اسم في ${wpAddr(r, c)} ولا يوجد اسم سابق في نفس الموضع — مُستبعَدة.`, sh.name);
+        panels.push({ sheet: sh.name, monthKey, col: c, band, anchorRow: r,
+                      name: '', assign, isFeed, qty, price, skipped: true, draws: [] });
+        return;
+      }
+
+      const wage = wpNum(wpCell(rows, r + 1, c));
+      const fileBalance = wpNum(wpCell(rows, r + 1, c + 1));
+
+      let headRow = -1, closeRow = -1;
+      for (let rr = r + 1; rr < rows.length; rr++) {
+        const lab = wpLabel(rows, rr, c);
+        if (headRow === -1 && lab === supNormAr('التاريخ')) headRow = rr;
+        if (closeRow === -1 && lab === supNormAr('المجموع')) { closeRow = rr; break; }
+      }
+      if (headRow === -1 || closeRow === -1) {
+        warn('bad-panel', `${sh.name}: لوحة «${name}» في ${wpAddr(r, c)} ينقصها صف الرأس أو المجموع — مُستبعَدة.`, sh.name);
+        return;
+      }
+
+      const fileTotal = wpNum(wpCell(rows, closeRow, c + 1));
+      const draws = [];
+      for (let rr = headRow + 1; rr < closeRow; rr++) {
+        const amt = wpNum(wpCell(rows, rr, c + 1));
+        if (amt === null) continue;               // blank line inside the panel
+        const rawDate = wpCell(rows, rr, c);
+        const date = supParseDate(rawDate);
+        if (rawDate !== null && !date) {
+          warn('bad-date',
+            `${sh.name}/${name}: تاريخ غير صالح «${supStr(rawDate)}» في ${wpAddr(rr, c)} — استُورد السحب بلا تاريخ.`, sh.name);
+        }
+        draws.push({
+          excelRow: rr + 1, date, amount: amt,
+          note: supStr(wpCell(rows, rr, c + 2)), seq: draws.length
+        });
+      }
+
+      const calcTotal = draws.reduce((s, d) => s + d.amount, 0);
+      const effTotal = (fileTotal === null) ? calcTotal : fileTotal;
+      const calcBalance = (wage || 0) - effTotal;
+
+      if (fileTotal !== null && !wpEq(calcTotal, fileTotal)) {
+        warn('total-mismatch',
+          `${sh.name}/${name}: مجموع الأسطر ${fmt(calcTotal)} لا يطابق «المجموع» ${fmt(fileTotal)}.`, sh.name);
+      }
+      if (fileBalance === null) {
+        warn('empty-balance',
+          `${sh.name}: خانة «الباقي» فارغة في ${wpAddr(r + 1, c + 1)} للعامل «${name}» — حُسبت (${fmt(calcBalance)}).`, sh.name);
+      } else if (!wpEq(calcBalance, fileBalance)) {
+        warn('balance-mismatch',
+          `${sh.name}/${name}: الباقي المحسوب ${fmt(calcBalance)} لا يطابق المكتوب ${fmt(fileBalance)}.`, sh.name);
+      }
+      if (isFeed && wage !== null && !wpEq((qty || 0) * (price || 0), wage)) {
+        warn('feed-mismatch',
+          `${sh.name}/${name}: ${fmt(qty)}×${fmt(price)} لا يساوي الأجرة ${fmt(wage)}.`, sh.name);
+      }
+      if (isFeed && qty === null) {
+        warn('feed-no-qty', `${sh.name}/${name}: عدد القناطير فارغ — الأجرة 0.`, sh.name);
+      }
+      // A withdrawal dated in the following month is normal (end-of-month
+      // settlement). Only flag dates that are genuinely far from the sheet.
+      draws.forEach(d => {
+        if (!d.date || !monthKey) return;
+        const dm = (+d.date.slice(0, 4)) * 12 + (+d.date.slice(5, 7));
+        const sm = (+monthKey.slice(0, 4)) * 12 + (+monthKey.slice(5, 7));
+        if (dm - sm > 1 || dm - sm < -1) {
+          warn('date-far-outside-month',
+            `${sh.name}/${name}: سحب بتاريخ ${d.date} بعيد عن شهر الورقة (${monthKey}) — تحقّق منه.`, sh.name);
+        }
+      });
+
+      panels.push({
+        sheet: sh.name, monthKey, col: c, band, anchorRow: r, headRow, closeRow,
+        name, assign, isFeed, qty, price,
+        wage: wage === null ? null : wage,
+        fileTotal, fileBalance,
+        calcTotal, calcBalance,
+        balance: fileBalance === null ? calcBalance : fileBalance,
+        draws, skipped: false
+      });
+    });
+  });
+
+  const kept = panels.filter(p => !p.skipped);
+  const accounts = {};
+  kept.forEach(p => {
+    const key = supNormAr(p.name) + '|' + supNormAr(p.assign);
+    if (!accounts[key]) accounts[key] = { key, name: p.name, assign: p.assign, months: 0 };
+    accounts[key].months++;
+  });
+
+  return {
+    ok: kept.length > 0,
+    typeName,
+    months,
+    sheetNames: sheets.map(s => s.name),
+    panels, kept,
+    skipped: panels.filter(p => p.skipped),
+    accounts: Object.keys(accounts).map(k => accounts[k]),
+    names: [...new Set(kept.map(p => supNormAr(p.name)))],
+    warnings,
+    totals: {
+      wage: kept.reduce((s, p) => s + (p.wage || 0), 0),
+      draws: kept.reduce((s, p) => s + p.draws.reduce((a, d) => a + d.amount, 0), 0),
+      drawRows: kept.reduce((s, p) => s + p.draws.length, 0)
+    }
+  };
+}
+
+/* =====================================================================
+   PLAKA WORKBOOK PARSER
+   Panel header = a cell reading «التاريخ» at (r, c); location name at (r-1, c).
+   Columns: c التاريخ | c+1 النوعية | c+2 الكمية | c+3 السعر
+            c+4 الناتج | c+5 الدفع  | c+6 ملاحظات   («الباقي» sits under c+6)
+   ===================================================================== */
+// Feuil1 columns I and Q repeat the standalone 24500 / 23000 sheets.
+const PLAKA_DUPLICATE_PANELS = [{ sheet: 'Feuil1', col: 8 }, { sheet: 'Feuil1', col: 16 }];
+
+function parsePlakaWorkbook(sheets, supplierName, options) {
+  options = options || {};
+  const includeDuplicates = !!options.includeDuplicates;
+  const warnings = [];
+  const panels = [];
+  const warn = (code, message, sheet) => warnings.push({ code, message, sheet: sheet || null });
+
+  sheets.forEach(sh => {
+    const rows = sh.rows || [];
+    const heads = [];
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row) continue;
+      for (let c = 0; c < row.length; c++) {
+        if (supNormAr(row[c]) === supNormAr('التاريخ')) heads.push([r, c]);
+      }
+    }
+
+    heads.sort((a, b) => a[0] - b[0] || a[1] - b[1]).forEach(([r, c]) => {
+      const name = supStr(wpCell(rows, r - 1, c)) || sh.name;
+      let closeRow = -1;
+      for (let rr = r + 1; rr < rows.length; rr++) {
+        if (wpLabel(rows, rr, c) === supNormAr('المجموع')) { closeRow = rr; break; }
+      }
+      if (closeRow === -1) {
+        warn('no-total', `${sh.name}: لوحة «${name}» بلا صف «المجموع» — مُستبعَدة.`, sh.name);
+        return;
+      }
+
+      const moves = [];
+      let lastDate = null;
+      for (let rr = r + 1; rr < closeRow; rr++) {
+        const rawDate = wpCell(rows, rr, c);
+        const material = supStr(wpCell(rows, rr, c + 1));
+        const qty = wpNum(wpCell(rows, rr, c + 2));
+        const price = wpNum(wpCell(rows, rr, c + 3));
+        const goods = wpNum(wpCell(rows, rr, c + 4)) || 0;
+        const pay = wpNum(wpCell(rows, rr, c + 5)) || 0;
+        const note = supStr(wpCell(rows, rr, c + 6));
+        if (rawDate === null && !material && qty === null && price === null &&
+            goods === 0 && pay === 0 && !note) continue;
+
+        const d = supParseDate(rawDate);
+        if (d) lastDate = d;                      // blank date inherits from the row above
+        if (goods === 0 && qty !== null) {
+          warn('unpriced',
+            `${sh.name}/${name} صف ${rr + 1}: كمية ${fmt(qty)} بلا ناتج — تسليم غير مسعّر.`, sh.name);
+        }
+        moves.push({
+          excelRow: rr + 1, date: d || lastDate, material, qty, price,
+          goods, pay, note, seq: moves.length
+        });
+      }
+
+      const fileGoods = wpNum(wpCell(rows, closeRow, c + 4)) || 0;
+      const filePay = wpNum(wpCell(rows, closeRow, c + 5)) || 0;
+      const fileBalance = wpNum(wpCell(rows, closeRow, c + 6)) || 0;
+
+      // Everything below «المجموع» inside the panel's columns is the owner's
+      // scratch arithmetic (sums of two related sites) — never data.
+      for (let rr = closeRow + 1; rr < rows.length; rr++) {
+        for (let cc = c; cc <= c + 6; cc++) {
+          const v = wpCell(rows, rr, cc);
+          if (typeof v === 'number' && v !== 0) {
+            warn('below-total',
+              `${sh.name}/${name}: القيمة ${fmt(v)} في ${wpAddr(rr, cc)} أسفل صف «المجموع» — ملاحظة حسابية، مُتجاهَلة.`, sh.name);
+          }
+        }
+      }
+
+      const calcGoods = moves.reduce((s, m) => s + m.goods, 0);
+      const calcPay = moves.reduce((s, m) => s + m.pay, 0);
+      if (!wpEq(calcGoods, fileGoods)) {
+        warn('goods-mismatch',
+          `${sh.name}/${name}: مجموع الناتج ${fmt(calcGoods)} لا يطابق المكتوب ${fmt(fileGoods)}.`, sh.name);
+      }
+      if (!wpEq(calcPay, filePay)) {
+        warn('pay-mismatch',
+          `${sh.name}/${name}: مجموع الدفع ${fmt(calcPay)} لا يطابق المكتوب ${fmt(filePay)}.`, sh.name);
+      }
+      if (!wpEq(fileGoods - filePay, fileBalance)) {
+        warn('balance-mismatch',
+          `${sh.name}/${name}: الباقي المكتوب ${fmt(fileBalance)} لا يساوي الناتج − الدفع (${fmt(fileGoods - filePay)}).`, sh.name);
+      }
+
+      const dup = PLAKA_DUPLICATE_PANELS.some(d => d.sheet === sh.name && d.col === c);
+      if (dup) {
+        warn('duplicate-panel',
+          `${sh.name}: لوحة «${name}» في العمود ${wpAddr(r, c).replace(/\d+/, '')} مكرّرة مع ورقة «${name}» المستقلّة — ` +
+          (includeDuplicates ? 'أُدرجت بطلبك (يرفع الرصيد خطأً).' : 'مُستبعَدة.'), sh.name);
+      }
+
+      panels.push({
+        sheet: sh.name, col: c, headRow: r, closeRow, name,
+        moves, fileGoods, filePay, fileBalance, calcGoods, calcPay,
+        excluded: dup && !includeDuplicates
+      });
+    });
+  });
+
+  const kept = panels.filter(p => !p.excluded);
+  let txCount = 0, deliveries = 0;
+  kept.forEach(p => p.moves.forEach(m => {
+    if (m.goods !== 0) txCount++;
+    if (m.pay !== 0) txCount++;
+    if (m.goods === 0 && m.pay === 0) deliveries++;
+  }));
+
+  return {
+    ok: kept.length > 0,
+    supplierName: supplierName || 'سليم',
+    panels, kept,
+    excluded: panels.filter(p => p.excluded),
+    warnings,
+    totals: {
+      goods: kept.reduce((s, p) => s + p.fileGoods, 0),
+      pay: kept.reduce((s, p) => s + p.filePay, 0),
+      balance: kept.reduce((s, p) => s + p.fileBalance, 0),
+      txCount, deliveries, locations: kept.length
+    }
+  };
+}
+
+/* =====================================================================
+   WORKBOOK READING
+   ===================================================================== */
+async function wpReadWorkbook(file) {
+  if (typeof XLSX === 'undefined') throw new Error('مكتبة Excel غير محمّلة');
+  let wb;
+  if (/\.csv$/i.test(file.name)) {
+    wb = XLSX.read(await file.text(), { type: 'string', raw: true });
+  } else {
+    wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: false });
+  }
+  // sheet_to_json returns cached formula RESULTS, never the formulas themselves.
+  return wb.SheetNames.map(n => ({
+    name: n,
+    rows: XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: null, blankrows: true })
+  }));
+}
+
+
+/* =====================================================================
+   STORAGE — workers by type, and the بلاكة supplier
+   ===================================================================== */
+const WP_COLL = {
+  types: 'worker_types', months: 'worker_months', draws: 'worker_draws',
+  locs: 'plaka_locations', ptx: 'plaka_tx'
+};
+
+function getWorkerTypes() { return supRead(WP_COLL.types); }
+function setWorkerTypes(a) { supWrite(WP_COLL.types, a); }
+function getWorkerMonths() { return supRead(WP_COLL.months); }
+function setWorkerMonths(a) { supWrite(WP_COLL.months, a); }
+function getWorkerDraws() { return supRead(WP_COLL.draws); }
+function setWorkerDraws(a) { supWrite(WP_COLL.draws, a); }
+function getPlakaLocations() { return supRead(WP_COLL.locs); }
+function setPlakaLocations(a) { supWrite(WP_COLL.locs, a); }
+function getPlakaTx() { return supRead(WP_COLL.ptx); }
+function setPlakaTx(a) { supWrite(WP_COLL.ptx, a); }
+
+let _wpPreview = null;          // pending import awaiting confirmation
+let _currentWorkerType = null;
+let _currentPlakaSupplier = null;
+let _currentWorkerAccount = null;
+
+function wpAccountKey(name, assign) { return supNormAr(name) + '|' + supNormAr(assign); }
+
+/* The months are independent — summing wages across them is meaningless.
+   A worker's wage is a MONTHLY figure: the most recently recorded one. */
+function wpMonthlyWage(months) {
+  const withWage = months
+    .filter(m => m.wage !== null && m.wage !== undefined)
+    .sort((a, b) => String(a.monthKey).localeCompare(String(b.monthKey)) || ((a.col || 0) - (b.col || 0)));
+  return withWage.length ? Number(withWage[withWage.length - 1].wage) || 0 : 0;
+}
+function wpMonthLabel(key) {
+  if (!key) return '—';
+  const AR = ['', 'جانفي', 'فيفري', 'مارس', 'أفريل', 'ماي', 'جوان',
+              'جويلية', 'أوت', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+  const m = +key.slice(5, 7);
+  return (AR[m] || key.slice(5, 7)) + ' ' + key.slice(0, 4);
+}
+
+/* =====================================================================
+   WORKERS — import
+   ===================================================================== */
+async function handleWorkerTypeImport(file) {
+  if (!file) return;
+  showToast('جاري تحليل ملف العمال...', 'info');
+  try {
+    const sheets = await wpReadWorkbook(file);
+    const typeName = file.name.replace(/\.(xlsx|xlsm|xls|csv)$/i, '').trim();
+    const result = parseWorkerWorkbook(sheets, typeName);
+    if (!result.ok) {
+      showToast('لم يُعثر على أي لوحة عامل في هذا الملف (لا توجد خلية «الأجرة»).', 'error');
+      return;
+    }
+    _wpPreview = { mode: 'workers', result, fileName: file.name, typeName };
+    showWpPreview();
+  } catch (err) {
+    console.error('[handleWorkerTypeImport]', err);
+    showToast('خطأ أثناء قراءة الملف: ' + err.message, 'error');
+  }
+}
+
+function commitWorkerImport() {
+  const p = _wpPreview;
+  if (!p || p.mode !== 'workers') return;
+  const r = p.result;
+  const replace = !!(document.getElementById('wp-import-replace') || {}).checked;
+
+  /* MANDATORY verification: every panel's arithmetic must agree with the
+     numbers written in the file. Any disagreement aborts the whole import. */
+  const bad = [];
+  r.kept.forEach(pl => {
+    const calc = pl.draws.reduce((s, d) => s + d.amount, 0);
+    if (pl.fileTotal !== null && !wpEq(calc, pl.fileTotal)) {
+      bad.push(`${pl.sheet} / ${pl.name}: المجموع المحسوب ${fmt(calc)} ≠ المكتوب ${fmt(pl.fileTotal)}`);
+    }
+    if (pl.fileBalance !== null && !wpEq((pl.wage || 0) - (pl.fileTotal === null ? calc : pl.fileTotal), pl.fileBalance)) {
+      bad.push(`${pl.sheet} / ${pl.name}: الباقي المحسوب ${fmt((pl.wage || 0) - calc)} ≠ المكتوب ${fmt(pl.fileBalance)}`);
+    }
+  });
+  if (bad.length) {
+    document.getElementById('modal-wp-preview').classList.remove('open');
+    showToast('❌ أُلغي الاستيراد — ' + bad.length + ' لوحة لا تطابق الملف. أوّلها: ' + bad[0], 'error');
+    console.error('[worker import] verification failed', bad);
+    return;
+  }
+
+  const types = getWorkerTypes();
+  let type = types.find(t => supNormAr(t.name) === supNormAr(p.typeName));
+  if (!type) {
+    type = { id: 'wt_' + Date.now(), name: p.typeName, fileName: p.fileName };
+    types.push(type);
+  }
+  type.fileName = p.fileName;
+  type.importedAt = new Date().toISOString();
+
+  const allMonths = getWorkerMonths();
+  const allDraws = getWorkerDraws();
+  const keptMonths = allMonths.filter(m => m.typeId !== type.id || !replace);
+  const keptDraws = allDraws.filter(d => d.typeId !== type.id || !replace);
+  const seenM = new Set(keptMonths.filter(m => m.typeId === type.id).map(m => m.importKey));
+  const seenD = new Set(keptDraws.filter(d => d.typeId === type.id).map(d => d.importKey));
+
+  const newMonths = [], newDraws = [];
+  let skipped = 0;
+  r.kept.forEach(pl => {
+    const accountKey = wpAccountKey(pl.name, pl.assign);
+    const mKey = `${type.id}|${accountKey}|${pl.monthKey}|${pl.sheet}|${pl.col}`;
+    if (!seenM.has(mKey)) {
+      seenM.add(mKey);
+      newMonths.push({
+        id: 'wm_' + newMonths.length + '_' + Date.now().toString(36),
+        typeId: type.id, importKey: mKey, accountKey,
+        name: pl.name, assign: pl.assign, isFeed: pl.isFeed,
+        qty: pl.qty, price: pl.price, wage: pl.wage,
+        monthKey: pl.monthKey, sheet: pl.sheet, col: pl.col,
+        fileTotal: pl.fileTotal, fileBalance: pl.fileBalance,
+        total: pl.fileTotal === null ? pl.calcTotal : pl.fileTotal,
+        balance: pl.balance
+      });
+    } else { skipped++; }
+
+    pl.draws.forEach(d => {
+      const dKey = `${type.id}|${accountKey}|${pl.monthKey}|${pl.sheet}|${pl.col}|${d.seq}`;
+      if (seenD.has(dKey)) { skipped++; return; }
+      seenD.add(dKey);
+      newDraws.push({
+        id: 'wd_' + newDraws.length + '_' + Date.now().toString(36),
+        typeId: type.id, importKey: dKey, accountKey,
+        monthKey: pl.monthKey, sheet: pl.sheet, col: pl.col,
+        date: d.date, amount: d.amount, note: d.note,
+        excelRow: d.excelRow, seq: d.seq
+      });
+    });
+  });
+
+  setWorkerTypes(types);
+  setWorkerMonths(keptMonths.concat(newMonths));
+  setWorkerDraws(keptDraws.concat(newDraws));
+
+  _wpPreview = null;
+  document.getElementById('modal-wp-preview').classList.remove('open');
+  const inp = document.getElementById('worker-type-import-input');
+  if (inp) inp.value = '';
+  renderWorkerTypes();
+  showToast(`✅ ${p.typeName}: ${newMonths.length} لوحة و${newDraws.length} سحب` +
+    (skipped ? ` (تُخُطّي ${skipped} مكرّرة)` : ''));
+}
+
+/* =====================================================================
+   PLAKA — import
+   ===================================================================== */
+async function handlePlakaImport(file) {
+  if (!file) return;
+  showToast('جاري تحليل ملف البلاكة...', 'info');
+  try {
+    const sheets = await wpReadWorkbook(file);
+    const supplierName = 'سليم';
+    const includeDuplicates = !!(document.getElementById('plaka-include-dupes') || {}).checked;
+    const result = parsePlakaWorkbook(sheets, supplierName, { includeDuplicates });
+    if (!result.ok) {
+      showToast('لم يُعثر على أي لوحة في ملف البلاكة (لا توجد خلية «التاريخ»).', 'error');
+      return;
+    }
+    _wpPreview = { mode: 'plaka', result, fileName: file.name, supplierName };
+    showWpPreview();
+  } catch (err) {
+    console.error('[handlePlakaImport]', err);
+    showToast('خطأ أثناء قراءة الملف: ' + err.message, 'error');
+  }
+}
+
+function commitPlakaImport() {
+  const p = _wpPreview;
+  if (!p || p.mode !== 'plaka') return;
+  const r = p.result;
+  const replace = !!(document.getElementById('wp-import-replace') || {}).checked;
+
+  /* MANDATORY verification against the file's own «المجموع» / «الباقي». */
+  const bad = [];
+  r.kept.forEach(loc => {
+    if (!wpEq(loc.calcGoods, loc.fileGoods)) {
+      bad.push(`${loc.sheet} / ${loc.name}: الناتج المحسوب ${fmt(loc.calcGoods)} ≠ المكتوب ${fmt(loc.fileGoods)}`);
+    }
+    if (!wpEq(loc.calcPay, loc.filePay)) {
+      bad.push(`${loc.sheet} / ${loc.name}: الدفع المحسوب ${fmt(loc.calcPay)} ≠ المكتوب ${fmt(loc.filePay)}`);
+    }
+    if (!wpEq(loc.fileGoods - loc.filePay, loc.fileBalance)) {
+      bad.push(`${loc.sheet} / ${loc.name}: الباقي المكتوب ${fmt(loc.fileBalance)} ≠ الناتج − الدفع`);
+    }
+  });
+  if (bad.length) {
+    document.getElementById('modal-wp-preview').classList.remove('open');
+    showToast('❌ أُلغي الاستيراد — ' + bad.length + ' اختلاف عن الملف. أوّلها: ' + bad[0], 'error');
+    console.error('[plaka import] verification failed', bad);
+    return;
+  }
+
+  const allLocs = replace ? [] : getPlakaLocations();
+  const allTx = replace ? [] : getPlakaTx();
+  const seen = new Set(allTx.map(t => t.importKey));
+
+  const newLocs = [], newTx = [];
+  let skipped = 0;
+  r.kept.forEach(loc => {
+    const locId = 'pl_' + supNormAr(loc.name).replace(/\s+/g, '_') + '_' + supNormAr(loc.sheet).replace(/\s+/g, '_');
+    if (!allLocs.some(l => l.id === locId) && !newLocs.some(l => l.id === locId)) {
+      newLocs.push({
+        id: locId, supplierId: plakaEnsureSupplier(p.supplierName), source: 'import',
+        supplier: p.supplierName, name: loc.name, sheet: loc.sheet,
+        fileGoods: loc.fileGoods, filePay: loc.filePay, fileBalance: loc.fileBalance
+      });
+    }
+    loc.moves.forEach(m => {
+      const push = (kind, amount) => {
+        const key = `${p.supplierName}|${loc.name}|${loc.sheet}|${m.seq}|${kind}`;
+        if (seen.has(key)) { skipped++; return; }
+        seen.add(key);
+        newTx.push({
+          id: 'ptx_' + newTx.length + '_' + Date.now().toString(36),
+          locationId: locId, importKey: key, kind, amount,
+          date: m.date, material: m.material, qty: m.qty, price: m.price,
+          note: m.note, excelRow: m.excelRow, seq: m.seq
+        });
+      };
+      if (m.goods !== 0) push('goods', m.goods);
+      if (m.pay !== 0) push('payment', m.pay);
+      // an unpriced delivery still happened — keep it visible, at zero value
+      if (m.goods === 0 && m.pay === 0 && m.qty !== null) push('delivery', 0);
+    });
+  });
+
+  setPlakaLocations(allLocs.concat(newLocs));
+  setPlakaTx(allTx.concat(newTx));
+
+  _wpPreview = null;
+  document.getElementById('modal-wp-preview').classList.remove('open');
+  const inp = document.getElementById('plaka-import-input');
+  if (inp) inp.value = '';
+  renderPlakaPanel();
+  showToast(`✅ بلاكة: ${newLocs.length} موقع و${newTx.length} حركة` +
+    (skipped ? ` (تُخُطّي ${skipped} مكرّرة)` : ''));
+}
+
+/* =====================================================================
+   SHARED PREVIEW
+   ===================================================================== */
+const WP_WARN_LABEL = {
+  'no-name': '👤 لوحات بلا اسم (مُستبعَدة)',
+  'inherited-name': '👤 اسم موروث من ورقة سابقة',
+  'empty-balance': '🧮 خانة «الباقي» فارغة (حُسبت)',
+  'total-mismatch': '❌ فرق في «المجموع»',
+  'balance-mismatch': '❌ فرق في «الباقي»',
+  'feed-mismatch': '❌ قناطير × سعر ≠ الأجرة',
+  'feed-no-qty': '🌾 عدد القناطير فارغ (أجرة 0)',
+  'date-far-outside-month': '📅 تاريخ بعيد عن شهر الورقة',
+  'bad-date': '📅 تاريخ غير صالح',
+  'bad-sheet-name': '📄 تعذّر استنتاج الشهر',
+  'bad-panel': '⚠️ لوحة ناقصة',
+  'unpriced': '🏷️ تسليم غير مسعّر',
+  'below-total': '🧾 قيمة أسفل «المجموع» (مُتجاهَلة)',
+  'duplicate-panel': '♻️ لوحة مكرّرة',
+  'goods-mismatch': '❌ فرق في الناتج',
+  'pay-mismatch': '❌ فرق في الدفع',
+  'no-total': '❓ بلا صف «المجموع»'
+};
+
+function showWpPreview() {
+  const p = _wpPreview;
+  if (!p) return;
+  const r = p.result;
+  const isW = p.mode === 'workers';
+
+  const chip = (label, value, color) => `
+    <div style="flex:1;min-width:120px;background:rgba(0,0,0,0.25);border-radius:8px;padding:10px 12px;text-align:center">
+      <div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:4px">${label}</div>
+      <div style="font-weight:800;font-size:1.02rem;color:${color || 'var(--text-primary)'}">${value}</div>
+    </div>`;
+
+  document.getElementById('modal-wp-preview-title').textContent =
+    isW ? `👷 معاينة استيراد عمال: ${p.typeName}` : '🧱 معاينة استيراد بلاكة';
+
+  let summary = chip('الملف', escapeHtmlSup(p.fileName), 'var(--blue)');
+  if (isW) {
+    summary +=
+      chip('الأوراق (الأشهر)', r.sheetNames.length) +
+      chip('لوحات مستوردة', r.kept.length) +
+      chip('لوحات مستبعَدة', r.skipped.length, r.skipped.length ? 'var(--gold)' : 'var(--text-secondary)') +
+      chip('حسابات', r.accounts.length) +
+      chip('أسطر السحب', r.totals.drawRows) +
+      chip('إجمالي الأجرة', fmt(r.totals.wage), 'var(--green)') +
+      chip('إجمالي السحوبات', fmt(r.totals.draws), 'var(--gold)');
+  } else {
+    summary +=
+      chip('المواقع', r.totals.locations) +
+      chip('الحركات', r.totals.txCount) +
+      chip('تسليمات غير مسعّرة', r.totals.deliveries, r.totals.deliveries ? 'var(--gold)' : 'var(--text-secondary)') +
+      chip('إجمالي الناتج', fmt(r.totals.goods), 'var(--gold)') +
+      chip('إجمالي الدفع', fmt(r.totals.pay), 'var(--green)') +
+      chip('الرصيد', fmt(r.totals.balance, 'دج'), r.totals.balance < 0 ? 'var(--red)' : 'var(--red)');
+  }
+  document.getElementById('wp-preview-summary').innerHTML = summary;
+
+  /* warnings grouped by code */
+  const groups = {};
+  r.warnings.forEach(w => { (groups[w.code] = groups[w.code] || []).push(w); });
+  const codes = Object.keys(groups);
+  document.getElementById('wp-preview-warnings').innerHTML = codes.length ? `
+    <div style="border:1px solid rgba(245,197,24,0.35);background:rgba(245,197,24,0.07);border-radius:10px;padding:12px">
+      <div style="font-weight:800;color:var(--gold);margin-bottom:8px">التحذيرات (${r.warnings.length})</div>
+      ${codes.map(code => `
+        <details style="margin-bottom:6px">
+          <summary style="cursor:pointer;color:var(--text-secondary);font-size:0.85rem">
+            ${WP_WARN_LABEL[code] || code} — ${groups[code].length}</summary>
+          <div style="max-height:150px;overflow-y:auto;font-size:0.78rem;color:var(--text-secondary);padding:6px 10px 0">
+            ${groups[code].slice(0, 60).map(w => `<div>• ${escapeHtmlSup(w.message)}</div>`).join('')}
+            ${groups[code].length > 60 ? `<div style="opacity:.6">… و${groups[code].length - 60} أخرى</div>` : ''}
+          </div>
+        </details>`).join('')}
+    </div>` : '';
+
+  /* replace switch + plaka duplicate toggle */
+  const existing = isW
+    ? getWorkerMonths().filter(m => {
+        const t = getWorkerTypes().find(x => supNormAr(x.name) === supNormAr(p.typeName));
+        return t && m.typeId === t.id;
+      }).length
+    : getPlakaLocations().length;
+  document.getElementById('wp-preview-options').innerHTML = `
+    <label style="display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.2);border-radius:8px;padding:10px 12px;cursor:pointer">
+      <input type="checkbox" id="wp-import-replace" ${existing ? 'checked' : ''} style="width:16px;height:16px" />
+      <span style="font-size:0.86rem">استبدال بيانات ${isW ? 'هذا النوع' : 'هذا المورد'} بالكامل
+        <span style="color:var(--text-secondary)">(موجود حالياً: ${existing})</span></span>
+    </label>
+    ${(!isW && r.excluded.length) ? `
+      <label style="display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.2);border-radius:8px;padding:10px 12px;cursor:pointer;margin-top:8px">
+        <input type="checkbox" id="plaka-include-dupes" style="width:16px;height:16px"
+          onchange="reparsePlakaWithDupes(this.checked)" />
+        <span style="font-size:0.86rem">إدراج اللوحتين المكرّرتين في Feuil1
+          <span style="color:var(--red)">(يرفع الرصيد خطأً إلى ${fmt(r.totals.balance + r.excluded.reduce((s, e) => s + e.fileBalance, 0))})</span></span>
+      </label>` : ''}`;
+
+  /* detail table */
+  let t;
+  if (isW) {
+    const byAcc = {};
+    r.kept.forEach(pl => {
+      const k = wpAccountKey(pl.name, pl.assign);
+      if (!byAcc[k]) byAcc[k] = { name: pl.name, assign: pl.assign, months: 0, wage: 0, draws: 0, bal: 0 };
+      byAcc[k].months++;
+      byAcc[k].rows = byAcc[k].rows || [];
+      byAcc[k].rows.push(pl);
+      byAcc[k].draws += pl.draws.reduce((s, d) => s + d.amount, 0);
+      byAcc[k].bal += pl.balance;
+    });
+    Object.keys(byAcc).forEach(k => { byAcc[k].wage = wpMonthlyWage(byAcc[k].rows); });
+    t = `<table class="data-table" style="width:100%;font-size:0.8rem">
+      <thead><tr><th>العامل</th><th>التكليف</th><th>أشهر</th><th>الأجرة الشهرية</th><th>السحب</th><th>مج. الباقي</th></tr></thead><tbody>
+      ${Object.keys(byAcc).map(k => {
+        const a = byAcc[k];
+        return `<tr><td>${escapeHtmlSup(a.name)}</td><td>${escapeHtmlSup(a.assign || (a.isFeed ? 'العلف' : '—'))}</td>
+          <td>${a.months}</td><td style="color:var(--green)">${fmt(a.wage)}</td>
+          <td style="color:var(--gold)">${fmt(a.draws)}</td>
+          <td style="font-weight:700;color:${a.bal < 0 ? 'var(--red)' : 'inherit'}">${fmt(a.bal)}</td></tr>`;
+      }).join('')}</tbody></table>`;
+  } else {
+    t = `<table class="data-table" style="width:100%;font-size:0.8rem">
+      <thead><tr><th>الموقع</th><th>الورقة</th><th>الناتج</th><th>الدفع</th><th>الباقي</th><th>حركات</th></tr></thead><tbody>
+      ${r.kept.map(loc => {
+        const n = loc.moves.filter(m => m.goods !== 0).length + loc.moves.filter(m => m.pay !== 0).length;
+        return `<tr><td>${escapeHtmlSup(loc.name)}</td><td>${escapeHtmlSup(loc.sheet)}</td>
+          <td style="color:var(--gold)">${fmt(loc.fileGoods)}</td>
+          <td style="color:var(--green)">${fmt(loc.filePay)}</td>
+          <td style="font-weight:700;color:${loc.fileBalance < 0 ? 'var(--red)' : 'inherit'}">${fmt(loc.fileBalance)}</td>
+          <td>${n}</td></tr>`;
+      }).join('')}
+      <tr style="background:rgba(255,255,255,0.05);font-weight:800">
+        <td colspan="2">الإجمالي</td><td>${fmt(r.totals.goods)}</td><td>${fmt(r.totals.pay)}</td>
+        <td>${fmt(r.totals.balance)}</td><td>${r.totals.txCount}</td></tr>
+      </tbody></table>`;
+  }
+  document.getElementById('wp-preview-table').innerHTML = t;
+  document.getElementById('modal-wp-preview').classList.add('open');
+}
+
+function reparsePlakaWithDupes(include) {
+  const p = _wpPreview;
+  if (!p || p.mode !== 'plaka' || !p.sheets) return;
+  p.result = parsePlakaWorkbook(p.sheets, p.supplierName, { includeDuplicates: include });
+  showWpPreview();
+  const cb = document.getElementById('plaka-include-dupes');
+  if (cb) cb.checked = include;
+}
+
+function confirmWpImport() {
+  if (!_wpPreview) return;
+  if (_wpPreview.mode === 'workers') commitWorkerImport();
+  else commitPlakaImport();
+}
+
+/* =====================================================================
+   WORKERS — UI
+   ===================================================================== */
+function renderWorkerTypes() {
+  const el = document.getElementById('global-workers-content');
+  if (!el) return;
+  const types = getWorkerTypes();
+  const months = getWorkerMonths();
+
+  if (!types.length) {
+    el.innerHTML = `<div style="text-align:center;color:var(--text-secondary);padding:20px">
+      لا يوجد أنواع عمال بعد.<br><br>
+      💡 اضغط «📥 استيراد ملف نوع» واختر ملف Excel من مجلد «خدامة» —
+      اسم الملف يصبح اسم النوع.</div>`;
+    return;
+  }
+
+  el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px">
+    ${types.map(t => {
+      const mine = months.filter(m => m.typeId === t.id);
+      const accounts = new Set(mine.map(m => m.accountKey)).size;
+      const monthsN = new Set(mine.map(m => m.monthKey)).size;
+      const byAcc = {};
+      mine.forEach(m => { (byAcc[m.accountKey] = byAcc[m.accountKey] || []).push(m); });
+      const wage = Object.keys(byAcc).reduce((s, k) => s + wpMonthlyWage(byAcc[k]), 0);
+      const draws = mine.reduce((s, m) => s + (Number(m.total) || 0), 0);
+      return `<div onclick="openWorkerType('${t.id}')"
+        style="cursor:pointer;background:rgba(0,0,0,0.25);border:1px solid rgba(154,117,234,0.3);border-radius:12px;padding:14px">
+        <div style="font-weight:800;font-size:1rem;margin-bottom:8px">${escapeHtmlSup(t.name)}</div>
+        <div style="font-size:0.78rem;color:var(--text-secondary)">${accounts} عامل • ${monthsN} شهر</div>
+        <div style="font-size:0.78rem;color:var(--green);margin-top:4px">أجرة شهرية: ${fmt(wage, 'دج')}</div>
+        <div style="font-size:0.78rem;color:var(--gold)">إجمالي السحب: ${fmt(draws, 'دج')}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function openWorkerType(typeId) {
+  _currentWorkerType = typeId;
+  renderWorkerType();
+  document.getElementById('modal-worker-type').classList.add('open');
+}
+
+function renderWorkerType() {
+  const t = getWorkerTypes().find(x => x.id === _currentWorkerType);
+  if (!t) return;
+  document.getElementById('worker-type-title').textContent = '👷 عمال: ' + t.name;
+
+  const months = getWorkerMonths().filter(m => m.typeId === t.id);
+  const acc = {};
+  months.forEach(m => {
+    if (!acc[m.accountKey]) {
+      acc[m.accountKey] = { key: m.accountKey, name: m.name, assign: m.assign, isFeed: m.isFeed,
+                            months: 0, wage: 0, draws: 0, bal: 0, rows: [] };
+    }
+    const a = acc[m.accountKey];
+    a.months++;
+    a.rows.push(m);
+    a.draws += Number(m.total) || 0;
+    a.bal += Number(m.balance) || 0;
+  });
+  Object.keys(acc).forEach(k => { acc[k].wage = wpMonthlyWage(acc[k].rows); });
+  const list = Object.keys(acc).map(k => acc[k])
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  document.getElementById('worker-type-content').innerHTML = !list.length
+    ? '<div style="text-align:center;color:var(--text-secondary);padding:24px">لا توجد بيانات — استورد ملف هذا النوع.</div>'
+    : `<table class="data-table" style="width:100%;font-size:0.84rem">
+        <thead><tr><th>العامل</th><th>التكليف</th><th>أشهر</th><th>الأجرة الشهرية</th><th>إجمالي السحب</th><th>مجموع الباقي</th></tr></thead>
+        <tbody>${list.map(a => `
+          <tr style="cursor:pointer" onclick="openWorkerAccount('${a.key.replace(/'/g, "\\'")}')">
+            <td style="font-weight:700">${escapeHtmlSup(a.name)}</td>
+            <td>${escapeHtmlSup(a.assign || (a.isFeed ? 'العلف' : '—'))}</td>
+            <td>${a.months}</td>
+            <td style="color:var(--green)">${fmt(a.wage)}</td>
+            <td style="color:var(--gold)">${fmt(a.draws)}</td>
+            <td style="font-weight:800;color:${a.bal < 0 ? 'var(--red)' : 'inherit'}">${fmt(a.bal)}</td>
+          </tr>`).join('')}</tbody></table>
+      <div style="font-size:0.76rem;color:var(--text-secondary);margin-top:10px">
+        ℹ️ الأشهر مستقلّة — لا يوجد ترحيل رصيد بين شهر وآخر. «مجموع الباقي» هنا حاصل جمع أرصدة الأشهر للاطّلاع فقط.
+      </div>`;
+}
+
+function openWorkerAccount(accountKey) {
+  _currentWorkerAccount = accountKey;
+  renderWorkerAccount();
+  document.getElementById('modal-worker-detail').classList.add('open');
+}
+
+function renderWorkerAccount() {
+  const months = getWorkerMonths()
+    .filter(m => m.typeId === _currentWorkerType && m.accountKey === _currentWorkerAccount)
+    .sort((a, b) => String(a.monthKey).localeCompare(String(b.monthKey)) || (a.col - b.col));
+  if (!months.length) return;
+
+  const first = months[0];
+  document.getElementById('worker-detail-title').textContent =
+    '👤 ' + first.name + (first.assign ? ' — ' + first.assign : (first.isFeed ? ' — العلف' : ''));
+
+  const draws = getWorkerDraws()
+    .filter(d => d.typeId === _currentWorkerType && d.accountKey === _currentWorkerAccount);
+
+  const totWage = months.reduce((s, m) => s + (Number(m.wage) || 0), 0);
+  const totDraw = months.reduce((s, m) => s + (Number(m.total) || 0), 0);
+  const totBal = months.reduce((s, m) => s + (Number(m.balance) || 0), 0);
+
+  const box = (l, v, c) => `<div style="flex:1;min-width:120px;background:rgba(0,0,0,0.25);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:0.72rem;color:var(--text-secondary)">${l}</div>
+      <div style="font-weight:800;color:${c}">${v}</div></div>`;
+  document.getElementById('worker-detail-summary').innerHTML =
+    box('عدد الأشهر', months.length, 'var(--text-primary)') +
+    box('الأجرة الشهرية', fmt(wpMonthlyWage(months), 'دج'), 'var(--green)') +
+    box('إجمالي السحب', fmt(totDraw, 'دج'), 'var(--gold)') +
+    box('مجموع الباقي', fmt(totBal, 'دج'), totBal < 0 ? 'var(--red)' : 'var(--text-primary)');
+
+  document.getElementById('worker-detail-content').innerHTML = months.map(m => {
+    const rows = draws.filter(d => d.monthKey === m.monthKey && d.sheet === m.sheet && d.col === m.col)
+      .sort((a, b) => a.seq - b.seq);
+    return `<div style="margin-bottom:14px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;overflow:hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;background:rgba(154,117,234,0.12);padding:8px 12px">
+        <strong style="color:#b794f4">🗓️ ${wpMonthLabel(m.monthKey)}
+          <span style="font-weight:400;font-size:0.78rem;color:var(--text-secondary)">(${escapeHtmlSup(m.sheet)})</span></strong>
+        <span style="font-size:0.8rem;color:var(--text-secondary)">
+          ${m.isFeed && m.qty != null ? `${fmt(m.qty)} × ${fmt(m.price)} = ` : ''}
+          الأجرة: <b style="color:var(--green)">${m.wage == null ? '—' : fmt(m.wage)}</b> •
+          المجموع: <b style="color:var(--gold)">${fmt(m.total)}</b> •
+          الباقي: <b style="color:${m.balance < 0 ? 'var(--red)' : 'var(--text-primary)'}">${fmt(m.balance)}</b>
+          ${m.edited ? ' <span style="color:var(--gold)">(معدّل)</span>' : (m.fileBalance === null ? ' <span style="color:var(--gold)">(محسوب)</span>' : '')}
+        </span>
+        <span style="display:flex;gap:6px">
+          <button class="btn btn-outline btn-sm" onclick="openEditWage('${m.id}')">✏️ الأجرة</button>
+          <button class="btn btn-outline btn-sm" style="color:var(--gold)" onclick="openWorkerDrawModal('${m.id}')">+ سحب</button>
+        </span>
+      </div>
+      <table class="data-table" style="width:100%;font-size:0.8rem">
+        <thead><tr><th>التاريخ</th><th>السحب</th><th>ملاحظات</th><th></th></tr></thead>
+        <tbody>${rows.length ? rows.map(d => `<tr>
+            <td style="white-space:nowrap">${d.date || '—'}</td>
+            <td style="font-weight:700;color:var(--gold)">${fmt(d.amount)}</td>
+            <td style="color:var(--text-secondary)">${escapeHtmlSup(d.note || '')}</td>
+            <td><button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="deleteWorkerDraw('${d.id}')">حذف</button></td>
+          </tr>`).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--text-secondary)">لا سحوبات</td></tr>'}
+        </tbody></table>
+    </div>`;
+  }).join('');
+}
+
+function deleteCurrentWorkerType() {
+  const t = getWorkerTypes().find(x => x.id === _currentWorkerType);
+  if (!t) return;
+  if (!confirm(`حذف نوع العمال «${t.name}» وكل بياناته؟ لا يمكن التراجع.`)) return;
+  setWorkerTypes(getWorkerTypes().filter(x => x.id !== t.id));
+  setWorkerMonths(getWorkerMonths().filter(m => m.typeId !== t.id));
+  setWorkerDraws(getWorkerDraws().filter(d => d.typeId !== t.id));
+  document.getElementById('modal-worker-type').classList.remove('open');
+  renderWorkerTypes();
+  showToast('تم حذف النوع');
+}
+
+/* =====================================================================
+   PLAKA — UI
+   ===================================================================== */
+function togglePlakaPanel() {
+  const p = document.getElementById('plaka-panel');
+  if (!p) return;
+  if (p.style.display === 'none' || p.style.display === '') {
+    p.style.display = 'block';
+    renderPlakaPanel();
+  } else {
+    p.style.display = 'none';
+  }
+}
+
+function renderPlakaPanel() {
+  const el = document.getElementById('plaka-content');
+  if (!el) return;
+  const sups = getPlakaSuppliers();
+
+  if (!sups.length) {
+    el.innerHTML = `<div style="text-align:center;color:var(--text-secondary);padding:20px">
+      لا يوجد موردون بعد.<br><br>
+      💡 أضف مورداً من زر «+ إضافة مورد»، أو استورد ملف البلاكة من مجلد «Plaka».</div>`;
+    return;
+  }
+
+  el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">
+    ${sups.map(sup => {
+      const locs = plakaLocationsOf(sup.id);
+      const tot = locs.reduce((a, l) => {
+        const t = plakaLocTotals(l);
+        a.goods += t.goods; a.pay += t.pay; a.balance += t.balance;
+        return a;
+      }, { goods: 0, pay: 0, balance: 0 });
+      return `<div onclick="openPlakaSupplier('${sup.id}')"
+        style="cursor:pointer;background:rgba(0,0,0,0.25);border:1px solid rgba(237,137,54,0.3);border-radius:12px;padding:14px">
+        <div style="font-weight:800;font-size:1rem;margin-bottom:8px">${escapeHtmlSup(sup.name)}</div>
+        <div style="font-size:1.05rem;font-weight:800;color:${tot.balance < 0 ? 'var(--green)' : 'var(--red)'}">
+          ${fmt(tot.balance, 'دج')}</div>
+        <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:6px">
+          ${locs.length} موقع • ناتج ${fmt(tot.goods)} • دفع ${fmt(tot.pay)}</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function openPlakaLocation(locId) {
+  const loc = getPlakaLocations().find(l => l.id === locId);
+  if (!loc) return;
+  const tx = getPlakaTx().filter(t => t.locationId === locId).sort((a, b) => a.seq - b.seq);
+
+  const T = plakaLocTotals(loc);
+  document.getElementById('plaka-location-title').innerHTML =
+    '🧱 ' + escapeHtmlSup(loc.name) +
+    ` <button class="btn btn-primary btn-sm" style="margin-inline-start:10px" onclick="openPlakaRecordModal('${loc.id}')">+ إضافة سجل</button>`;
+  document.getElementById('plaka-location-summary').innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      ${['الناتج|' + fmt(T.goods) + '|var(--gold)',
+         'الدفع|' + fmt(T.pay) + '|var(--green)',
+         'الباقي|' + fmt(T.balance) + '|' + (T.balance < 0 ? 'var(--green)' : 'var(--red)')]
+        .map(s => { const [l, v, c] = s.split('|');
+          return `<div style="flex:1;min-width:110px;background:rgba(0,0,0,0.25);border-radius:10px;padding:10px;text-align:center">
+            <div style="font-size:0.72rem;color:var(--text-secondary)">${l}</div>
+            <div style="font-weight:800;color:${c}">${v}</div></div>`; }).join('')}
+    </div>`;
+
+  document.getElementById('plaka-location-content').innerHTML = `
+    <table class="data-table" style="width:100%;font-size:0.8rem">
+      <thead><tr><th>التاريخ</th><th>النوعية</th><th>الكمية</th><th>السعر</th><th>النوع</th><th>المبلغ</th><th>ملاحظات</th><th></th></tr></thead>
+      <tbody>${tx.map(t => {
+        const isPay = t.kind === 'payment';
+        const isDel = t.kind === 'delivery';
+        const color = isPay ? 'var(--green)' : (isDel ? 'var(--text-secondary)' : 'var(--gold)');
+        return `<tr>
+          <td style="white-space:nowrap">${t.date || '—'}</td>
+          <td>${escapeHtmlSup(t.material || '')}</td>
+          <td>${t.qty == null ? '' : fmt(t.qty)}</td>
+          <td>${t.price == null ? '' : fmt(t.price)}</td>
+          <td style="color:${color};font-weight:700">${isPay ? 'دفع' : (isDel ? 'تسليم غير مسعّر' : 'بضاعة')}</td>
+          <td style="font-weight:700;color:${color}">${fmt(t.amount)}</td>
+          <td style="color:var(--text-secondary)">${escapeHtmlSup(t.note || '')}</td>
+          <td>${t.source === 'manual' ? `<button class="btn btn-outline btn-sm" style="color:var(--red)" onclick="deletePlakaTx('${t.id}')">حذف</button>` : ''}</td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+  document.getElementById('modal-plaka-location').classList.add('open');
+}
+
+/* =====================================================================
+   WIRING
+   ===================================================================== */
+document.addEventListener('DOMContentLoaded', () => {
+  const on = (id, ev, fn) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener(ev, fn);
+  };
+  on('worker-type-import-input', 'change', e => {
+    const f = e.target.files && e.target.files[0];
+    if (f) handleWorkerTypeImport(f);
+  });
+  on('plaka-import-input', 'change', async e => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    // keep the sheets so the duplicate-panel toggle can re-parse instantly
+    try {
+      const sheets = await wpReadWorkbook(f);
+      _wpPreview = { mode: 'plaka', sheets, fileName: f.name, supplierName: 'سليم',
+                     result: parsePlakaWorkbook(sheets, 'سليم', {}) };
+      if (!_wpPreview.result.ok) {
+        showToast('لم يُعثر على أي لوحة في ملف البلاكة.', 'error');
+        _wpPreview = null;
+        return;
+      }
+      showWpPreview();
+    } catch (err) {
+      console.error('[plaka import]', err);
+      showToast('خطأ أثناء قراءة الملف: ' + err.message, 'error');
+    }
+  });
+  on('btn-wp-confirm-import', 'click', confirmWpImport);
+  on('btn-delete-worker-type', 'click', deleteCurrentWorkerType);
+});
+
+/* =====================================================================
+   MODAL CLOSE BUTTONS — always at the TOP of the box, never the bottom.
+   Applied centrally so every modal (including any added later) gets one.
+   ===================================================================== */
+function installModalCloseButtons(root) {
+  (root || document).querySelectorAll('.modal-overlay').forEach(overlay => {
+    const box = overlay.querySelector('.modal-box');
+    if (!box || box.querySelector('.modal-close-x')) return;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'modal-close-x';
+    btn.textContent = '✕';
+    btn.title = 'إغلاق';
+    btn.setAttribute('aria-label', 'إغلاق');
+    btn.addEventListener('click', () => {
+      overlay.classList.remove('open');
+      if (overlay.style.display && overlay.style.display !== 'none') overlay.style.display = 'none';
+    });
+    box.insertBefore(btn, box.firstChild);
+
+    // drop the redundant bottom "إغلاق" button (keep "إلغاء" — cancelling a
+    // form is a different action from closing the window)
+    box.querySelectorAll('.modal-actions button, .modal-close-row button').forEach(b => {
+      if ((b.textContent || '').trim().replace(/^✕\s*/, '') === 'إغلاق') b.remove();
+    });
+    box.querySelectorAll('.modal-actions, .modal-close-row').forEach(row => {
+      if (!row.children.length) row.remove();
+    });
+  });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  installModalCloseButtons();
+  // modals created at runtime get one too
+  const mo = new MutationObserver(muts => {
+    for (const m of muts) {
+      for (const n of m.addedNodes) {
+        if (n.nodeType !== 1) continue;
+        if (n.classList && n.classList.contains('modal-overlay')) installModalCloseButtons(n.parentElement || document);
+        else if (n.querySelector && n.querySelector('.modal-overlay')) installModalCloseButtons(n);
+      }
+    }
+  });
+  mo.observe(document.body, { childList: true, subtree: true });
+});
+
+
+/* =====================================================================
+   MANUAL ENTRY — workers added/edited by hand, and بلاكة records.
+   Manual rows live in the same collections as imported ones and are
+   recomputed from their own withdrawals (the file's numbers no longer
+   govern a month once it has been edited).
+   ===================================================================== */
+const WP_MANUAL_SHEET = 'يدوي';
+
+function wpRecalcMonth(rec) {
+  const draws = getWorkerDraws().filter(d =>
+    d.typeId === rec.typeId && d.accountKey === rec.accountKey &&
+    d.monthKey === rec.monthKey && d.sheet === rec.sheet && d.col === rec.col);
+  rec.total = draws.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+  rec.balance = (Number(rec.wage) || 0) - rec.total;
+  return rec;
+}
+
+function wpSaveMonths(list) { setWorkerMonths(list); }
+
+/* ---------- add a worker by hand ---------- */
+function openAddWorkerModal() {
+  if (!_currentWorkerType) { showToast('افتح نوع العمال أولاً', 'error'); return; }
+  ['mw-name', 'mw-assign', 'mw-wage'].forEach(id => {
+    const e = document.getElementById(id); if (e) e.value = '';
+  });
+  const mo = document.getElementById('mw-month');
+  if (mo) mo.value = todayStr().slice(0, 7);
+  document.getElementById('modal-add-worker').classList.add('open');
+  const n = document.getElementById('mw-name');
+  if (n) setTimeout(() => n.focus(), 80);
+}
+
+function confirmAddWorker() {
+  const name = (document.getElementById('mw-name').value || '').trim();
+  if (!name) { showToast('أدخل اسم العامل', 'error'); return; }
+  const assign = (document.getElementById('mw-assign').value || '').trim();
+  const wage = Number(document.getElementById('mw-wage').value) || 0;
+  const monthKey = document.getElementById('mw-month').value || todayStr().slice(0, 7);
+
+  const accountKey = wpAccountKey(name, assign);
+  const months = getWorkerMonths();
+  if (months.some(m => m.typeId === _currentWorkerType && m.accountKey === accountKey &&
+                       m.monthKey === monthKey)) {
+    showToast('هذا العامل له سجل في هذا الشهر بالفعل', 'error');
+    return;
+  }
+  months.push({
+    id: 'wm_man_' + Date.now(), typeId: _currentWorkerType, source: 'manual',
+    importKey: `${_currentWorkerType}|${accountKey}|${monthKey}|${WP_MANUAL_SHEET}|manual`,
+    accountKey, name, assign, isFeed: false, qty: null, price: null,
+    wage, monthKey, sheet: WP_MANUAL_SHEET, col: -1,
+    fileTotal: null, fileBalance: null, total: 0, balance: wage
+  });
+  wpSaveMonths(months);
+  document.getElementById('modal-add-worker').classList.remove('open');
+  renderWorkerType();
+  renderWorkerTypes();
+  showToast('تمت إضافة العامل');
+}
+
+/* ---------- add a month to an existing worker ---------- */
+function openAddWorkerMonthModal() {
+  if (!_currentWorkerAccount) return;
+  const mo = document.getElementById('mwm-month');
+  if (mo) mo.value = todayStr().slice(0, 7);
+  const existing = getWorkerMonths()
+    .filter(m => m.typeId === _currentWorkerType && m.accountKey === _currentWorkerAccount);
+  const w = document.getElementById('mwm-wage');
+  if (w) w.value = wpMonthlyWage(existing) || '';
+  document.getElementById('modal-add-worker-month').classList.add('open');
+}
+
+function confirmAddWorkerMonth() {
+  const monthKey = document.getElementById('mwm-month').value;
+  if (!monthKey) { showToast('اختر الشهر', 'error'); return; }
+  const wage = Number(document.getElementById('mwm-wage').value) || 0;
+  const months = getWorkerMonths();
+  const sample = months.find(m => m.typeId === _currentWorkerType && m.accountKey === _currentWorkerAccount);
+  if (!sample) return;
+  if (months.some(m => m.typeId === _currentWorkerType && m.accountKey === _currentWorkerAccount &&
+                       m.monthKey === monthKey && m.sheet === WP_MANUAL_SHEET)) {
+    showToast('هذا الشهر مسجّل بالفعل', 'error');
+    return;
+  }
+  months.push({
+    id: 'wm_man_' + Date.now(), typeId: _currentWorkerType, source: 'manual',
+    importKey: `${_currentWorkerType}|${_currentWorkerAccount}|${monthKey}|${WP_MANUAL_SHEET}|manual`,
+    accountKey: _currentWorkerAccount, name: sample.name, assign: sample.assign,
+    isFeed: false, qty: null, price: null,
+    wage, monthKey, sheet: WP_MANUAL_SHEET, col: -1,
+    fileTotal: null, fileBalance: null, total: 0, balance: wage
+  });
+  wpSaveMonths(months);
+  document.getElementById('modal-add-worker-month').classList.remove('open');
+  renderWorkerAccount();
+  renderWorkerType();
+  renderWorkerTypes();
+  showToast('تمت إضافة الشهر');
+}
+
+/* ---------- edit a month's wage (imported months included) ---------- */
+let _editWageTarget = null;
+function openEditWage(monthId) {
+  const rec = getWorkerMonths().find(m => m.id === monthId);
+  if (!rec) return;
+  _editWageTarget = monthId;
+  document.getElementById('edit-wage-sub').textContent =
+    `${rec.name} — ${wpMonthLabel(rec.monthKey)}`;
+  document.getElementById('ew-wage').value = rec.wage == null ? '' : rec.wage;
+  document.getElementById('modal-edit-wage').classList.add('open');
+}
+
+function confirmEditWage() {
+  if (!_editWageTarget) return;
+  const months = getWorkerMonths();
+  const rec = months.find(m => m.id === _editWageTarget);
+  if (!rec) return;
+  const v = document.getElementById('ew-wage').value;
+  rec.wage = v === '' ? null : Number(v) || 0;
+  rec.edited = true;
+  rec.fileBalance = null;          // the file no longer governs this month
+  wpRecalcMonth(rec);
+  wpSaveMonths(months);
+  _editWageTarget = null;
+  document.getElementById('modal-edit-wage').classList.remove('open');
+  renderWorkerAccount();
+  renderWorkerType();
+  renderWorkerTypes();
+  showToast('تم تعديل الأجرة');
+}
+
+/* ---------- add a withdrawal ---------- */
+let _drawTarget = null;
+function openWorkerDrawModal(monthId) {
+  const rec = getWorkerMonths().find(m => m.id === monthId);
+  if (!rec) return;
+  _drawTarget = monthId;
+  document.getElementById('worker-draw-sub').textContent =
+    `${rec.name} — ${wpMonthLabel(rec.monthKey)}`;
+  document.getElementById('wd-date').value = (rec.monthKey || todayStr().slice(0, 7)) + '-01';
+  document.getElementById('wd-amount').value = '';
+  document.getElementById('wd-note').value = '';
+  document.getElementById('modal-worker-draw').classList.add('open');
+}
+
+function confirmWorkerDraw() {
+  if (!_drawTarget) return;
+  const months = getWorkerMonths();
+  const rec = months.find(m => m.id === _drawTarget);
+  if (!rec) return;
+  const amount = Number(document.getElementById('wd-amount').value) || 0;
+  if (!amount) { showToast('أدخل المبلغ', 'error'); return; }
+
+  const draws = getWorkerDraws();
+  const mine = draws.filter(d => d.typeId === rec.typeId && d.accountKey === rec.accountKey &&
+                                 d.monthKey === rec.monthKey && d.sheet === rec.sheet && d.col === rec.col);
+  const seq = mine.length ? Math.max(...mine.map(d => Number(d.seq) || 0)) + 1 : 0;
+  draws.push({
+    id: 'wd_man_' + Date.now(), typeId: rec.typeId, source: 'manual',
+    importKey: `${rec.typeId}|${rec.accountKey}|${rec.monthKey}|${rec.sheet}|${rec.col}|man${seq}`,
+    accountKey: rec.accountKey, monthKey: rec.monthKey, sheet: rec.sheet, col: rec.col,
+    date: document.getElementById('wd-date').value || null,
+    amount, note: (document.getElementById('wd-note').value || '').trim(),
+    excelRow: null, seq
+  });
+  setWorkerDraws(draws);
+
+  rec.edited = true;
+  rec.fileTotal = null;
+  rec.fileBalance = null;
+  wpRecalcMonth(rec);
+  wpSaveMonths(months);
+
+  _drawTarget = null;
+  document.getElementById('modal-worker-draw').classList.remove('open');
+  renderWorkerAccount();
+  renderWorkerType();
+  renderWorkerTypes();
+  showToast('تم تسجيل السحب');
+}
+
+function deleteWorkerDraw(drawId) {
+  const draws = getWorkerDraws();
+  const d = draws.find(x => x.id === drawId);
+  if (!d) return;
+  if (!confirm('حذف هذا السحب؟')) return;
+  setWorkerDraws(draws.filter(x => x.id !== drawId));
+  const months = getWorkerMonths();
+  const rec = months.find(m => m.typeId === d.typeId && m.accountKey === d.accountKey &&
+                               m.monthKey === d.monthKey && m.sheet === d.sheet && m.col === d.col);
+  if (rec) { rec.edited = true; rec.fileTotal = null; rec.fileBalance = null; wpRecalcMonth(rec); }
+  wpSaveMonths(months);
+  renderWorkerAccount();
+  renderWorkerType();
+  renderWorkerTypes();
+  showToast('تم الحذف');
+}
+
+/* =====================================================================
+   PLAKA — suppliers, locations and manual records
+   ===================================================================== */
+function getPlakaSuppliers() {
+  const list = supRead('plaka_suppliers');
+  if (list.length) return list;
+  // migrate the imported locations' supplier name into a real record
+  const names = [...new Set(getPlakaLocations().map(l => l.supplier || 'سليم'))];
+  if (!names.length) return [];
+  const seeded = names.map((n, i) => ({ id: 'ps_seed_' + i, name: n }));
+  supWrite('plaka_suppliers', seeded);
+  return seeded;
+}
+function setPlakaSuppliers(a) { supWrite('plaka_suppliers', a); }
+
+function plakaSupplierOf(loc) { return loc.supplierId || null; }
+
+function plakaLocationsOf(supplierId) {
+  const sup = getPlakaSuppliers().find(s => s.id === supplierId);
+  if (!sup) return [];
+  return getPlakaLocations().filter(l =>
+    l.supplierId ? l.supplierId === supplierId : supNormAr(l.supplier || 'سليم') === supNormAr(sup.name));
+}
+
+/* imported totals come from the file; manual rows are added on top */
+function plakaLocTotals(loc) {
+  const tx = getPlakaTx().filter(t => t.locationId === loc.id && t.source === 'manual');
+  const goods = (Number(loc.fileGoods) || 0) + tx.filter(t => t.kind === 'goods').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const pay = (Number(loc.filePay) || 0) + tx.filter(t => t.kind === 'payment').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  return { goods, pay, balance: goods - pay };
+}
+
+function plakaEnsureSupplier(name) {
+  const list = getPlakaSuppliers();
+  let sup = list.find(s => supNormAr(s.name) === supNormAr(name));
+  if (!sup) { sup = { id: 'ps_' + Date.now(), name }; list.push(sup); setPlakaSuppliers(list); }
+  return sup.id;
+}
+
+function openAddPlakaSupplierModal() {
+  const e = document.getElementById('ps-name');
+  if (e) e.value = '';
+  document.getElementById('modal-add-plaka-supplier').classList.add('open');
+  if (e) setTimeout(() => e.focus(), 80);
+}
+
+function confirmAddPlakaSupplier() {
+  const name = (document.getElementById('ps-name').value || '').trim();
+  if (!name) { showToast('أدخل اسم المورد', 'error'); return; }
+  const list = getPlakaSuppliers();
+  if (list.some(s => supNormAr(s.name) === supNormAr(name))) {
+    showToast('يوجد مورد بنفس الاسم', 'error'); return;
+  }
+  list.push({ id: 'ps_' + Date.now(), name });
+  setPlakaSuppliers(list);
+  document.getElementById('modal-add-plaka-supplier').classList.remove('open');
+  renderPlakaPanel();
+  showToast('تمت إضافة المورد');
+}
+
+function openPlakaSupplier(supplierId) {
+  _currentPlakaSupplier = supplierId;
+  renderPlakaSupplier();
+  document.getElementById('modal-plaka-supplier').classList.add('open');
+}
+
+function renderPlakaSupplier() {
+  const sup = getPlakaSuppliers().find(s => s.id === _currentPlakaSupplier);
+  if (!sup) return;
+  document.getElementById('plaka-supplier-title').textContent = '🧱 ' + sup.name;
+
+  const locs = plakaLocationsOf(sup.id);
+  const tot = locs.reduce((a, l) => {
+    const t = plakaLocTotals(l);
+    a.goods += t.goods; a.pay += t.pay; a.balance += t.balance;
+    return a;
+  }, { goods: 0, pay: 0, balance: 0 });
+
+  const box = (l, v, c) => `<div style="flex:1;min-width:120px;background:rgba(0,0,0,0.25);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:0.72rem;color:var(--text-secondary)">${l}</div>
+      <div style="font-weight:800;color:${c}">${v}</div></div>`;
+  document.getElementById('plaka-supplier-summary').innerHTML =
+    `<div style="display:flex;gap:10px;flex-wrap:wrap">
+      ${box('المواقع', locs.length, 'var(--text-primary)')}
+      ${box('إجمالي الناتج', fmt(tot.goods, 'دج'), 'var(--gold)')}
+      ${box('إجمالي الدفع', fmt(tot.pay, 'دج'), 'var(--green)')}
+      ${box('الرصيد', fmt(tot.balance, 'دج'), tot.balance < 0 ? 'var(--green)' : 'var(--red)')}
+    </div>`;
+
+  document.getElementById('plaka-supplier-content').innerHTML = !locs.length
+    ? '<div style="text-align:center;color:var(--text-secondary);padding:24px">لا توجد مواقع — أضف موقعاً أو استورد الملف.</div>'
+    : `<table class="data-table" style="width:100%;font-size:0.84rem">
+        <thead><tr><th>الموقع</th><th>الناتج</th><th>الدفع</th><th>الباقي</th><th>حركات</th><th></th></tr></thead>
+        <tbody>${locs.map(l => {
+          const t = plakaLocTotals(l);
+          const n = getPlakaTx().filter(x => x.locationId === l.id && x.kind !== 'delivery').length;
+          return `<tr>
+            <td style="font-weight:700;cursor:pointer" onclick="openPlakaLocation('${l.id}')">${escapeHtmlSup(l.name)}</td>
+            <td style="color:var(--gold)">${fmt(t.goods)}</td>
+            <td style="color:var(--green)">${fmt(t.pay)}</td>
+            <td style="font-weight:800;color:${t.balance < 0 ? 'var(--green)' : 'var(--red)'}">${fmt(t.balance)}</td>
+            <td>${n}</td>
+            <td><button class="btn btn-outline btn-sm" onclick="openPlakaRecordModal('${l.id}')">+ سجل</button></td>
+          </tr>`;
+        }).join('')}
+        <tr style="background:rgba(255,255,255,0.05);font-weight:800">
+          <td>الإجمالي</td><td>${fmt(tot.goods)}</td><td>${fmt(tot.pay)}</td><td>${fmt(tot.balance)}</td><td></td><td></td>
+        </tr></tbody></table>`;
+}
+
+function deleteCurrentPlakaSupplier() {
+  const sup = getPlakaSuppliers().find(s => s.id === _currentPlakaSupplier);
+  if (!sup) return;
+  if (!confirm(`حذف المورد «${sup.name}» وكل مواقعه وسجلاته؟`)) return;
+  const locs = plakaLocationsOf(sup.id).map(l => l.id);
+  setPlakaTx(getPlakaTx().filter(t => locs.indexOf(t.locationId) === -1));
+  setPlakaLocations(getPlakaLocations().filter(l => locs.indexOf(l.id) === -1));
+  setPlakaSuppliers(getPlakaSuppliers().filter(s => s.id !== sup.id));
+  document.getElementById('modal-plaka-supplier').classList.remove('open');
+  renderPlakaPanel();
+  showToast('تم حذف المورد');
+}
+
+function openAddPlakaLocation() {
+  if (!_currentPlakaSupplier) return;
+  const e = document.getElementById('pl-name');
+  if (e) e.value = '';
+  document.getElementById('modal-add-plaka-location').classList.add('open');
+  if (e) setTimeout(() => e.focus(), 80);
+}
+
+function confirmAddPlakaLocation() {
+  const name = (document.getElementById('pl-name').value || '').trim();
+  if (!name) { showToast('أدخل اسم الموقع', 'error'); return; }
+  const sup = getPlakaSuppliers().find(s => s.id === _currentPlakaSupplier);
+  if (!sup) return;
+  const locs = getPlakaLocations();
+  if (plakaLocationsOf(sup.id).some(l => supNormAr(l.name) === supNormAr(name))) {
+    showToast('يوجد موقع بنفس الاسم', 'error'); return;
+  }
+  locs.push({
+    id: 'pl_man_' + Date.now(), supplierId: sup.id, supplier: sup.name,
+    name, sheet: WP_MANUAL_SHEET, source: 'manual',
+    fileGoods: 0, filePay: 0, fileBalance: 0
+  });
+  setPlakaLocations(locs);
+  document.getElementById('modal-add-plaka-location').classList.remove('open');
+  renderPlakaSupplier();
+  renderPlakaPanel();
+  showToast('تمت إضافة الموقع');
+}
+
+let _plakaRecordTarget = null;
+function openPlakaRecordModal(locId) {
+  _plakaRecordTarget = locId;
+  const loc = getPlakaLocations().find(l => l.id === locId);
+  document.getElementById('plaka-record-sub').textContent = loc ? '📍 ' + loc.name : '';
+  document.getElementById('pr-date').value = todayStr();
+  ['pr-material', 'pr-qty', 'pr-price', 'pr-goods', 'pr-pay', 'pr-note']
+    .forEach(id => { const e = document.getElementById(id); if (e) e.value = ''; });
+  document.getElementById('modal-plaka-record').classList.add('open');
+}
+
+function updatePlakaRecordCalc() {
+  const q = Number(document.getElementById('pr-qty').value) || 0;
+  const p = Number(document.getElementById('pr-price').value) || 0;
+  const g = document.getElementById('pr-goods');
+  if (g && q && p) g.value = q * p;
+}
+
+function confirmPlakaRecord() {
+  if (!_plakaRecordTarget) return;
+  const loc = getPlakaLocations().find(l => l.id === _plakaRecordTarget);
+  if (!loc) return;
+  const goods = Number(document.getElementById('pr-goods').value) || 0;
+  const pay = Number(document.getElementById('pr-pay').value) || 0;
+  const qty = document.getElementById('pr-qty').value === '' ? null : Number(document.getElementById('pr-qty').value);
+  const price = document.getElementById('pr-price').value === '' ? null : Number(document.getElementById('pr-price').value);
+  if (!goods && !pay && qty === null) { showToast('أدخل الناتج أو الدفع', 'error'); return; }
+
+  const tx = getPlakaTx();
+  const mine = tx.filter(t => t.locationId === loc.id);
+  const seq = mine.length ? Math.max(...mine.map(t => Number(t.seq) || 0)) + 1 : 0;
+  const base = {
+    locationId: loc.id, source: 'manual',
+    date: document.getElementById('pr-date').value || todayStr(),
+    material: (document.getElementById('pr-material').value || '').trim(),
+    qty, price, note: (document.getElementById('pr-note').value || '').trim(),
+    excelRow: null, seq
+  };
+  // E and F stay independent — one row may produce two movements
+  if (goods) tx.push(Object.assign({}, base, { id: 'ptx_man_g' + Date.now(), kind: 'goods', amount: goods, importKey: `manual|${loc.id}|${seq}|goods` }));
+  if (pay) tx.push(Object.assign({}, base, { id: 'ptx_man_p' + (Date.now() + 1), kind: 'payment', amount: pay, importKey: `manual|${loc.id}|${seq}|payment` }));
+  if (!goods && !pay) tx.push(Object.assign({}, base, { id: 'ptx_man_d' + Date.now(), kind: 'delivery', amount: 0, importKey: `manual|${loc.id}|${seq}|delivery` }));
+  setPlakaTx(tx);
+
+  document.getElementById('modal-plaka-record').classList.remove('open');
+  if (document.getElementById('modal-plaka-location').classList.contains('open')) openPlakaLocation(loc.id);
+  renderPlakaSupplier();
+  renderPlakaPanel();
+  showToast('تم تسجيل الحركة');
+}
+
+function deletePlakaTx(txId) {
+  const tx = getPlakaTx();
+  const t = tx.find(x => x.id === txId);
+  if (!t || t.source !== 'manual') { showToast('لا يمكن حذف حركة مستوردة', 'error'); return; }
+  if (!confirm('حذف هذه الحركة؟')) return;
+  setPlakaTx(tx.filter(x => x.id !== txId));
+  openPlakaLocation(t.locationId);
+  renderPlakaSupplier();
+  renderPlakaPanel();
+  showToast('تم الحذف');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const on = (id, ev, fn) => { const el = document.getElementById(id); if (el) el.addEventListener(ev, fn); };
+  on('btn-confirm-add-worker', 'click', confirmAddWorker);
+  on('btn-confirm-add-worker-month', 'click', confirmAddWorkerMonth);
+  on('btn-confirm-edit-wage', 'click', confirmEditWage);
+  on('btn-confirm-worker-draw', 'click', confirmWorkerDraw);
+  on('btn-confirm-add-plaka-supplier', 'click', confirmAddPlakaSupplier);
+  on('btn-confirm-add-plaka-location', 'click', confirmAddPlakaLocation);
+  on('btn-confirm-plaka-record', 'click', confirmPlakaRecord);
+  on('btn-delete-plaka-supplier', 'click', deleteCurrentPlakaSupplier);
 });
