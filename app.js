@@ -9606,7 +9606,7 @@ function renderSupplierLedger() {
 
   const invoices = getSupplierInvoices()
     .filter(i => i.supplierId === sup.id)
-    .sort((a, b) => a.index - b.index);
+    .sort((a, b) => b.index - a.index);        // newest invoice first
 
   // Invoice groups first (physical order), then any manual entries.
   const groups = invoices.map(i => ({
@@ -9615,8 +9615,8 @@ function renderSupplierLedger() {
       .sort((a, b) => a.seq - b.seq)
   }));
   const manual = tx.filter(t => t.source !== 'import')
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  if (manual.length) groups.push({ invoice: null, rows: manual });
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  if (manual.length) groups.unshift({ invoice: null, rows: manual });
 
   const pages = Math.max(1, Math.ceil(groups.length / SUP_INVOICES_PER_PAGE));
   if (_supplierLedgerPage >= pages) _supplierLedgerPage = pages - 1;
@@ -10706,15 +10706,21 @@ function renderWorkerType() {
     a.draws += Number(m.total) || 0;
     a.bal += Number(m.balance) || 0;
   });
-  Object.keys(acc).forEach(k => { acc[k].wage = wpMonthlyWage(acc[k].rows); });
-  const list = Object.keys(acc).map(k => acc[k])
-    .sort((a, b) => a.name.localeCompare(b.name));
+  Object.keys(acc).forEach(k => {
+    acc[k].wage = wpMonthlyWage(acc[k].rows);
+    acc[k].lastMonth = acc[k].rows.reduce((mx, m) =>
+      String(m.monthKey) > String(mx) ? m.monthKey : mx, '');
+  });
+  // "this month" = the newest month present in this type's data, so the
+  // split stays correct whatever today's calendar date happens to be.
+  const currentMonth = months.reduce((mx, m) => String(m.monthKey) > String(mx) ? m.monthKey : mx, '');
+  const all = Object.keys(acc).map(k => acc[k])
+    .sort((a, b) => String(b.lastMonth).localeCompare(String(a.lastMonth)) || a.name.localeCompare(b.name));
+  const list = all.filter(a => a.lastMonth === currentMonth);
+  const former = all.filter(a => a.lastMonth !== currentMonth);
+  _workerTypeFormer = former;
 
-  document.getElementById('worker-type-content').innerHTML = !list.length
-    ? '<div style="text-align:center;color:var(--text-secondary);padding:24px">لا توجد بيانات — استورد ملف هذا النوع.</div>'
-    : `<table class="data-table" style="width:100%;font-size:0.84rem">
-        <thead><tr><th>العامل</th><th>التكليف</th><th>أشهر</th><th>الأجرة الشهرية</th><th>إجمالي السحب</th><th>مجموع الباقي</th></tr></thead>
-        <tbody>${list.map(a => `
+  const rowHtml = a => `
           <tr style="cursor:pointer" onclick="openWorkerAccount('${a.key.replace(/'/g, "\\'")}')">
             <td style="font-weight:700">${escapeHtmlSup(a.name)}</td>
             <td>${escapeHtmlSup(a.assign || (a.isFeed ? 'العلف' : '—'))}</td>
@@ -10722,7 +10728,20 @@ function renderWorkerType() {
             <td style="color:var(--green)">${fmt(a.wage)}</td>
             <td style="color:var(--gold)">${fmt(a.draws)}</td>
             <td style="font-weight:800;color:${a.bal < 0 ? 'var(--red)' : 'inherit'}">${fmt(a.bal)}</td>
-          </tr>`).join('')}</tbody></table>
+          </tr>`;
+
+  document.getElementById('worker-type-content').innerHTML = !all.length
+    ? '<div style="text-align:center;color:var(--text-secondary);padding:24px">لا توجد بيانات — استورد ملف هذا النوع.</div>'
+    : `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+         <strong style="color:#b794f4">👷 عمال هذا الشهر (${wpMonthLabel(currentMonth)}) — ${list.length}</strong>
+         ${former.length ? `<button class="btn btn-outline btn-sm" onclick="toggleFormerWorkers()">
+           <span id="former-workers-label">👴 عمال قدامى (${former.length})</span></button>` : ''}
+       </div>
+       <table class="data-table" style="width:100%;font-size:0.84rem">
+        <thead><tr><th>العامل</th><th>التكليف</th><th>أشهر</th><th>الأجرة الشهرية</th><th>إجمالي السحب</th><th>مجموع الباقي</th></tr></thead>
+        <tbody>${list.length ? list.map(rowHtml).join('')
+          : '<tr><td colspan="6" style="text-align:center;color:var(--text-secondary)">لا أحد يعمل هذا الشهر</td></tr>'}</tbody></table>
+      <div id="former-workers-section" style="display:none;margin-top:14px"></div>
       <div style="font-size:0.76rem;color:var(--text-secondary);margin-top:10px">
         ℹ️ الأشهر مستقلّة — لا يوجد ترحيل رصيد بين شهر وآخر. «مجموع الباقي» هنا حاصل جمع أرصدة الأشهر للاطّلاع فقط.
       </div>`;
@@ -10737,7 +10756,7 @@ function openWorkerAccount(accountKey) {
 function renderWorkerAccount() {
   const months = getWorkerMonths()
     .filter(m => m.typeId === _currentWorkerType && m.accountKey === _currentWorkerAccount)
-    .sort((a, b) => String(a.monthKey).localeCompare(String(b.monthKey)) || (a.col - b.col));
+    .sort((a, b) => String(b.monthKey).localeCompare(String(a.monthKey)) || (a.col - b.col));
   if (!months.length) return;
 
   const first = months[0];
@@ -10853,7 +10872,8 @@ function renderPlakaPanel() {
 function openPlakaLocation(locId) {
   const loc = getPlakaLocations().find(l => l.id === locId);
   if (!loc) return;
-  const tx = getPlakaTx().filter(t => t.locationId === locId).sort((a, b) => a.seq - b.seq);
+  const tx = getPlakaTx().filter(t => t.locationId === locId)
+    .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')) || (b.seq - a.seq));
 
   const T = plakaLocTotals(loc);
   document.getElementById('plaka-location-title').innerHTML =
@@ -11767,12 +11787,17 @@ function renderVetAccount() {
     else groups.push({ date: row.date, rows: [row] });
   });
 
+  // The running balance is only meaningful chronologically, so compute it
+  // forwards first, then present the receipts newest-first.
   let running = 0;
-  document.getElementById('vet-account-content').innerHTML = groups.map(g => {
+  groups.forEach(g => g.rows.forEach(row => {
+    running = vetRound2(running + (row.kind === 'payment' ? -row.amount : row.amount));
+    row._running = running;
+  }));
+  document.getElementById('vet-account-content').innerHTML = groups.slice().reverse().map(g => {
     const gGoods = vetRound2(g.rows.filter(r => r.kind === 'goods').reduce((s, r) => s + r.amount, 0));
     const gPay = vetRound2(g.rows.filter(r => r.kind === 'payment').reduce((s, r) => s + r.amount, 0));
     const body = g.rows.map(row => {
-      running = vetRound2(running + (row.kind === 'payment' ? -row.amount : row.amount));
       const isPay = row.kind === 'payment';
       return `<tr>
         <td>${escapeHtmlSup(row.item || (isPay ? 'دفعة' : '—'))}</td>
@@ -11781,7 +11806,7 @@ function renderVetAccount() {
         <td style="color:var(--gold);font-weight:700">${isPay ? '' : fmt(row.amount)}</td>
         <td style="color:var(--green);font-weight:700">${isPay ? fmt(row.amount) : ''}</td>
         <td style="color:var(--text-secondary)">${escapeHtmlSup(row.note || '')}</td>
-        <td style="font-weight:700">${fmt(running)}</td>
+        <td style="font-weight:700">${fmt(row._running)}</td>
       </tr>`;
     }).join('');
 
@@ -11880,3 +11905,43 @@ document.addEventListener('DOMContentLoaded', () => {
   const del = document.getElementById('btn-delete-vet-account');
   if (del) del.addEventListener('click', deleteCurrentVetAccount);
 });
+
+/* =====================================================================
+   FORMER WORKERS — anyone with no record in the type's newest month.
+   Hidden by default so the type screen shows only who is working now.
+   ===================================================================== */
+let _workerTypeFormer = [];
+
+function toggleFormerWorkers() {
+  const box = document.getElementById('former-workers-section');
+  const label = document.getElementById('former-workers-label');
+  if (!box) return;
+
+  const showing = box.style.display !== 'none' && box.style.display !== '';
+  if (showing) {
+    box.style.display = 'none';
+    if (label) label.textContent = `👴 عمال قدامى (${_workerTypeFormer.length})`;
+    return;
+  }
+
+  box.style.display = 'block';
+  if (label) label.textContent = '🔼 إخفاء العمال القدامى';
+  box.innerHTML = `
+    <div style="font-weight:800;color:var(--text-secondary);margin-bottom:8px">
+      👴 عمال قدامى (${_workerTypeFormer.length}) — اضغط على البطاقة لعرض كل سجلاته
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px">
+      ${_workerTypeFormer.map(a => `
+        <div onclick="openWorkerAccount('${a.key.replace(/'/g, "\'")}')"
+          style="cursor:pointer;background:rgba(0,0,0,0.25);border:1px solid rgba(154,117,234,0.25);border-radius:10px;padding:12px">
+          <div style="font-weight:800;margin-bottom:4px">${escapeHtmlSup(a.name)}</div>
+          <div style="font-size:0.74rem;color:var(--text-secondary)">
+            ${escapeHtmlSup(a.assign || (a.isFeed ? 'العلف' : '—'))}</div>
+          <div style="font-size:0.74rem;color:var(--text-secondary);margin-top:6px">
+            آخر شهر: ${wpMonthLabel(a.lastMonth)} • ${a.months} شهر</div>
+          <div style="font-size:0.78rem;color:var(--gold);margin-top:4px">سحب: ${fmt(a.draws)}</div>
+          <div style="font-size:0.78rem;font-weight:700;color:${a.bal < 0 ? 'var(--red)' : 'inherit'}">
+            الباقي: ${fmt(a.bal)}</div>
+        </div>`).join('')}
+    </div>`;
+}
