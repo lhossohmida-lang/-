@@ -1094,7 +1094,8 @@ function stopGlobalSync() {
 const GLOBAL_LEDGER_COLLS = [
   'supplier_list', 'supplier_tx', 'supplier_invoices',
   'worker_types', 'worker_months', 'worker_draws',
-  'plaka_suppliers', 'plaka_locations', 'plaka_tx'
+  'plaka_suppliers', 'plaka_locations', 'plaka_tx',
+  'vet_accounts', 'vet_tx'
 ];
 
 function refreshGlobalLedgerUI() {
@@ -1105,6 +1106,7 @@ function refreshGlobalLedgerUI() {
   try { if (vis('global-credits-popup') && typeof renderSuppliersList === 'function') renderSuppliersList(); } catch (e) {}
   try { if (vis('global-workers-panel') && typeof renderWorkerTypes === 'function') renderWorkerTypes(); } catch (e) {}
   try { if (vis('plaka-panel') && typeof renderPlakaPanel === 'function') renderPlakaPanel(); } catch (e) {}
+  try { if (vis('vet-panel') && typeof renderVetPanel === 'function') renderVetPanel(); } catch (e) {}
 }
 
 /* Anything saved before signing in lands under the "default" uid. Adopt it
@@ -9248,7 +9250,8 @@ async function handleSupplierExcelImport(file) {
     // Always the first sheet.
     const ws = workbook.Sheets[workbook.SheetNames[0]];
     if (!ws) { showToast('الملف لا يحتوي على أي ورقة', 'error'); return; }
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    // range:0 — see wpReadWorkbook: without it the sheet's !ref shifts every row index.
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', range: 0 });
 
     // Supplier name comes from the FILE NAME (one file = one supplier).
     const fileSupplierName = file.name.replace(/\.(xlsx|xlsm|xls|csv)$/i, '').trim();
@@ -10191,9 +10194,12 @@ async function wpReadWorkbook(file) {
     wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: false });
   }
   // sheet_to_json returns cached formula RESULTS, never the formulas themselves.
+  // range:0 forces the array to start at Excel row 1. Without it SheetJS honours
+  // the sheet's declared !ref (e.g. "A3:G423") and every row index — and so every
+  // row number we report or key on — silently shifts.
   return wb.SheetNames.map(n => ({
     name: n,
-    rows: XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: null, blankrows: true })
+    rows: XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: null, blankrows: true, range: 0 })
   }));
 }
 
@@ -10464,7 +10470,13 @@ const WP_WARN_LABEL = {
   'duplicate-panel': '♻️ لوحة مكرّرة',
   'goods-mismatch': '❌ فرق في الناتج',
   'pay-mismatch': '❌ فرق في الدفع',
-  'no-total': '❓ بلا صف «المجموع»'
+  'no-total': '❓ بلا صف «المجموع»',
+  'no-item': '💊 مبلغ بلا اسم دواء',
+  'unknown-site': '❔ جهة مجهولة (??????)',
+  'note-is-serial': '📅 ملاحظة تبدو رقم تاريخ Excel',
+  'formula-mismatch': '❌ الكمية × السعر ≠ الناتج',
+  'no-date': '📅 سطر بلا تاريخ ولا تاريخ سابق',
+  'no-blocks': '❓ لا توجد كتل في الورقة'
 };
 
 function showWpPreview() {
@@ -10472,6 +10484,7 @@ function showWpPreview() {
   if (!p) return;
   const r = p.result;
   const isW = p.mode === 'workers';
+  const isV = p.mode === 'vet';
 
   const chip = (label, value, color) => `
     <div style="flex:1;min-width:120px;background:rgba(0,0,0,0.25);border-radius:8px;padding:10px 12px;text-align:center">
@@ -10480,7 +10493,8 @@ function showWpPreview() {
     </div>`;
 
   document.getElementById('modal-wp-preview-title').textContent =
-    isW ? `👷 معاينة استيراد عمال: ${p.typeName}` : '🧱 معاينة استيراد بلاكة';
+    isW ? `👷 معاينة استيراد عمال: ${p.typeName}`
+        : (isV ? '🩺 معاينة استيراد البيطرة' : '🧱 معاينة استيراد بلاكة');
 
   let summary = chip('الملف', escapeHtmlSup(p.fileName), 'var(--blue)');
   if (isW) {
@@ -10492,6 +10506,15 @@ function showWpPreview() {
       chip('أسطر السحب', r.totals.drawRows) +
       chip('إجمالي الأجرة', fmt(r.totals.wage), 'var(--green)') +
       chip('إجمالي السحوبات', fmt(r.totals.draws), 'var(--gold)');
+  } else if (isV) {
+    summary +=
+      chip('الحسابات', r.accounts.length) +
+      chip('حركات شراء', r.totals.buys, 'var(--gold)') +
+      chip('حركات دفع', r.totals.pays, 'var(--green)') +
+      chip('إجمالي الحركات', r.totals.txCount) +
+      chip('إجمالي الناتج', fmt(r.totals.goods)) +
+      chip('إجمالي الدفع', fmt(r.totals.pay)) +
+      chip('الرصيد', fmt(r.totals.balance, 'دج'), r.totals.balance < 0 ? 'var(--green)' : 'var(--red)');
   } else {
     summary +=
       chip('المواقع', r.totals.locations) +
@@ -10522,7 +10545,9 @@ function showWpPreview() {
     </div>` : '';
 
   /* replace switch + plaka duplicate toggle */
-  const existing = isW
+  const existing = isV
+    ? getVetTx().length
+    : isW
     ? getWorkerMonths().filter(m => {
         const t = getWorkerTypes().find(x => supNormAr(x.name) === supNormAr(p.typeName));
         return t && m.typeId === t.id;
@@ -10534,7 +10559,7 @@ function showWpPreview() {
       <span style="font-size:0.86rem">استبدال بيانات ${isW ? 'هذا النوع' : 'هذا المورد'} بالكامل
         <span style="color:var(--text-secondary)">(موجود حالياً: ${existing})</span></span>
     </label>
-    ${(!isW && r.excluded.length) ? `
+    ${(p.mode === 'plaka' && r.excluded && r.excluded.length) ? `
       <label style="display:flex;align-items:center;gap:8px;background:rgba(0,0,0,0.2);border-radius:8px;padding:10px 12px;cursor:pointer;margin-top:8px">
         <input type="checkbox" id="plaka-include-dupes" style="width:16px;height:16px"
           onchange="reparsePlakaWithDupes(this.checked)" />
@@ -10544,7 +10569,26 @@ function showWpPreview() {
 
   /* detail table */
   let t;
-  if (isW) {
+  if (isV) {
+    t = `<table class="data-table" style="width:100%;font-size:0.8rem">
+      <thead><tr><th>الحساب</th><th>الفترة</th><th>شراء</th><th>دفع</th><th>الناتج</th><th>المدفوع</th><th>الباقي</th></tr></thead><tbody>
+      ${r.accounts.map(acc => {
+        const dated = acc.moves.filter(m => m.date);
+        const period = dated.length ? `${dated[0].date} → ${dated[dated.length - 1].date}` : '—';
+        return `<tr>
+          <td style="font-weight:700">${escapeHtmlSup(acc.name)}</td>
+          <td style="white-space:nowrap">${period}</td>
+          <td>${acc.buys}</td><td>${acc.pays}</td>
+          <td style="color:var(--gold)">${fmt(acc.fileGoods)}</td>
+          <td style="color:var(--green)">${fmt(acc.filePay)}</td>
+          <td style="font-weight:800;color:${acc.fileBalance < 0 ? 'var(--green)' : 'var(--red)'}">${fmt(acc.fileBalance)}</td>
+        </tr>`;
+      }).join('')}
+      <tr style="background:rgba(255,255,255,0.05);font-weight:800">
+        <td colspan="2">الإجمالي</td><td>${r.totals.buys}</td><td>${r.totals.pays}</td>
+        <td>${fmt(r.totals.goods)}</td><td>${fmt(r.totals.pay)}</td><td>${fmt(r.totals.balance)}</td></tr>
+      </tbody></table>`;
+  } else if (isW) {
     const byAcc = {};
     r.kept.forEach(pl => {
       const k = wpAccountKey(pl.name, pl.assign);
@@ -10597,6 +10641,7 @@ function reparsePlakaWithDupes(include) {
 function confirmWpImport() {
   if (!_wpPreview) return;
   if (_wpPreview.mode === 'workers') commitWorkerImport();
+  else if (_wpPreview.mode === 'vet') commitVetImport();
   else commitPlakaImport();
 }
 
@@ -11352,4 +11397,486 @@ document.addEventListener('DOMContentLoaded', () => {
   on('btn-confirm-add-plaka-location', 'click', confirmAddPlakaLocation);
   on('btn-confirm-plaka-record', 'click', confirmPlakaRecord);
   on('btn-delete-plaka-supplier', 'click', deleteCurrentPlakaSupplier);
+});
+
+
+/* =====================================================================
+   البيطرة — Vétérinaire ledger import
+   ---------------------------------------------------------------------
+   One sheet, two stacked blocks; each block is an independent account.
+   Columns: A التاريخ | B النوعية | C الكمية | D السعر
+            E الناتج  | F الدفع   | G ملاحظات (الجهة)
+   The «المجموع» row is the reference: E = total goods, F = total paid,
+   G = الباقي.
+   ===================================================================== */
+const VET_COL = { DATE: 0, ITEM: 1, QTY: 2, PRICE: 3, GOODS: 4, PAY: 5, NOTE: 6 };
+const VET_EPS = 0.01;
+
+// Amounts here are genuinely decimal (2208.65, 18400.17) and the file even
+// carries float artefacts (6625.950000000001). Keep two decimals, never round
+// to an integer.
+function vetRound2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+function vetEq(a, b) { return Math.abs((Number(a) || 0) - (Number(b) || 0)) < VET_EPS; }
+
+function parseVetWorkbook(sheets, options) {
+  options = options || {};
+  const rows = (sheets[0] && sheets[0].rows) || [];
+  const sheetName = (sheets[0] && sheets[0].name) || 'Feuil1';
+  const warnings = [];
+  const warn = (code, message, row) => warnings.push({ code, message, row: row == null ? null : row });
+
+  /* --- locate the blocks by label, never by fixed row numbers --- */
+  const headRows = [], totalRows = [];
+  for (let r = 0; r < rows.length; r++) {
+    const a = supNormAr(wpCell(rows, r, VET_COL.DATE));
+    if (a === supNormAr('التاريخ')) headRows.push(r);
+    else if (a === supNormAr('المجموع')) totalRows.push(r);
+  }
+
+  if (!headRows.length) {
+    return {
+      ok: false, accounts: [], warnings: [{ code: 'no-blocks',
+        message: 'لم يُعثر على أي كتلة — لا يوجد صف رأس فيه «التاريخ» في العمود A.', row: null }],
+      totals: { goods: 0, pay: 0, balance: 0, buys: 0, pays: 0, txCount: 0 }
+    };
+  }
+
+  const accounts = [];
+  headRows.forEach(h => {
+    const close = totalRows.find(t => t > h);
+    if (close === undefined) {
+      warn('no-total', `صف الرأس ${h + 1}: لا يوجد صف «المجموع» بعده — الكتلة مُستبعَدة.`, h);
+      return;
+    }
+
+    /* The account name sits on the row ABOVE the header, but not always in
+       column A — the second block keeps it in D. Scan A..G. */
+    let name = '', nameCell = '';
+    for (let c = VET_COL.DATE; c <= VET_COL.NOTE; c++) {
+      const v = supStr(wpCell(rows, h - 1, c));
+      if (v) { name = v; nameCell = wpAddr(h - 1, c); break; }
+    }
+    if (!name) {
+      name = 'حساب ' + (accounts.length + 1);
+      warn('no-name', `الكتلة عند الصف ${h + 1}: لا يوجد اسم حساب في الصف الذي يسبق الرأس — سُمّي «${name}».`, h);
+    }
+
+    const moves = [];
+    let lastDate = null;
+    for (let r = h + 1; r < close; r++) {
+      const rawDate = wpCell(rows, r, VET_COL.DATE);
+      const item = supStr(wpCell(rows, r, VET_COL.ITEM));
+      const qty = wpNum(wpCell(rows, r, VET_COL.QTY));
+      const price = wpNum(wpCell(rows, r, VET_COL.PRICE));
+      const goods = vetRound2(wpNum(wpCell(rows, r, VET_COL.GOODS)) || 0);
+      const pay = vetRound2(wpNum(wpCell(rows, r, VET_COL.PAY)) || 0);
+      const note = supStr(wpCell(rows, r, VET_COL.NOTE));
+
+      // A blank date means "same receipt/day as the line above".
+      let date = supParseDate(rawDate);
+      if (date) lastDate = date;
+      else date = lastDate;
+
+      if (goods === 0 && pay === 0) continue;   // nothing to record
+
+      if (goods && qty !== null && price !== null && !vetEq(qty * price, goods)) {
+        warn('formula-mismatch',
+          `صف ${r + 1}: ${fmt(qty)} × ${fmt(price)} لا يساوي الناتج ${fmt(goods)}.`, r);
+      }
+      if (goods && !item) {
+        warn('no-item',
+          `صف ${r + 1}: مبلغ ${fmt(goods)} بلا اسم دواء — استُورد كما هو (محتسَب في مجموع الملف).`, r);
+      }
+      if (note === '??????') {
+        warn('unknown-site', `صف ${r + 1}: الجهة مجهولة («??????») — حُفظت كما هي.`, r);
+      } else if (note && /^\d{4,6}$/.test(note)) {
+        warn('note-is-serial',
+          `صف ${r + 1}: خانة الملاحظات تحوي الرقم «${note}» (يبدو رقمًا تسلسليًا لتاريخ Excel) — حُفظ كنصّ.`, r);
+      }
+      if (!date) {
+        warn('no-date', `صف ${r + 1}: بلا تاريخ ولا يوجد تاريخ سابق لوراثته.`, r);
+      }
+
+      moves.push({
+        excelRow: r + 1, date, item, qty, price, goods, pay, note, seq: moves.length
+      });
+    }
+
+    const fileGoods = vetRound2(wpNum(wpCell(rows, close, VET_COL.GOODS)) || 0);
+    const filePay = vetRound2(wpNum(wpCell(rows, close, VET_COL.PAY)) || 0);
+    const fileBalance = vetRound2(wpNum(wpCell(rows, close, VET_COL.NOTE)) || 0);
+
+    const calcGoods = vetRound2(moves.reduce((s, m) => s + m.goods, 0));
+    const calcPay = vetRound2(moves.reduce((s, m) => s + m.pay, 0));
+
+    if (!vetEq(calcGoods, fileGoods)) {
+      warn('goods-mismatch',
+        `${name}: مجموع الناتج المحسوب ${fmt(calcGoods)} لا يطابق المكتوب ${fmt(fileGoods)}.`, close);
+    }
+    if (!vetEq(calcPay, filePay)) {
+      warn('pay-mismatch',
+        `${name}: مجموع الدفع المحسوب ${fmt(calcPay)} لا يطابق المكتوب ${fmt(filePay)}.`, close);
+    }
+    if (!vetEq(fileGoods - filePay, fileBalance)) {
+      warn('balance-mismatch',
+        `${name}: «الباقي» المكتوب ${fmt(fileBalance)} لا يساوي الناتج − الدفع (${fmt(fileGoods - filePay)}).`, close);
+    }
+
+    accounts.push({
+      name, nameCell, sheet: sheetName, headRow: h + 1, totalRow: close + 1,
+      moves, fileGoods, filePay, fileBalance, calcGoods, calcPay,
+      buys: moves.filter(m => m.goods !== 0).length,
+      pays: moves.filter(m => m.pay !== 0).length
+    });
+  });
+
+  const totals = accounts.reduce((a, acc) => {
+    a.goods += acc.fileGoods; a.pay += acc.filePay; a.balance += acc.fileBalance;
+    a.buys += acc.buys; a.pays += acc.pays;
+    return a;
+  }, { goods: 0, pay: 0, balance: 0, buys: 0, pays: 0 });
+  totals.goods = vetRound2(totals.goods);
+  totals.pay = vetRound2(totals.pay);
+  totals.balance = vetRound2(totals.balance);
+  totals.txCount = totals.buys + totals.pays;
+
+  return { ok: accounts.length > 0, accounts, warnings, totals };
+}
+
+
+/* =====================================================================
+   البيطرة — storage, import and UI
+   ===================================================================== */
+const VET_COLL = { accounts: 'vet_accounts', tx: 'vet_tx' };
+
+function getVetAccounts() { return supRead(VET_COLL.accounts); }
+function setVetAccounts(a) { supWrite(VET_COLL.accounts, a); }
+function getVetTx() { return supRead(VET_COLL.tx); }
+function setVetTx(a) { supWrite(VET_COLL.tx, a); }
+
+let _currentVetAccount = null;
+
+function vetTxOf(accountId) {
+  return getVetTx().filter(t => t.accountId === accountId);
+}
+function vetAccountTotals(acc) {
+  const tx = vetTxOf(acc.id);
+  const manual = tx.filter(t => t.source === 'manual');
+  const goods = vetRound2((Number(acc.fileGoods) || 0) +
+    manual.filter(t => t.kind === 'goods').reduce((s, t) => s + (Number(t.amount) || 0), 0));
+  const pay = vetRound2((Number(acc.filePay) || 0) +
+    manual.filter(t => t.kind === 'payment').reduce((s, t) => s + (Number(t.amount) || 0), 0));
+  return { goods, pay, balance: vetRound2(goods - pay) };
+}
+
+/* ---------------- import ---------------- */
+async function handleVetImport(file) {
+  if (!file) return;
+  showToast('جاري تحليل ملف البيطرة...', 'info');
+  try {
+    const sheets = await wpReadWorkbook(file);          // always the first sheet
+    const result = parseVetWorkbook(sheets);
+    if (!result.ok) {
+      showToast(result.warnings[0] ? result.warnings[0].message : 'الملف غير صالح', 'error');
+      return;
+    }
+    _wpPreview = { mode: 'vet', result, fileName: file.name };
+    showWpPreview();
+  } catch (err) {
+    console.error('[handleVetImport]', err);
+    showToast('خطأ أثناء قراءة الملف: ' + err.message, 'error');
+  }
+}
+
+function commitVetImport() {
+  const p = _wpPreview;
+  if (!p || p.mode !== 'vet') return;
+  const r = p.result;
+  const replace = !!(document.getElementById('wp-import-replace') || {}).checked;
+
+  /* MANDATORY verification against the «المجموع» row — abort the whole
+     import on any disagreement rather than saving silently. */
+  const bad = [];
+  r.accounts.forEach(acc => {
+    if (!vetEq(acc.calcGoods, acc.fileGoods)) {
+      bad.push(`${acc.name}: الناتج المحسوب ${fmt(acc.calcGoods)} ≠ المكتوب ${fmt(acc.fileGoods)} (فرق ${fmt(vetRound2(acc.calcGoods - acc.fileGoods))})`);
+    }
+    if (!vetEq(acc.calcPay, acc.filePay)) {
+      bad.push(`${acc.name}: الدفع المحسوب ${fmt(acc.calcPay)} ≠ المكتوب ${fmt(acc.filePay)} (فرق ${fmt(vetRound2(acc.calcPay - acc.filePay))})`);
+    }
+    if (!vetEq(acc.fileGoods - acc.filePay, acc.fileBalance)) {
+      bad.push(`${acc.name}: «الباقي» ${fmt(acc.fileBalance)} ≠ الناتج − الدفع ${fmt(vetRound2(acc.fileGoods - acc.filePay))}`);
+    }
+  });
+  if (bad.length) {
+    document.getElementById('modal-wp-preview').classList.remove('open');
+    showToast('❌ أُلغي الاستيراد — ' + bad.length + ' اختلاف عن الملف. أوّلها: ' + bad[0], 'error');
+    console.error('[vet import] verification failed', bad);
+    return;
+  }
+
+  const allAcc = getVetAccounts();
+  const allTx = getVetTx();
+  const keptAcc = replace ? allAcc.filter(a => !r.accounts.some(x => supNormAr(x.name) === supNormAr(a.name))) : allAcc;
+  const keptIds = new Set(keptAcc.map(a => a.id));
+  const keptTx = allTx.filter(t => keptIds.has(t.accountId));
+  const seen = new Set(keptTx.map(t => t.importKey));
+
+  const newAcc = [], newTx = [];
+  let skipped = 0;
+
+  r.accounts.forEach(acc => {
+    const id = 'vet_' + supNormAr(acc.name).replace(/\s+/g, '_');
+    let record = keptAcc.find(a => a.id === id);
+    if (!record) {
+      record = {
+        id, name: acc.name, nameCell: acc.nameCell, sheet: acc.sheet,
+        headRow: acc.headRow, totalRow: acc.totalRow,
+        fileGoods: acc.fileGoods, filePay: acc.filePay, fileBalance: acc.fileBalance,
+        importedAt: new Date().toISOString()
+      };
+      newAcc.push(record);
+    } else {
+      record.fileGoods = acc.fileGoods;
+      record.filePay = acc.filePay;
+      record.fileBalance = acc.fileBalance;
+    }
+
+    acc.moves.forEach(m => {
+      const push = (kind, amount) => {
+        // unique per (account, sheet row, kind) — re-importing cannot double up
+        const key = `${acc.name}|${m.excelRow}|${kind}`;
+        if (seen.has(key)) { skipped++; return; }
+        seen.add(key);
+        newTx.push({
+          id: 'vtx_' + newTx.length + '_' + Date.now().toString(36),
+          accountId: id, importKey: key, source: 'import',
+          kind, amount: vetRound2(amount),
+          date: m.date, item: m.item, qty: m.qty, price: m.price,
+          note: m.note, excelRow: m.excelRow, seq: m.seq
+        });
+      };
+      // E and F are independent: one row can yield both a purchase and a payment
+      if (m.goods !== 0) push('goods', m.goods);
+      if (m.pay !== 0) push('payment', m.pay);
+    });
+  });
+
+  setVetAccounts(keptAcc.concat(newAcc));
+  setVetTx(keptTx.concat(newTx));
+
+  _wpPreview = null;
+  document.getElementById('modal-wp-preview').classList.remove('open');
+  const inp = document.getElementById('vet-import-input');
+  if (inp) inp.value = '';
+  renderVetPanel();
+  showToast(`✅ البيطرة: ${r.accounts.length} حساب و${newTx.length} حركة` +
+    (skipped ? ` (تُخُطّي ${skipped} مكرّرة)` : '') +
+    ` — الرصيد ${fmt(r.totals.balance, 'دج')}`);
+}
+
+/* ---------------- panel ---------------- */
+function toggleVetPanel() {
+  const p = document.getElementById('vet-panel');
+  if (!p) return;
+  if (p.style.display === 'none' || p.style.display === '') {
+    p.style.display = 'block';
+    renderVetPanel();
+  } else {
+    p.style.display = 'none';
+  }
+}
+
+function renderVetPanel() {
+  const el = document.getElementById('vet-content');
+  if (!el) return;
+  const accs = getVetAccounts();
+
+  if (!accs.length) {
+    el.innerHTML = `<div style="text-align:center;color:var(--text-secondary);padding:20px">
+      لا توجد حسابات بيطرة بعد.<br><br>
+      💡 اضغط «📥 استيراد ملف البيطرة» واختر الملف من مجلد «Vétérinaire».</div>`;
+    return;
+  }
+
+  const tot = accs.reduce((a, acc) => {
+    const t = vetAccountTotals(acc);
+    a.goods += t.goods; a.pay += t.pay; a.balance += t.balance;
+    return a;
+  }, { goods: 0, pay: 0, balance: 0 });
+
+  const box = (l, v, c) => `<div style="flex:1;min-width:130px;background:rgba(0,0,0,0.25);border-radius:10px;padding:12px;text-align:center">
+      <div style="font-size:0.74rem;color:var(--text-secondary)">${l}</div>
+      <div style="font-weight:800;font-size:1.05rem;color:${c}">${v}</div></div>`;
+
+  el.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      ${box('الحسابات', accs.length, 'var(--text-primary)')}
+      ${box('إجمالي الناتج', fmt(vetRound2(tot.goods), 'دج'), 'var(--gold)')}
+      ${box('إجمالي الدفع', fmt(vetRound2(tot.pay), 'دج'), 'var(--green)')}
+      ${box('الرصيد المستحقّ', fmt(vetRound2(tot.balance), 'دج'), tot.balance < 0 ? 'var(--green)' : 'var(--red)')}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px">
+      ${accs.map(acc => {
+        const t = vetAccountTotals(acc);
+        const n = vetTxOf(acc.id).length;
+        return `<div onclick="openVetAccount('${acc.id}')"
+          style="cursor:pointer;background:rgba(0,0,0,0.25);border:1px solid rgba(56,178,172,0.35);border-radius:12px;padding:14px">
+          <div style="font-weight:800;font-size:1rem;margin-bottom:8px">${escapeHtmlSup(acc.name)}</div>
+          <div style="font-size:1.05rem;font-weight:800;color:${t.balance < 0 ? 'var(--green)' : 'var(--red)'}">
+            ${fmt(t.balance, 'دج')}</div>
+          <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:6px">
+            ${n} حركة • ناتج ${fmt(t.goods)} • دفع ${fmt(t.pay)}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+}
+
+/* ---------------- account ledger ---------------- */
+function openVetAccount(accountId) {
+  _currentVetAccount = accountId;
+  renderVetAccount();
+  document.getElementById('modal-vet-account').classList.add('open');
+}
+
+function renderVetAccount() {
+  const acc = getVetAccounts().find(a => a.id === _currentVetAccount);
+  if (!acc) return;
+  const t = vetAccountTotals(acc);
+
+  document.getElementById('vet-account-title').textContent = '🩺 ' + acc.name;
+
+  const box = (l, v, c) => `<div style="flex:1;min-width:120px;background:rgba(0,0,0,0.25);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:0.72rem;color:var(--text-secondary)">${l}</div>
+      <div style="font-weight:800;color:${c}">${v}</div></div>`;
+  document.getElementById('vet-account-summary').innerHTML =
+    `<div style="display:flex;gap:10px;flex-wrap:wrap">
+      ${box('إجمالي الناتج', fmt(t.goods, 'دج'), 'var(--gold)')}
+      ${box('إجمالي الدفع', fmt(t.pay, 'دج'), 'var(--green)')}
+      ${box('الباقي', fmt(t.balance, 'دج'), t.balance < 0 ? 'var(--green)' : 'var(--red)')}
+    </div>`;
+
+  // chronological, grouped into receipts by shared date
+  const tx = vetTxOf(acc.id).slice().sort((a, b) =>
+    String(a.date || '').localeCompare(String(b.date || '')) || (a.excelRow - b.excelRow) || (a.kind === b.kind ? 0 : a.kind === 'goods' ? -1 : 1));
+
+  const groups = [];
+  tx.forEach(row => {
+    const last = groups[groups.length - 1];
+    if (last && last.date === row.date) last.rows.push(row);
+    else groups.push({ date: row.date, rows: [row] });
+  });
+
+  let running = 0;
+  document.getElementById('vet-account-content').innerHTML = groups.map(g => {
+    const gGoods = vetRound2(g.rows.filter(r => r.kind === 'goods').reduce((s, r) => s + r.amount, 0));
+    const gPay = vetRound2(g.rows.filter(r => r.kind === 'payment').reduce((s, r) => s + r.amount, 0));
+    const body = g.rows.map(row => {
+      running = vetRound2(running + (row.kind === 'payment' ? -row.amount : row.amount));
+      const isPay = row.kind === 'payment';
+      return `<tr>
+        <td>${escapeHtmlSup(row.item || (isPay ? 'دفعة' : '—'))}</td>
+        <td>${row.qty == null ? '' : fmt(row.qty)}</td>
+        <td>${row.price == null ? '' : fmt(row.price)}</td>
+        <td style="color:var(--gold);font-weight:700">${isPay ? '' : fmt(row.amount)}</td>
+        <td style="color:var(--green);font-weight:700">${isPay ? fmt(row.amount) : ''}</td>
+        <td style="color:var(--text-secondary)">${escapeHtmlSup(row.note || '')}</td>
+        <td style="font-weight:700">${fmt(running)}</td>
+      </tr>`;
+    }).join('');
+
+    return `<div style="margin-bottom:12px;border:1px solid rgba(255,255,255,0.08);border-radius:8px;overflow:hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;background:rgba(56,178,172,0.12);padding:8px 12px">
+        <strong style="color:#4fd1c5">🧾 ${g.date || 'بلا تاريخ'}</strong>
+        <span style="font-size:0.8rem;color:var(--text-secondary)">
+          ${g.rows.length} سطر
+          ${gGoods ? ` • ناتج <b style="color:var(--gold)">${fmt(gGoods)}</b>` : ''}
+          ${gPay ? ` • دفع <b style="color:var(--green)">${fmt(gPay)}</b>` : ''}
+        </span>
+      </div>
+      <table class="data-table" style="width:100%;font-size:0.8rem">
+        <thead><tr><th>الدواء</th><th>الكمية</th><th>السعر</th><th>الناتج</th><th>الدفع</th><th>الجهة</th><th>الرصيد</th></tr></thead>
+        <tbody>${body}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+}
+
+/* ---------------- reports ---------------- */
+function openVetReports() {
+  const acc = getVetAccounts().find(a => a.id === _currentVetAccount);
+  if (!acc) return;
+  const tx = vetTxOf(acc.id).filter(t => t.kind === 'goods');
+
+  // 1. consumption per drug
+  const drugs = {};
+  tx.forEach(t => {
+    const key = supNormAr(t.item) || '—';
+    if (!drugs[key]) drugs[key] = { label: t.item || '(بلا اسم)', qty: 0, amount: 0, times: 0, prices: new Set() };
+    drugs[key].qty += Number(t.qty) || 0;
+    drugs[key].amount = vetRound2(drugs[key].amount + t.amount);
+    drugs[key].times++;
+    if (t.price != null) drugs[key].prices.add(Number(t.price));
+  });
+  const drugRows = Object.keys(drugs).map(k => drugs[k]).sort((a, b) => b.amount - a.amount);
+
+  // 2. spend per destination
+  const sites = {};
+  tx.forEach(t => {
+    const key = (t.note || '').trim() || '(غير محدّدة)';
+    if (!sites[key]) sites[key] = { label: key, amount: 0, times: 0 };
+    sites[key].amount = vetRound2(sites[key].amount + t.amount);
+    sites[key].times++;
+  });
+  const siteRows = Object.keys(sites).map(k => sites[k]).sort((a, b) => b.amount - a.amount);
+
+  // 3. price history for drugs whose price moved
+  const moved = drugRows.filter(d => d.prices.size > 1);
+
+  const tbl = (head, rows) => `<table class="data-table" style="width:100%;font-size:0.8rem">
+      <thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+
+  document.getElementById('vet-reports-title').textContent = '📊 تقارير: ' + acc.name;
+  document.getElementById('vet-reports-content').innerHTML = `
+    <h3 style="color:#4fd1c5;margin:0 0 8px">💊 استهلاك كل دواء (${drugRows.length})</h3>
+    ${tbl(['الدواء', 'الكمية', 'مرّات', 'المبلغ', 'أسعار مختلفة'],
+      drugRows.map(d => `<tr>
+        <td>${escapeHtmlSup(d.label)}</td><td>${fmt(vetRound2(d.qty))}</td><td>${d.times}</td>
+        <td style="color:var(--gold);font-weight:700">${fmt(d.amount)}</td>
+        <td>${d.prices.size}</td></tr>`).join(''))}
+
+    <h3 style="color:#4fd1c5;margin:18px 0 8px">🏠 مصروف البيطرة لكل جهة (${siteRows.length})</h3>
+    ${tbl(['الجهة', 'مرّات', 'المبلغ'],
+      siteRows.map(s => `<tr>
+        <td>${escapeHtmlSup(s.label)}</td><td>${s.times}</td>
+        <td style="color:var(--gold);font-weight:700">${fmt(s.amount)}</td></tr>`).join(''))}
+
+    <h3 style="color:#4fd1c5;margin:18px 0 8px">📈 تطوّر أسعار الأدوية (${moved.length} دواء تغيّر سعره)</h3>
+    ${moved.length ? tbl(['الدواء', 'الأسعار عبر الزمن'],
+      moved.map(d => `<tr><td>${escapeHtmlSup(d.label)}</td>
+        <td>${[...d.prices].sort((a, b) => a - b).map(p => fmt(p)).join(' ← ')}</td></tr>`).join(''))
+      : '<div style="color:var(--text-secondary);padding:10px">لا يوجد دواء تغيّر سعره.</div>'}`;
+  document.getElementById('modal-vet-reports').classList.add('open');
+}
+
+function deleteCurrentVetAccount() {
+  const acc = getVetAccounts().find(a => a.id === _currentVetAccount);
+  if (!acc) return;
+  if (!confirm(`حذف حساب البيطرة «${acc.name}» وكل حركاته؟`)) return;
+  setVetTx(getVetTx().filter(t => t.accountId !== acc.id));
+  setVetAccounts(getVetAccounts().filter(a => a.id !== acc.id));
+  _currentVetAccount = null;
+  document.getElementById('modal-vet-account').classList.remove('open');
+  renderVetPanel();
+  showToast('تم حذف الحساب');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('vet-import-input');
+  if (inp) inp.addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    if (f) handleVetImport(f);
+  });
+  const del = document.getElementById('btn-delete-vet-account');
+  if (del) del.addEventListener('click', deleteCurrentVetAccount);
 });
