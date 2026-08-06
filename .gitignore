@@ -12,3 +12,6 @@ Screenshot*.png
 
 .vercel
 scratch/
+
+# temporary test fixtures copied from real business data — never commit
+__*
