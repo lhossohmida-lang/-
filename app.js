@@ -1411,7 +1411,7 @@ function defaultSettings() {
     brokenAlertPct: 5,
     // حساب الفائدة في صفحة التقارير
     eggSalePrice: 0,      // سعر بيع البلاكة الواحدة (دج)
-    barleyTotalCost: 0,   // سعر شراء الشعير الكلي (دج)
+    barleyPricePerKg: 0,  // سعر شراء الشعير للكيلوغرام (دج/كغ)
     deletePassword: '1234',
     loyer: 0,
     electricity: 0,
@@ -5191,25 +5191,28 @@ function renderReportCurves(reportLogs) {
 function renderProfitCalculator(stats) {
   const wrap = document.getElementById('profit-summary');
   const priceInput = document.getElementById('inp-egg-sale-price');
-  const feedInput = document.getElementById('inp-barley-total-cost');
+  const feedInput = document.getElementById('inp-barley-price-kg');
   if (!wrap || !priceInput || !feedInput) return;
 
   const settings = DB.get('settings') || defaultSettings();
   const readOnly = isReadOnlyUser();
   // Do not fight the user while they are typing in the field.
   if (document.activeElement !== priceInput) priceInput.value = Number(settings.eggSalePrice) > 0 ? settings.eggSalePrice : '';
-  if (document.activeElement !== feedInput) feedInput.value = Number(settings.barleyTotalCost) > 0 ? settings.barleyTotalCost : '';
+  if (document.activeElement !== feedInput) feedInput.value = Number(settings.barleyPricePerKg) > 0 ? settings.barleyPricePerKg : '';
   priceInput.disabled = readOnly;
   feedInput.disabled = readOnly;
 
   const soldRegular = Number(stats.soldRegular) || 0;
   const soldSpecial = Number(stats.soldSpecial) || 0;
   const soldPlates = soldRegular + soldSpecial;
+  const feedBoughtKg = Number(stats.feedBoughtKg) || 0;
 
   const paint = () => {
     const price = Number(priceInput.value) || 0;
-    const barleyCost = Number(feedInput.value) || 0;
+    const feedPricePerKg = Number(feedInput.value) || 0;
     const income = soldPlates * price;
+    // Barley is costed on what was bought (العلف الداخل), not on consumption.
+    const barleyCost = feedBoughtKg * feedPricePerKg;
     const profit = income - barleyCost;
     const profitColor = profit >= 0 ? 'var(--green)' : 'var(--red)';
     wrap.innerHTML = `
@@ -5217,9 +5220,10 @@ function renderProfitCalculator(stats) {
       <div class="report-stat"><div class="rs-val" style="color:var(--gold)">${fmt(soldSpecial)}</div><div class="rs-lbl">البلاكات المباعة (خاص) ⭐</div></div>
       <div class="report-stat"><div class="rs-val">${fmt(soldPlates)}</div><div class="rs-lbl">إجمالي البلاكات المباعة</div></div>
       <div class="report-stat"><div class="rs-val" style="color:var(--green)">${price > 0 ? fmt(income, 'دج') : '—'}</div><div class="rs-lbl">مدخول البيض</div></div>
-      <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${barleyCost > 0 ? fmt(barleyCost, 'دج') : '—'}</div><div class="rs-lbl">تكلفة الشعير الكلية</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(feedBoughtKg, 'كغ')}</div><div class="rs-lbl">الشعير الداخل (المشترى)</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${feedPricePerKg > 0 ? fmt(barleyCost, 'دج') : '—'}</div><div class="rs-lbl">تكلفة شراء الشعير</div></div>
       <div class="report-stat" style="border-color:${profit >= 0 ? 'rgba(72,187,120,0.4)' : 'rgba(252,129,129,0.4)'}">
-        <div class="rs-val" style="color:${profitColor}">${(price > 0 || barleyCost > 0) ? fmt(profit, 'دج') : '—'}</div>
+        <div class="rs-val" style="color:${profitColor}">${(price > 0 || feedPricePerKg > 0) ? fmt(profit, 'دج') : '—'}</div>
         <div class="rs-lbl">💹 الفائدة الصافية</div></div>`;
   };
 
@@ -5227,7 +5231,7 @@ function renderProfitCalculator(stats) {
     if (readOnly) return;
     const current = DB.get('settings') || defaultSettings();
     current.eggSalePrice = Number(priceInput.value) || 0;
-    current.barleyTotalCost = Number(feedInput.value) || 0;
+    current.barleyPricePerKg = Number(feedInput.value) || 0;
     DB.set('settings', current);
   };
 
@@ -5315,7 +5319,8 @@ function renderReportsPage() {
     renderReportCurves(reportLogs);
     renderProfitCalculator({
       soldRegular: Math.max(0, totalSold - totalBroken),
-      soldSpecial: totalSpecialSold
+      soldSpecial: totalSpecialSold,
+      feedBoughtKg: totalFeedIn
     });
     return;
   }
