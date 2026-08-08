@@ -51,7 +51,7 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
-  const AI_MODEL = process.env.AI_MODEL || 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free';
+  const AI_MODEL = process.env.AI_MODEL || 'cohere/north-mini-code:free';
 
   try {
     const { message, businessContext, history } = req.body;

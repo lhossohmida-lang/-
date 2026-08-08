@@ -12,7 +12,7 @@ const app = express();
 
 const PORT = process.env.PORT || 5001;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
-const AI_MODEL = process.env.AI_MODEL || 'nvidia/nemotron-3-nano-omni-free';
+const AI_MODEL = process.env.AI_MODEL || 'cohere/north-mini-code:free';
 const FRONTEND_URL = process.env.FRONTEND_URL || `http://localhost:${PORT}`;
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const APP_ROOT = path.join(__dirname, '..');

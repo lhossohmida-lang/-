@@ -7,7 +7,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(204).end();
 
   const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
-  const AI_MODEL = process.env.AI_MODEL || 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free';
+  const AI_MODEL = process.env.AI_MODEL || 'cohere/north-mini-code:free';
 
   try {
     if (!OPENROUTER_API_KEY) {
