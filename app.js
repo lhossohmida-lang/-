@@ -1095,7 +1095,8 @@ const GLOBAL_LEDGER_COLLS = [
   'supplier_list', 'supplier_tx', 'supplier_invoices',
   'worker_types', 'worker_months', 'worker_draws',
   'plaka_suppliers', 'plaka_locations', 'plaka_tx',
-  'vet_accounts', 'vet_tx'
+  'vet_accounts', 'vet_tx',
+  'raha_accounts', 'raha_tx'
 ];
 
 function refreshGlobalLedgerUI() {
@@ -1107,6 +1108,7 @@ function refreshGlobalLedgerUI() {
   try { if (vis('global-workers-panel') && typeof renderWorkerTypes === 'function') renderWorkerTypes(); } catch (e) {}
   try { if (vis('plaka-panel') && typeof renderPlakaPanel === 'function') renderPlakaPanel(); } catch (e) {}
   try { if (vis('vet-panel') && typeof renderVetPanel === 'function') renderVetPanel(); } catch (e) {}
+  try { if (vis('raha-panel') && typeof renderRahaPanel === 'function') renderRahaPanel(); } catch (e) {}
 }
 
 /* Anything saved before signing in lands under the "default" uid. Adopt it
@@ -10476,7 +10478,15 @@ const WP_WARN_LABEL = {
   'note-is-serial': '📅 ملاحظة تبدو رقم تاريخ Excel',
   'formula-mismatch': '❌ الكمية × السعر ≠ الناتج',
   'no-date': '📅 سطر بلا تاريخ ولا تاريخ سابق',
-  'no-blocks': '❓ لا توجد كتل في الورقة'
+  'no-blocks': '❓ لا توجد كتل في الورقة',
+  'computed-values': '🧮 صيغ بلا قيم محفوظة — حُسبت',
+  'totals-computed': '🧮 إجماليات محسوبة من الأسطر',
+  'opening-balance': '📌 رصيد افتتاحي مُرحَّل',
+  'inferred-item': '🏷️ صنف مُستنتَج من السعر',
+  'date-out-of-order': '📅 تاريخ خارج التسلسل',
+  'inherit-date': '📅 تاريخ موروث من السطر الأعلى',
+  'rest-mismatch': '❌ «الباقي» لا يساوي الفرق',
+  'bad-file': '📄 ملف غير صالح'
 };
 
 function showWpPreview() {
@@ -10485,6 +10495,7 @@ function showWpPreview() {
   const r = p.result;
   const isW = p.mode === 'workers';
   const isV = p.mode === 'vet';
+  const isR = p.mode === 'raha';
 
   const chip = (label, value, color) => `
     <div style="flex:1;min-width:120px;background:rgba(0,0,0,0.25);border-radius:8px;padding:10px 12px;text-align:center">
@@ -10494,7 +10505,9 @@ function showWpPreview() {
 
   document.getElementById('modal-wp-preview-title').textContent =
     isW ? `👷 معاينة استيراد عمال: ${p.typeName}`
-        : (isV ? '🩺 معاينة استيراد البيطرة' : '🧱 معاينة استيراد بلاكة');
+        : isV ? '🩺 معاينة استيراد البيطرة'
+        : isR ? '⚙️ معاينة استيراد الرحى'
+        : '🧱 معاينة استيراد بلاكة';
 
   let summary = chip('الملف', escapeHtmlSup(p.fileName), 'var(--blue)');
   if (isW) {
@@ -10506,6 +10519,15 @@ function showWpPreview() {
       chip('أسطر السحب', r.totals.drawRows) +
       chip('إجمالي الأجرة', fmt(r.totals.wage), 'var(--green)') +
       chip('إجمالي السحوبات', fmt(r.totals.draws), 'var(--gold)');
+  } else if (isR) {
+    summary +=
+      chip('الحسابات', r.accounts.length) +
+      chip('حركات بضاعة/بيع', r.totals.buys, '#f6ad55') +
+      chip('حركات دفع/تحصيل', r.totals.pays, 'var(--green)') +
+      chip('مشتريات — مستحقّ', fmt(r.totals.rest, 'دج'), 'var(--red)') +
+      chip('النخالة — الفارق', fmt(r.totals.saleRest, 'دج'),
+           r.totals.saleRest === 0 ? 'var(--green)' : 'var(--red)') +
+      (r.totals.labour ? chip('خدامة (خارج الرصيد)', fmt(r.totals.labour), '#f6ad55') : '');
   } else if (isV) {
     summary +=
       chip('الحسابات', r.accounts.length) +
@@ -10545,7 +10567,9 @@ function showWpPreview() {
     </div>` : '';
 
   /* replace switch + plaka duplicate toggle */
-  const existing = isV
+  const existing = isR
+    ? getRahaTx().length
+    : isV
     ? getVetTx().length
     : isW
     ? getWorkerMonths().filter(m => {
@@ -10569,7 +10593,25 @@ function showWpPreview() {
 
   /* detail table */
   let t;
-  if (isV) {
+  if (isR) {
+    t = `<table class="data-table" style="width:100%;font-size:0.8rem">
+      <thead><tr><th>الحساب</th><th>النوع</th><th>الفترة</th><th>الكمية</th>
+        <th>بضاعة/بيع</th><th>دفع/تحصيل</th><th>الباقي</th></tr></thead><tbody>
+      ${r.accounts.map(acc => {
+        const dated = acc.moves.filter(m => m.date);
+        const period = dated.length ? `${dated[0].date} → ${dated[dated.length - 1].date}` : '—';
+        const sale = acc.direction === 'sale';
+        return `<tr>
+          <td style="font-weight:700">${escapeHtmlSup(acc.name)}</td>
+          <td style="color:${sale ? 'var(--green)' : '#f6ad55'}">${sale ? '📤 مبيعات' : '📥 مشتريات'}</td>
+          <td style="white-space:nowrap">${period}</td>
+          <td>${fmt(acc.calcQty)} ${escapeHtmlSup(acc.qtyUnit)}</td>
+          <td style="color:#f6ad55">${fmt(acc.fileGoods)}</td>
+          <td style="color:var(--green)">${fmt(acc.filePay)}</td>
+          <td style="font-weight:800;color:${acc.fileRest === 0 ? 'var(--text-secondary)' : (sale ? 'var(--green)' : 'var(--red)')}">${fmt(acc.fileRest)}</td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+  } else if (isV) {
     t = `<table class="data-table" style="width:100%;font-size:0.8rem">
       <thead><tr><th>الحساب</th><th>الفترة</th><th>شراء</th><th>دفع</th><th>الناتج</th><th>المدفوع</th><th>الباقي</th></tr></thead><tbody>
       ${r.accounts.map(acc => {
@@ -10642,6 +10684,7 @@ function confirmWpImport() {
   if (!_wpPreview) return;
   if (_wpPreview.mode === 'workers') commitWorkerImport();
   else if (_wpPreview.mode === 'vet') commitVetImport();
+  else if (_wpPreview.mode === 'raha') commitRahaImport();
   else commitPlakaImport();
 }
 
@@ -11945,3 +11988,624 @@ function toggleFormerWorkers() {
         </div>`).join('')}
     </div>`;
 }
+
+
+/* =====================================================================
+   الرحى — three workbooks, three DIFFERENT column orders.
+   One schema per file; the schema is detected from the header labels so a
+   renamed file still parses correctly.
+
+     الريمي - زهير : التاريخ | الدفع   | المبلغ  | السعر | الطوناج | المنتوج
+     الصاك         : التاريخ | الكمية  | السعر   | الناتج | الدفع   | ملاحظات
+     النخالة       : التاريخ | الكمية  | السعر   | الناتج | الدفع   | خدامة | ملاحظات
+   ===================================================================== */
+const RAHA_EPS = 0.01;
+function rahaR2(n) { return Math.round(((Number(n) || 0) + Number.EPSILON) * 100) / 100; }
+function rahaEq(a, b) { return Math.abs((Number(a) || 0) - (Number(b) || 0)) < RAHA_EPS; }
+
+const RAHA_SCHEMAS = {
+  rimi: {
+    id: 'rimi', label: 'الريمي - زهير', direction: 'purchase',
+    qtyLabel: 'الطوناج', qtyUnit: 'طن', itemLabel: 'المنتوج',
+    cols: { date: 0, pay: 1, goods: 2, price: 3, qty: 4, item: 5 }
+  },
+  sak: {
+    id: 'sak', label: 'الصاك', direction: 'purchase',
+    qtyLabel: 'الكمية', qtyUnit: 'وحدة', itemLabel: 'الصنف',
+    cols: { date: 0, qty: 1, price: 2, goods: 3, pay: 4, note: 5 }
+  },
+  nokhala: {
+    id: 'nokhala', label: 'النخالة', direction: 'sale',
+    qtyLabel: 'الكمية', qtyUnit: 'قنطار', itemLabel: 'الزبون',
+    cols: { date: 0, qty: 1, price: 2, goods: 3, pay: 4, labour: 5, note: 6 }
+  }
+};
+
+/* Pick the schema from the header row, not from the file name. */
+function rahaDetectSchema(rows, headRow, fileName) {
+  const h = c => supNormAr(wpCell(rows, headRow, c));
+  if (h(1) === supNormAr('الدفع')) return RAHA_SCHEMAS.rimi;
+  if (h(5) === supNormAr('خدامة')) return RAHA_SCHEMAS.nokhala;
+  if (h(3) === supNormAr('الناتج')) return RAHA_SCHEMAS.sak;
+  const n = supNormAr(fileName || '');
+  if (n.indexOf(supNormAr('نخالة')) >= 0) return RAHA_SCHEMAS.nokhala;
+  if (n.indexOf(supNormAr('صاك')) >= 0) return RAHA_SCHEMAS.sak;
+  return RAHA_SCHEMAS.rimi;
+}
+
+function parseRahaWorkbook(sheets, fileName) {
+  const rows = (sheets[0] && sheets[0].rows) || [];
+  const warnings = [];
+  const warn = (code, message, row) => warnings.push({ code, message, row: row == null ? null : row });
+  const baseName = String(fileName || '').replace(/\.(xlsx|xlsm|xls|csv)$/i, '').trim();
+
+  /* header / closing rows are found by TEXT, never by row number. The words
+     «المجموع» and «الباقي» can sit in any column (rimi keeps them in F and D). */
+  let headRow = -1;
+  for (let r = 0; r < rows.length && headRow === -1; r++) {
+    if (supNormAr(wpCell(rows, r, 0)) === supNormAr('التاريخ')) headRow = r;
+  }
+  if (headRow === -1) {
+    return { ok: false, warnings: [{ code: 'no-header',
+      message: 'لم يُعثر على صف الرأس («التاريخ» في العمود A).', row: null }] };
+  }
+
+  const rowHasWord = (r, words) => {
+    for (let c = 0; c < 12; c++) {
+      const v = supNormAr(wpCell(rows, r, c));
+      if (v && words.some(w => v === supNormAr(w))) return true;
+    }
+    return false;
+  };
+  let closeRow = -1, restRow = -1;
+  for (let r = headRow + 1; r < rows.length; r++) {
+    if (closeRow === -1 && rowHasWord(r, ['المجموع'])) closeRow = r;
+    if (restRow === -1 && rowHasWord(r, ['الباقي', 'الفارق'])) restRow = r;
+  }
+  if (closeRow === -1) closeRow = rows.length;
+
+  const schema = rahaDetectSchema(rows, headRow, baseName);
+  const C = schema.cols;
+
+  /* account name: first non-empty cell above the header (rimi keeps it in C2),
+     otherwise the file name. */
+  let accountName = '';
+  for (let r = headRow - 1; r >= 0 && !accountName; r--) {
+    for (let c = 0; c < 12; c++) {
+      const v = supStr(wpCell(rows, r, c));
+      if (v) { accountName = v; break; }
+    }
+  }
+  if (!accountName) accountName = baseName || schema.label;
+
+  const moves = [];
+  let lastDate = null;
+  let computedCells = 0;
+
+  for (let r = headRow + 1; r < closeRow; r++) {
+    const rawDate = wpCell(rows, r, C.date);
+    if (['المجموع', 'الباقي', 'الفارق'].some(w => supNormAr(rawDate) === supNormAr(w))) continue;
+
+    const qty = C.qty != null ? wpNum(wpCell(rows, r, C.qty)) : null;
+    const price = C.price != null ? wpNum(wpCell(rows, r, C.price)) : null;
+    let goods = C.goods != null ? wpNum(wpCell(rows, r, C.goods)) : null;
+    const pay = rahaR2(C.pay != null ? (wpNum(wpCell(rows, r, C.pay)) || 0) : 0);
+    const labour = rahaR2(C.labour != null ? (wpNum(wpCell(rows, r, C.labour)) || 0) : 0);
+    const note = C.note != null ? supStr(wpCell(rows, r, C.note)) : '';
+    let item = C.item != null ? supStr(wpCell(rows, r, C.item)) : '';
+
+    /* النخالة is saved without recalculation: its «الناتج» cells hold formulas
+       with NO cached value and read as blank. Compute rather than import zeros. */
+    let computed = false;
+    if ((goods === null || goods === undefined) && qty !== null && price !== null) {
+      goods = qty * price;
+      computed = true;
+      computedCells++;
+    }
+    goods = rahaR2(goods || 0);
+
+    let date = supParseDate(rawDate);
+    if (date) lastDate = date;
+    else date = lastDate;
+
+    if (!goods && !pay && !labour) continue;      // empty / reserved row
+
+    if (rawDate === null && (goods || pay)) {
+      warn('inherit-date', `صف ${r + 1}: بلا تاريخ — ورث ${date || '—'} من السطر الأعلى.`, r);
+    }
+    if (goods && qty !== null && price !== null && !rahaEq(qty * price, goods)) {
+      warn('formula-mismatch',
+        `صف ${r + 1}: ${fmt(qty)} × ${fmt(price)} لا يساوي ${fmt(goods)}.`, r);
+    }
+
+    // sak: an opening balance carried over, not a purchase
+    let kind = 'goods';
+    if (schema.id === 'sak' && goods && qty === null && price === null) {
+      kind = 'opening';
+      warn('opening-balance',
+        `صف ${r + 1}: مبلغ ${fmt(goods)} بلا كمية ولا سعر («${note || 'قديم'}») — رصيد افتتاحي مُرحَّل، ليس شراءً.`, r);
+    }
+    // sak: كبة خيط is only identifiable by its price when the note is missing
+    if (schema.id === 'sak') {
+      if (note) item = note;
+      else if (price === 2000) {
+        item = 'كبة خيط';
+        warn('inferred-item', `صف ${r + 1}: «كبة خيط» بلا ملاحظة — استُنتج من السعر 2000.`, r);
+      } else if (kind === 'goods') {
+        item = 'صاكة';
+      }
+    }
+    if (schema.id === 'nokhala') item = note;      // the note holds the customer
+
+    // a date far from its neighbours is an entry slip worth flagging
+    if (date && moves.length) {
+      const prev = moves[moves.length - 1].date;
+      if (prev && date < prev) {
+        warn('date-out-of-order',
+          `صف ${r + 1}: التاريخ ${date} أقدم من السطر السابق (${prev}) — تحقّق منه.`, r);
+      }
+    }
+
+    moves.push({
+      excelRow: r + 1, date, qty, price, goods, pay, labour, note, item,
+      kind, computed, seq: moves.length
+    });
+  }
+
+  /* --- totals: read them, and compute when the cells are empty formulas --- */
+  const calcGoods = rahaR2(moves.reduce((s, m) => s + m.goods, 0));
+  const calcPay = rahaR2(moves.reduce((s, m) => s + m.pay, 0));
+  const calcLabour = rahaR2(moves.reduce((s, m) => s + m.labour, 0));
+  const calcQty = rahaR2(moves.reduce((s, m) => s + (m.qty || 0), 0));
+
+  const readTotal = col => (col == null || closeRow >= rows.length)
+    ? null : wpNum(wpCell(rows, closeRow, col));
+  let fileGoods = readTotal(C.goods);
+  let filePay = readTotal(C.pay);
+  let totalsComputed = false;
+  if (fileGoods === null) { fileGoods = calcGoods; totalsComputed = true; }
+  if (filePay === null) { filePay = calcPay; totalsComputed = true; }
+  fileGoods = rahaR2(fileGoods);
+  filePay = rahaR2(filePay);
+
+  /* «الباقي»/«الفارق» lives in an arbitrary column, sometimes on its own row
+     (rimi C71) and sometimes on the totals row (sak F62); the label row can
+     even carry a leftover 0. Take the candidate that equals goods − pay. */
+  const expectedRest = rahaR2(fileGoods - filePay);
+  const candidates = [];
+  [restRow, closeRow].forEach(rr => {
+    if (rr < 0 || rr >= rows.length) return;
+    for (let c = 0; c < 12; c++) {
+      if (rr === closeRow && (c === C.goods || c === C.pay)) continue;
+      const v = wpNum(wpCell(rows, rr, c));
+      if (v !== null) candidates.push(v);
+    }
+  });
+  let fileRest = candidates.find(v => rahaEq(v, expectedRest));
+  if (fileRest === undefined) {
+    if (candidates.length) {
+      fileRest = candidates[0];
+      warn('rest-mismatch',
+        `قيمة «الباقي» في الملف ${fmt(fileRest)} لا تساوي الناتج − الدفع (${fmt(expectedRest)}).`, restRow);
+    } else {
+      fileRest = expectedRest;
+      totalsComputed = true;
+    }
+  }
+  fileRest = rahaR2(fileRest);
+
+  if (computedCells) {
+    warn('computed-values',
+      `${computedCells} خلية «ناتج» كانت صيغة بلا قيمة محفوظة — حُسبت من الكمية × السعر.`, null);
+  }
+  if (totalsComputed) {
+    warn('totals-computed', 'صف «المجموع» يحوي صيغًا بلا قيم محفوظة — حُسبت الإجماليات من الأسطر.', closeRow);
+  }
+  if (!rahaEq(calcGoods, fileGoods)) {
+    warn('goods-mismatch',
+      `مجموع الناتج المحسوب ${fmt(calcGoods)} لا يطابق المكتوب ${fmt(fileGoods)}.`, closeRow);
+  }
+  if (!rahaEq(calcPay, filePay)) {
+    warn('pay-mismatch',
+      `مجموع الدفع المحسوب ${fmt(calcPay)} لا يطابق المكتوب ${fmt(filePay)}.`, closeRow);
+  }
+
+  return {
+    ok: true,
+    schema: schema.id, direction: schema.direction,
+    qtyLabel: schema.qtyLabel, qtyUnit: schema.qtyUnit, itemLabel: schema.itemLabel,
+    name: accountName, fileName: baseName,
+    headRow: headRow + 1, closeRow: closeRow + 1, restRow: restRow + 1,
+    moves, warnings,
+    fileGoods, filePay, fileRest,
+    calcGoods, calcPay, calcLabour, calcQty,
+    buys: moves.filter(m => m.goods).length,
+    pays: moves.filter(m => m.pay).length,
+    labourRows: moves.filter(m => m.labour).length
+  };
+}
+
+
+/* =====================================================================
+   الرحى — storage, import and UI
+   ===================================================================== */
+const RAHA_COLL = { accounts: 'raha_accounts', tx: 'raha_tx' };
+
+function getRahaAccounts() { return supRead(RAHA_COLL.accounts); }
+function setRahaAccounts(a) { supWrite(RAHA_COLL.accounts, a); }
+function getRahaTx() { return supRead(RAHA_COLL.tx); }
+function setRahaTx(a) { supWrite(RAHA_COLL.tx, a); }
+
+let _currentRahaAccount = null;
+
+function rahaTxOf(id) { return getRahaTx().filter(t => t.accountId === id); }
+
+function rahaAccountTotals(acc) {
+  const manual = rahaTxOf(acc.id).filter(t => t.source === 'manual');
+  const goods = rahaR2((Number(acc.fileGoods) || 0) +
+    manual.filter(t => t.kind !== 'payment').reduce((s, t) => s + (Number(t.amount) || 0), 0));
+  const pay = rahaR2((Number(acc.filePay) || 0) +
+    manual.filter(t => t.kind === 'payment').reduce((s, t) => s + (Number(t.amount) || 0), 0));
+  return { goods, pay, balance: rahaR2(goods - pay) };
+}
+
+/* ---------------- import (one file = one account) ---------------- */
+async function handleRahaImport(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  showToast(`جاري تحليل ${files.length} ملف من الرحى...`, 'info');
+  try {
+    const accounts = [], warnings = [];
+    for (const file of files) {
+      const sheets = await wpReadWorkbook(file);
+      const res = parseRahaWorkbook(sheets, file.name);
+      if (!res.ok) {
+        warnings.push({ code: 'bad-file', message: `${file.name}: ${res.warnings[0].message}`, row: null });
+        continue;
+      }
+      res.warnings.forEach(w => warnings.push({ ...w, message: `${res.name} — ${w.message}` }));
+      accounts.push(res);
+    }
+    if (!accounts.length) {
+      showToast(warnings.length ? warnings[0].message : 'لم يُقرأ أي ملف صالح', 'error');
+      return;
+    }
+    const totals = accounts.reduce((a, x) => {
+      // a sale account's balance is owed TO us, so keep the two apart
+      if (x.direction === 'sale') { a.saleGoods += x.fileGoods; a.salePay += x.filePay; a.saleRest += x.fileRest; }
+      else { a.goods += x.fileGoods; a.pay += x.filePay; a.rest += x.fileRest; }
+      a.buys += x.buys; a.pays += x.pays; a.labour += x.calcLabour;
+      return a;
+    }, { goods: 0, pay: 0, rest: 0, saleGoods: 0, salePay: 0, saleRest: 0, buys: 0, pays: 0, labour: 0 });
+    ['goods', 'pay', 'rest', 'saleGoods', 'salePay', 'saleRest', 'labour']
+      .forEach(k => totals[k] = rahaR2(totals[k]));
+
+    _wpPreview = { mode: 'raha', result: { accounts, warnings, totals },
+                   fileName: files.map(f => f.name).join('، ') };
+    showWpPreview();
+  } catch (err) {
+    console.error('[handleRahaImport]', err);
+    showToast('خطأ أثناء قراءة الملفات: ' + err.message, 'error');
+  }
+}
+
+function commitRahaImport() {
+  const p = _wpPreview;
+  if (!p || p.mode !== 'raha') return;
+  const r = p.result;
+  const replace = !!(document.getElementById('wp-import-replace') || {}).checked;
+
+  /* MANDATORY verification against each file's own totals row. */
+  const bad = [];
+  r.accounts.forEach(acc => {
+    if (!rahaEq(acc.calcGoods, acc.fileGoods)) {
+      bad.push(`${acc.name}: الناتج المحسوب ${fmt(acc.calcGoods)} ≠ ${fmt(acc.fileGoods)} (فرق ${fmt(rahaR2(acc.calcGoods - acc.fileGoods))})`);
+    }
+    if (!rahaEq(acc.calcPay, acc.filePay)) {
+      bad.push(`${acc.name}: الدفع المحسوب ${fmt(acc.calcPay)} ≠ ${fmt(acc.filePay)} (فرق ${fmt(rahaR2(acc.calcPay - acc.filePay))})`);
+    }
+    if (!rahaEq(acc.fileGoods - acc.filePay, acc.fileRest)) {
+      bad.push(`${acc.name}: «الباقي» ${fmt(acc.fileRest)} ≠ الناتج − الدفع ${fmt(rahaR2(acc.fileGoods - acc.filePay))}`);
+    }
+    // النخالة must settle to exactly zero — that is the file's own invariant
+    if (acc.schema === 'nokhala' && !rahaEq(acc.fileRest, 0)) {
+      bad.push(`${acc.name}: الفارق ${fmt(acc.fileRest)} وكان يجب أن يكون صفراً — الحساب غير مصفّى.`);
+    }
+  });
+  if (bad.length) {
+    document.getElementById('modal-wp-preview').classList.remove('open');
+    showToast('❌ أُلغي الاستيراد — ' + bad.length + ' اختلاف عن الملفات. أوّلها: ' + bad[0], 'error');
+    console.error('[raha import] verification failed', bad);
+    return;
+  }
+
+  const allAcc = getRahaAccounts();
+  const allTx = getRahaTx();
+  const incoming = new Set(r.accounts.map(a => supNormAr(a.name)));
+  const keptAcc = replace ? allAcc.filter(a => !incoming.has(supNormAr(a.name))) : allAcc;
+  const keptIds = new Set(keptAcc.map(a => a.id));
+  const keptTx = allTx.filter(t => keptIds.has(t.accountId));
+  const seen = new Set(keptTx.map(t => t.importKey));
+
+  const newAcc = [], newTx = [];
+  let skipped = 0;
+
+  r.accounts.forEach(acc => {
+    const id = 'raha_' + acc.schema;
+    let record = keptAcc.find(x => x.id === id);
+    const shape = {
+      id, name: acc.name, schema: acc.schema, direction: acc.direction,
+      qtyLabel: acc.qtyLabel, qtyUnit: acc.qtyUnit, itemLabel: acc.itemLabel,
+      fileName: acc.fileName,
+      fileGoods: acc.fileGoods, filePay: acc.filePay, fileRest: acc.fileRest,
+      totalQty: acc.calcQty, totalLabour: acc.calcLabour,
+      importedAt: new Date().toISOString()
+    };
+    if (record) Object.assign(record, shape);
+    else newAcc.push(shape);
+
+    acc.moves.forEach(m => {
+      const push = (kind, amount) => {
+        const key = `${acc.name}|${m.excelRow}|${kind}`;
+        if (seen.has(key)) { skipped++; return; }
+        seen.add(key);
+        newTx.push({
+          id: 'rtx_' + newTx.length + '_' + Date.now().toString(36),
+          accountId: id, importKey: key, source: 'import',
+          kind, amount: rahaR2(amount),
+          date: m.date, qty: m.qty, price: m.price,
+          item: m.item, note: m.note, labour: m.labour,
+          computed: !!m.computed, excelRow: m.excelRow, seq: m.seq
+        });
+      };
+      // the two money columns are independent — a row can yield both
+      if (m.goods) push(m.kind === 'opening' ? 'opening' : 'goods', m.goods);
+      if (m.pay) push('payment', m.pay);
+      // labour is a side cost, outside the balance, but must stay visible
+      if (!m.goods && !m.pay && m.labour) push('labour-only', 0);
+    });
+  });
+
+  setRahaAccounts(keptAcc.concat(newAcc));
+  setRahaTx(keptTx.concat(newTx));
+
+  _wpPreview = null;
+  document.getElementById('modal-wp-preview').classList.remove('open');
+  const inp = document.getElementById('raha-import-input');
+  if (inp) inp.value = '';
+  renderRahaPanel();
+  showToast(`✅ الرحى: ${r.accounts.length} حساب و${newTx.length} حركة` +
+    (skipped ? ` (تُخُطّي ${skipped} مكرّرة)` : ''));
+}
+
+/* ---------------- panel ---------------- */
+function toggleRahaPanel() {
+  const p = document.getElementById('raha-panel');
+  if (!p) return;
+  if (p.style.display === 'none' || p.style.display === '') {
+    p.style.display = 'block';
+    renderRahaPanel();
+  } else {
+    p.style.display = 'none';
+  }
+}
+
+function renderRahaPanel() {
+  const el = document.getElementById('raha-content');
+  if (!el) return;
+  const accs = getRahaAccounts();
+
+  if (!accs.length) {
+    el.innerHTML = `<div style="text-align:center;color:var(--text-secondary);padding:20px">
+      لا توجد حسابات رحى بعد.<br><br>
+      💡 اضغط «📥 استيراد ملفات الرحى» واختر الملفات الثلاثة من مجلد «الرحى»
+      (يمكن اختيارها دفعة واحدة) — اسم الملف يصبح اسم الحساب.</div>`;
+    return;
+  }
+
+  const buy = accs.filter(a => a.direction !== 'sale');
+  const sell = accs.filter(a => a.direction === 'sale');
+  const owed = rahaR2(buy.reduce((s, a) => s + rahaAccountTotals(a).balance, 0));
+  const due = rahaR2(sell.reduce((s, a) => s + rahaAccountTotals(a).balance, 0));
+  const labour = rahaR2(accs.reduce((s, a) => s + (Number(a.totalLabour) || 0), 0));
+
+  const box = (l, v, c) => `<div style="flex:1;min-width:140px;background:rgba(0,0,0,0.25);border-radius:10px;padding:12px;text-align:center">
+      <div style="font-size:0.74rem;color:var(--text-secondary)">${l}</div>
+      <div style="font-weight:800;font-size:1.05rem;color:${c}">${v}</div></div>`;
+
+  const card = acc => {
+    const t = rahaAccountTotals(acc);
+    const isSale = acc.direction === 'sale';
+    const n = rahaTxOf(acc.id).length;
+    return `<div onclick="openRahaAccount('${acc.id}')"
+      style="cursor:pointer;background:rgba(0,0,0,0.25);border:1px solid ${isSale ? 'rgba(72,187,120,0.4)' : 'rgba(246,173,85,0.35)'};border-radius:12px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:8px">
+        <span style="font-weight:800;font-size:0.98rem">${escapeHtmlSup(acc.name)}</span>
+        <span style="font-size:0.65rem;padding:2px 8px;border-radius:20px;white-space:nowrap;
+          background:${isSale ? 'rgba(72,187,120,0.18)' : 'rgba(246,173,85,0.18)'};
+          color:${isSale ? 'var(--green)' : '#f6ad55'}">${isSale ? '📤 مبيعات' : '📥 مشتريات'}</span>
+      </div>
+      <div style="font-size:1.05rem;font-weight:800;color:${t.balance === 0 ? 'var(--text-secondary)' : (isSale ? 'var(--green)' : 'var(--red)')}">
+        ${fmt(t.balance, 'دج')}</div>
+      <div style="font-size:0.72rem;color:var(--text-secondary);margin-top:4px">
+        ${t.balance === 0 ? 'مصفّى بالكامل' : (isSale ? 'مستحقّ لنا على الزبائن' : 'مستحقّ للمورد')}</div>
+      <div style="font-size:0.72rem;color:var(--text-secondary);margin-top:6px">
+        ${n} حركة • ${isSale ? 'مبيعات' : 'بضاعة'} ${fmt(t.goods)} • ${isSale ? 'محصَّل' : 'مدفوع'} ${fmt(t.pay)}</div>
+      ${acc.totalQty ? `<div style="font-size:0.72rem;color:#f6ad55;margin-top:4px">
+        ${acc.qtyLabel}: ${fmt(acc.totalQty)} ${acc.qtyUnit}</div>` : ''}
+    </div>`;
+  };
+
+  el.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      ${box('الحسابات', accs.length, 'var(--text-primary)')}
+      ${box('مستحقّ للموردين', fmt(owed, 'دج'), 'var(--red)')}
+      ${box('مستحقّ لنا (النخالة)', fmt(due, 'دج'), due === 0 ? 'var(--text-secondary)' : 'var(--green)')}
+      ${labour ? box('مصاريف خدامة', fmt(labour, 'دج'), '#f6ad55') : ''}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px">
+      ${buy.map(card).join('')}${sell.map(card).join('')}
+    </div>`;
+}
+
+/* ---------------- account ledger ---------------- */
+function openRahaAccount(id) {
+  _currentRahaAccount = id;
+  renderRahaAccount();
+  document.getElementById('modal-raha-account').classList.add('open');
+}
+
+function renderRahaAccount() {
+  const acc = getRahaAccounts().find(a => a.id === _currentRahaAccount);
+  if (!acc) return;
+  const isSale = acc.direction === 'sale';
+  const t = rahaAccountTotals(acc);
+
+  document.getElementById('raha-account-title').innerHTML =
+    `${isSale ? '📤' : '📥'} ${escapeHtmlSup(acc.name)}
+     <span style="font-size:0.62rem;padding:2px 8px;border-radius:20px;margin-inline-start:8px;
+       background:${isSale ? 'rgba(72,187,120,0.18)' : 'rgba(246,173,85,0.18)'};
+       color:${isSale ? 'var(--green)' : '#f6ad55'}">${isSale ? 'حساب مبيعات' : 'حساب مشتريات'}</span>`;
+
+  const box = (l, v, c) => `<div style="flex:1;min-width:120px;background:rgba(0,0,0,0.25);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:0.72rem;color:var(--text-secondary)">${l}</div>
+      <div style="font-weight:800;color:${c}">${v}</div></div>`;
+  document.getElementById('raha-account-summary').innerHTML =
+    `<div style="display:flex;gap:10px;flex-wrap:wrap">
+      ${box(isSale ? 'إجمالي المبيعات' : 'إجمالي البضاعة', fmt(t.goods, 'دج'), '#f6ad55')}
+      ${box(isSale ? 'إجمالي المحصَّل' : 'إجمالي المدفوع', fmt(t.pay, 'دج'), 'var(--green)')}
+      ${box(isSale ? 'الفارق' : 'الباقي', fmt(t.balance, 'دج'),
+            t.balance === 0 ? 'var(--text-secondary)' : (isSale ? 'var(--green)' : 'var(--red)'))}
+      ${acc.totalQty ? box(acc.qtyLabel, fmt(acc.totalQty) + ' ' + acc.qtyUnit, 'var(--text-primary)') : ''}
+      ${acc.totalLabour ? box('خدامة (خارج الرصيد)', fmt(acc.totalLabour, 'دج'), '#f6ad55') : ''}
+    </div>`;
+
+  // chronological for the running balance, then shown newest-first
+  const tx = rahaTxOf(acc.id).slice().sort((a, b) =>
+    String(a.date || '').localeCompare(String(b.date || '')) || (a.excelRow - b.excelRow) ||
+    (a.kind === b.kind ? 0 : a.kind === 'payment' ? 1 : -1));
+  let running = 0;
+  tx.forEach(row => {
+    running = rahaR2(running + (row.kind === 'payment' ? -row.amount : row.amount));
+    row._running = running;
+  });
+
+  const kindLabel = k => k === 'payment' ? (isSale ? 'تحصيل' : 'دفع')
+    : k === 'opening' ? 'رصيد افتتاحي'
+    : k === 'labour-only' ? 'خدامة فقط'
+    : (isSale ? 'بيع' : 'شراء');
+  const kindColor = k => k === 'payment' ? 'var(--green)'
+    : k === 'opening' ? 'var(--gold)'
+    : k === 'labour-only' ? 'var(--text-secondary)' : '#f6ad55';
+
+  const showItem = acc.schema !== 'rimi' || true;
+  document.getElementById('raha-account-content').innerHTML = `
+    <table class="data-table" style="width:100%;font-size:0.8rem">
+      <thead><tr>
+        <th>التاريخ</th><th>${escapeHtmlSup(acc.itemLabel)}</th>
+        <th>${escapeHtmlSup(acc.qtyLabel)}</th><th>السعر</th>
+        <th>النوع</th><th>${isSale ? 'المبيعات' : 'البضاعة'}</th><th>${isSale ? 'المحصَّل' : 'المدفوع'}</th>
+        ${acc.totalLabour ? '<th>خدامة</th>' : ''}<th>الرصيد</th>
+      </tr></thead>
+      <tbody>${tx.slice().reverse().map(row => {
+        const isPay = row.kind === 'payment';
+        return `<tr>
+          <td style="white-space:nowrap">${row.date || '—'}</td>
+          <td>${escapeHtmlSup(row.item || '')}</td>
+          <td>${row.qty == null ? '' : fmt(row.qty)}</td>
+          <td>${row.price == null ? '' : fmt(row.price)}</td>
+          <td style="color:${kindColor(row.kind)};font-weight:700;white-space:nowrap">${kindLabel(row.kind)}${row.computed ? ' 🧮' : ''}</td>
+          <td style="color:#f6ad55;font-weight:700">${isPay || !row.amount ? '' : fmt(row.amount)}</td>
+          <td style="color:var(--green);font-weight:700">${isPay ? fmt(row.amount) : ''}</td>
+          ${acc.totalLabour ? `<td style="color:var(--text-secondary)">${row.labour ? fmt(row.labour) : ''}</td>` : ''}
+          <td style="font-weight:700">${fmt(row._running)}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>
+    ${tx.some(x => x.computed) ? `<div style="font-size:0.74rem;color:var(--text-secondary);margin-top:8px">
+      🧮 = قيمة كانت صيغة بلا نتيجة محفوظة في الملف، حسبها التطبيق من الكمية × السعر.</div>` : ''}`;
+}
+
+/* ---------------- reports ---------------- */
+function openRahaReports() {
+  const acc = getRahaAccounts().find(a => a.id === _currentRahaAccount);
+  if (!acc) return;
+  const tx = rahaTxOf(acc.id);
+  const isSale = acc.direction === 'sale';
+
+  const tbl = (head, rows) => `<table class="data-table" style="width:100%;font-size:0.8rem">
+      <thead><tr>${head.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table>`;
+
+  // group by item (product / material kind / customer)
+  const groups = {};
+  tx.forEach(t => {
+    const key = supNormAr(t.item) || '(غير محدّد)';
+    if (!groups[key]) groups[key] = { label: t.item || '(غير محدّد)', qty: 0, goods: 0, pay: 0, times: 0, prices: new Set() };
+    const g = groups[key];
+    if (t.kind === 'payment') g.pay = rahaR2(g.pay + t.amount);
+    else { g.goods = rahaR2(g.goods + t.amount); g.qty = rahaR2(g.qty + (t.qty || 0)); }
+    g.times++;
+    if (t.price != null) g.prices.add(Number(t.price));
+  });
+  // pure payments carry no product, so they'd pile up under an empty label;
+  // for a sale account the customer grouping still wants them.
+  const rows = Object.keys(groups).map(k => groups[k])
+    .filter(g => isSale || g.goods || g.qty)
+    .sort((a, b) => b.goods - a.goods);
+
+  let html = `<h3 style="color:#f6ad55;margin:0 0 8px">
+      ${isSale ? '👤 المبيعات والتحصيل حسب الزبون' : '📦 ' + escapeHtmlSup(acc.itemLabel) + ' — الكميات والمبالغ'} (${rows.length})</h3>
+    ${tbl([escapeHtmlSup(acc.itemLabel), escapeHtmlSup(acc.qtyLabel), 'مرّات',
+           isSale ? 'المبيعات' : 'المبلغ', ...(isSale ? ['المحصَّل'] : []), 'أسعار مختلفة'],
+      rows.map(g => `<tr>
+        <td>${escapeHtmlSup(g.label)}</td>
+        <td>${g.qty ? fmt(g.qty) + ' ' + acc.qtyUnit : ''}</td>
+        <td>${g.times}</td>
+        <td style="color:#f6ad55;font-weight:700">${fmt(g.goods)}</td>
+        ${isSale ? `<td style="color:var(--green);font-weight:700">${fmt(g.pay)}</td>` : ''}
+        <td>${g.prices.size}</td></tr>`).join(''))}`;
+
+  // price history
+  const moved = rows.filter(g => g.prices.size > 1);
+  html += `<h3 style="color:#f6ad55;margin:18px 0 8px">📈 تطوّر السعر (${moved.length})</h3>
+    ${moved.length ? tbl([escapeHtmlSup(acc.itemLabel), 'الأسعار'],
+      moved.map(g => `<tr><td>${escapeHtmlSup(g.label)}</td>
+        <td>${[...g.prices].sort((a, b) => a - b).map(x => fmt(x)).join(' ← ')}</td></tr>`).join(''))
+      : '<div style="color:var(--text-secondary);padding:10px">السعر ثابت في كل الحركات.</div>'}`;
+
+  // labour is deliberately outside the balance
+  if (acc.totalLabour) {
+    const lab = tx.filter(t => t.labour).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    html += `<h3 style="color:#f6ad55;margin:18px 0 8px">👷 مصاريف خدامة النخالة — ${fmt(acc.totalLabour, 'دج')}</h3>
+      <div style="font-size:0.76rem;color:var(--text-secondary);margin-bottom:8px">
+        ℹ️ هذه المصاريف خارج معادلة الرصيد تمامًا، كما في الملف.</div>
+      ${tbl(['التاريخ', 'الزبون', 'المبلغ'],
+        lab.map(t => `<tr><td>${t.date || '—'}</td><td>${escapeHtmlSup(t.item || '')}</td>
+          <td style="color:#f6ad55;font-weight:700">${fmt(t.labour)}</td></tr>`).join(''))}`;
+  }
+
+  document.getElementById('raha-reports-title').textContent = '📊 تقارير: ' + acc.name;
+  document.getElementById('raha-reports-content').innerHTML = html;
+  document.getElementById('modal-raha-reports').classList.add('open');
+}
+
+function deleteCurrentRahaAccount() {
+  const acc = getRahaAccounts().find(a => a.id === _currentRahaAccount);
+  if (!acc) return;
+  if (!confirm(`حذف حساب «${acc.name}» وكل حركاته؟`)) return;
+  setRahaTx(getRahaTx().filter(t => t.accountId !== acc.id));
+  setRahaAccounts(getRahaAccounts().filter(a => a.id !== acc.id));
+  _currentRahaAccount = null;
+  document.getElementById('modal-raha-account').classList.remove('open');
+  renderRahaPanel();
+  showToast('تم حذف الحساب');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('raha-import-input');
+  if (inp) inp.addEventListener('change', e => {
+    if (e.target.files && e.target.files.length) handleRahaImport(e.target.files);
+  });
+  const del = document.getElementById('btn-delete-raha-account');
+  if (del) del.addEventListener('click', deleteCurrentRahaAccount);
+});

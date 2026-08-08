@@ -11,7 +11,7 @@
   <meta name="description" content="deku — إدارة مزارع الدواجن" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=109" />
+  <link rel="stylesheet" href="style.css?v=110" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/x-icon" href="favicon.ico" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
@@ -128,6 +128,7 @@
         <button class="btn btn-outline" id="btn-global-workers" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(154,117,234,0.5);color:#b794f4" onclick="toggleGlobalWorkersPanel()">👷 العمال</button>
         <button class="btn btn-outline" id="btn-plaka" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(237,137,54,0.5);color:#ed8936" onclick="togglePlakaPanel()">🧱 بلاكة</button>
         <button class="btn btn-outline" id="btn-vet" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(79,209,197,0.5);color:#4fd1c5" onclick="toggleVetPanel()">🩺 البيطرة</button>
+        <button class="btn btn-outline" id="btn-raha" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(246,173,85,0.5);color:#f6ad55" onclick="toggleRahaPanel()">⚙️ الرحى</button>
 
         <button class="btn btn-outline" id="btn-ai-assistant" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(72,187,120,0.5);color:var(--green)" onclick="openAIAssistant()">🤖 المساعد الذكي</button>
           <button class="btn btn-outline" id="btn-import-factory" style="font-size:0.85rem;padding:8px 16px;border-color:rgba(66,153,225,0.5);color:var(--blue)">📥 استيراد مصنع من Excel</button>
@@ -194,6 +195,21 @@
         </div>
       </div>
       <div id="vet-content">
+        <div style="text-align:center;color:var(--text-secondary);padding:20px">⏳ جاري التحميل...</div>
+      </div>
+    </div>
+
+    <!-- ===== لوحة الرحى ===== -->
+    <div id="raha-panel" style="display:none;width:100%;max-width:900px;margin:0 auto 20px;background:rgba(21,28,46,0.97);border:1px solid rgba(246,173,85,0.4);border-radius:16px;padding:20px;box-shadow:0 12px 40px rgba(0,0,0,0.5)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+        <div style="font-size:1.1rem;font-weight:800;color:#f6ad55">⚙️ الرحى — المواد الأولية والصاك والنخالة</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary btn-sm" onclick="document.getElementById('raha-import-input').click()">📥 استيراد ملفات الرحى</button>
+          <input type="file" id="raha-import-input" accept=".xlsx,.xlsm,.xls,.csv" multiple style="display:none" />
+          <button onclick="toggleRahaPanel()" style="background:none;border:none;color:var(--text-secondary);font-size:1.2rem;cursor:pointer;padding:4px 8px">×</button>
+        </div>
+      </div>
+      <div id="raha-content">
         <div style="text-align:center;color:var(--text-secondary);padding:20px">⏳ جاري التحميل...</div>
       </div>
     </div>
@@ -1579,7 +1595,7 @@
 <script>
   // MUST match CACHE_NAME in sw.js, otherwise the cache the worker just
   // created gets deleted on every load and caching silently thrashes.
-  var APP_VERSION = 'zohir-v68-ordering';
+  var APP_VERSION = 'zohir-v69-raha';
   function initSW() {
     if (!('serviceWorker' in navigator)) return;
     Promise.resolve()
@@ -1596,7 +1612,7 @@
         });
       })
       .then(function() {
-        return navigator.serviceWorker.register('sw.js?v=109');
+        return navigator.serviceWorker.register('sw.js?v=110');
       })
       .catch(function(e){ console.warn('[SW]', e); });
   }
@@ -2131,6 +2147,29 @@
   </div>
 </div>
 
-    <script src="app.js?v=109" defer></script>
+<!-- ===== MODAL: حساب رحى — حركاته ===== -->
+<div class="modal-overlay" id="modal-raha-account" style="z-index:100001">
+  <div class="modal-box" style="max-width:980px;max-height:90vh;overflow-y:auto;width:95vw">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+      <div class="modal-title" id="raha-account-title" style="color:#f6ad55;margin-bottom:0">⚙️ —</div>
+      <button class="btn btn-outline btn-sm" style="color:#f6ad55;border-color:rgba(246,173,85,0.4)" onclick="openRahaReports()">📊 تقارير</button>
+    </div>
+    <div id="raha-account-summary" style="margin-bottom:14px"></div>
+    <div id="raha-account-content" style="font-size:0.9rem"></div>
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn btn-outline" id="btn-delete-raha-account" style="color:var(--red);border-color:rgba(255,0,0,0.3)">🗑️ حذف الحساب</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== MODAL: تقارير الرحى ===== -->
+<div class="modal-overlay" id="modal-raha-reports" style="z-index:100002">
+  <div class="modal-box" style="max-width:840px;max-height:90vh;overflow-y:auto;width:95vw">
+    <div class="modal-title" id="raha-reports-title" style="color:#f6ad55">📊 تقارير</div>
+    <div id="raha-reports-content" style="font-size:0.9rem"></div>
+  </div>
+</div>
+
+    <script src="app.js?v=110" defer></script>
 </body>
 </html>
