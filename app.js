@@ -2233,6 +2233,25 @@ function enterFactory(factory, sourceCard = null) {
   const isSharedFactory = factoryOwnerUid !== CURRENT_USER?.uid;
 
   const continueEnter = () => {
+    // Everything below hides the factory screen before showing the app. If any
+    // step throws in between, the user is left with a blank page — so the whole
+    // sequence is guarded and falls back to the factory screen.
+    try {
+      continueEnterUnsafe();
+    } catch (err) {
+      console.error('[enterFactory] failed', err);
+      CURRENT_FACTORY = null;
+      hideGlobalLoader();
+      const fs_ = document.getElementById('factory-screen');
+      const app_ = document.getElementById('app-wrapper');
+      if (app_) app_.style.display = 'none';
+      if (fs_) fs_.style.display = 'flex';
+      try { renderFactoryScreen(); } catch (e) {}
+      showToast('تعذّر فتح المصنع: ' + (err && err.message ? err.message : err), 'error');
+    }
+  };
+
+  const continueEnterUnsafe = () => {
     showGlobalLoader(`جاري تحميل بيانات "${factory.name}"...`);
 
     document.getElementById('sidebar-factory-icon').textContent = factory.icon || '🐔';
@@ -2254,7 +2273,13 @@ function enterFactory(factory, sourceCard = null) {
     appWrapper.style.display = 'flex';
 
     // Land straight on the reports page — that is what the factory is opened for.
-    showPage(factoryType === 'broiler' ? 'broiler-reports' : 'reports');
+    // A failing report render must not leave an empty shell behind.
+    try {
+      showPage(factoryType === 'broiler' ? 'broiler-reports' : 'reports');
+    } catch (err) {
+      console.error('[enterFactory] reports page failed, falling back to dashboard', err);
+      try { showPage('dashboard'); } catch (e) { console.error('[enterFactory] dashboard failed too', e); }
+    }
     updateLiveDate();
     initCloudSync();
     populateWorkerSelects();
@@ -12825,4 +12850,73 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   const del = document.getElementById('btn-delete-raha-account');
   if (del) del.addEventListener('click', deleteCurrentRahaAccount);
+});
+
+/* =====================================================================
+   BLANK-SCREEN GUARD
+   The app has three top-level screens plus an error screen. If an uncaught
+   error fires between hiding one and showing the next, the user is left with
+   nothing but the dark page background — which is exactly the "black screen"
+   reported on phones. Nothing in the app was reporting those errors either:
+   #runtime-error-screen existed in the markup but was never wired up.
+   ===================================================================== */
+const SCREEN_IDS = ['auth-screen', 'factory-screen', 'app-wrapper', 'runtime-error-screen', 'global-loader'];
+
+function anyScreenVisible() {
+  return SCREEN_IDS.some(id => {
+    const el = document.getElementById(id);
+    if (!el) return false;
+    const cs = getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity) > 0.01;
+  });
+}
+
+function showRuntimeError(detail) {
+  const screen = document.getElementById('runtime-error-screen');
+  const box = document.getElementById('runtime-error-message');
+  if (!screen) return false;
+  if (box) {
+    const prev = box.textContent ? box.textContent + '\n\n' : '';
+    box.textContent = (prev + String(detail || 'خطأ غير معروف')).slice(-4000);
+  }
+  screen.style.display = 'flex';
+  return true;
+}
+
+/* Last line of defence: if nothing at all is on screen, put something there. */
+function ensureSomethingVisible(reason) {
+  if (anyScreenVisible()) return;
+  console.warn('[screen-guard] nothing visible (' + (reason || '') + ') — recovering');
+  if (typeof hideGlobalLoader === 'function') hideGlobalLoader();
+  if (typeof revealBestScreen === 'function') revealBestScreen();
+  if (!anyScreenVisible()) {
+    showRuntimeError('تعذّر عرض أي شاشة. أعد التحميل، وإن تكرّر الأمر أرسل هذه الرسالة للمطوّر.\n' + (reason || ''));
+  }
+}
+
+window.addEventListener('error', e => {
+  const where = e.filename ? ` @ ${String(e.filename).split('/').pop()}:${e.lineno}` : '';
+  console.error('[uncaught]', e.message, where);
+  // only take over the screen when the error actually left the user with nothing
+  setTimeout(() => {
+    if (!anyScreenVisible()) showRuntimeError((e.message || 'خطأ') + where);
+  }, 0);
+});
+
+window.addEventListener('unhandledrejection', e => {
+  const msg = (e.reason && (e.reason.message || e.reason.code)) || String(e.reason || '');
+  console.error('[unhandled rejection]', msg);
+  setTimeout(() => {
+    if (!anyScreenVisible()) showRuntimeError('وعد مرفوض: ' + msg);
+  }, 0);
+});
+
+/* Watch the opening seconds, when the auth/sync races actually happen. */
+window.addEventListener('load', () => {
+  let ticks = 0;
+  const timer = setInterval(() => {
+    ticks++;
+    ensureSomethingVisible('watchdog tick ' + ticks);
+    if (ticks >= 12) clearInterval(timer);      // ~12s of cover
+  }, 1000);
 });
