@@ -5398,6 +5398,7 @@ function renderProfitCalculator(stats) {
 
 /* ===================== REPORTS PAGE ===================== */
 function renderReportsPage() {
+  try { renderEggPriceCard(); } catch (e) { console.warn('[reports] price card', e); }
   // Stable report renderer for imported Excel data.  Keep this path isolated
   // from legacy report widgets so one malformed historical row cannot crash
   // navigation to the reports page.
@@ -10728,7 +10729,15 @@ const WP_WARN_LABEL = {
   'date-out-of-order': '📅 تاريخ خارج التسلسل',
   'inherit-date': '📅 تاريخ موروث من السطر الأعلى',
   'rest-mismatch': '❌ «الباقي» لا يساوي الفرق',
-  'bad-file': '📄 ملف غير صالح'
+  'bad-file': '📄 ملف غير صالح',
+  'carry-row': '🔗 سطر ترحيل (خارج إجمالي القطيع)',
+  'rearing-book': '🐣 دفتر تربية (بلا بيع بيض)',
+  'empty-block': '⬜ كتلة شهرية فارغة',
+  'totals-not-saved': '🧮 صف المجموع بلا قيم — حُسب',
+  'total-mismatch': '❌ فرق عن صف المجموع',
+  'sheet-name-default': '📄 اسم ورقة افتراضي',
+  'match-medium': '⚠️ دقة مطابقة متوسطة — راجعها',
+  'price-without-sale': '💰 سعر بلا كمية بيع'
 };
 
 function showWpPreview() {
@@ -10738,6 +10747,7 @@ function showWpPreview() {
   const isW = p.mode === 'workers';
   const isV = p.mode === 'vet';
   const isR = p.mode === 'raha';
+  const isP = p.mode === 'prod';
 
   const chip = (label, value, color) => `
     <div style="flex:1;min-width:120px;background:rgba(0,0,0,0.25);border-radius:8px;padding:10px 12px;text-align:center">
@@ -10749,6 +10759,7 @@ function showWpPreview() {
     isW ? `👷 معاينة استيراد عمال: ${p.typeName}`
         : isV ? '🩺 معاينة استيراد البيطرة'
         : isR ? '⚙️ معاينة استيراد الرحى'
+        : isP ? `🏭 معاينة استيراد الإنتاج — النوع ${r.type === 2 ? '٢ (مع الأسعار)' : '١ (بلا أسعار)'}`
         : '🧱 معاينة استيراد بلاكة';
 
   let summary = chip('الملف', escapeHtmlSup(p.fileName), 'var(--blue)');
@@ -10761,6 +10772,18 @@ function showWpPreview() {
       chip('أسطر السحب', r.totals.drawRows) +
       chip('إجمالي الأجرة', fmt(r.totals.wage), 'var(--green)') +
       chip('إجمالي السحوبات', fmt(r.totals.draws), 'var(--gold)');
+  } else if (isP) {
+    summary +=
+      chip('النوع المكتشف', r.type === 2 ? '٢ — مع الأسعار' : '١ — بلا أسعار',
+           r.type === 2 ? 'var(--gold)' : 'var(--text-secondary)') +
+      chip('المصانع', r.factories.filter(f => !f.isRearing).length) +
+      chip('كتل شهرية', r.totals.blocks) +
+      chip('الإنتاج', fmt(r.totals.prod)) +
+      chip('المبيع', fmt(r.totals.sold)) +
+      chip('الوفيات', fmt(r.totals.dead), 'var(--red)') +
+      (r.type === 2 ? chip('أسطر مسعّرة', r.totals.pricedRows, 'var(--gold)') : '') +
+      (r.type === 2 ? chip('الإيراد', fmt(r.totals.revenue, 'دج'), 'var(--green)') : '') +
+      (r.rearing ? chip('دفاتر تربية', r.rearing, 'var(--text-secondary)') : '');
   } else if (isR) {
     summary +=
       chip('الحسابات', r.accounts.length) +
@@ -10809,7 +10832,9 @@ function showWpPreview() {
     </div>` : '';
 
   /* replace switch + plaka duplicate toggle */
-  const existing = isR
+  const existing = isP
+    ? 0
+    : isR
     ? getRahaTx().length
     : isV
     ? getVetTx().length
@@ -10835,7 +10860,28 @@ function showWpPreview() {
 
   /* detail table */
   let t;
-  if (isR) {
+  if (isP) {
+    t = `<table class="data-table" style="width:100%;font-size:0.8rem">
+      <thead><tr><th>استيراد</th><th>المصنع</th><th>الورقة</th><th>كتل</th><th>دجاج</th>
+        <th>إنتاج</th><th>مبيع</th><th>وفيات</th><th>علف</th>
+        ${r.type === 2 ? '<th>مسعّرة</th><th>الإيراد</th><th>م. السعر</th>' : ''}</tr></thead><tbody>
+      ${r.factories.map(f => {
+        const id = 'prod-pick-' + f.sheet.replace(/\W/g, '_');
+        const T = f.totals;
+        return `<tr${f.isRearing ? ' style="opacity:.55"' : ''}>
+          <td>${f.isRearing ? '—' : `<input type="checkbox" id="${id}" checked style="width:16px;height:16px">`}</td>
+          <td style="font-weight:700">${escapeHtmlSup(f.name)}${f.isRearing ? ' <span style="font-size:.65rem;color:var(--text-secondary)">(تربية)</span>' : ''}</td>
+          <td style="font-size:.72rem;color:var(--text-secondary)">${escapeHtmlSup(f.sheet)}</td>
+          <td>${T.blocks}</td><td>${fmt(f.chickens || 0)}</td>
+          <td>${fmt(T.prod)}</td><td>${fmt(T.sold)}</td>
+          <td style="color:var(--red)">${fmt(T.dead)}</td><td>${fmt(T.feed)}</td>
+          ${r.type === 2 ? `<td style="color:var(--gold)">${T.pricedRows}</td>
+            <td style="color:var(--green)">${fmt(T.revenue)}</td>
+            <td>${T.avgPrice ? fmt(T.avgPrice) : '—'}</td>` : ''}
+        </tr>`;
+      }).join('')}</tbody></table>
+      ${r.type === 1 ? '<div style="margin-top:10px;font-size:.8rem;color:var(--gold)">ℹ️ هذا الملف بلا أعمدة أسعار — سيُستورد الإنتاج فقط.</div>' : ''}`;
+  } else if (isR) {
     t = `<table class="data-table" style="width:100%;font-size:0.8rem">
       <thead><tr><th>الحساب</th><th>النوع</th><th>الفترة</th><th>الكمية</th>
         <th>بضاعة/بيع</th><th>دفع/تحصيل</th><th>الباقي</th></tr></thead><tbody>
@@ -10927,6 +10973,7 @@ function confirmWpImport() {
   if (_wpPreview.mode === 'workers') commitWorkerImport();
   else if (_wpPreview.mode === 'vet') commitVetImport();
   else if (_wpPreview.mode === 'raha') commitRahaImport();
+  else if (_wpPreview.mode === 'prod') commitPricedFactoryImport();
   else commitPlakaImport();
 }
 
@@ -12919,4 +12966,498 @@ window.addEventListener('load', () => {
     ensureSomethingVisible('watchdog tick ' + ticks);
     if (ticks >= 12) clearInterval(timer);      // ~12s of cover
   }, 1000);
+});
+
+
+/* =====================================================================
+   PRODUCTION IMPORT — two flavours of the same workbook
+     type 1 : production only            (the existing importer keeps working)
+     type 2 : production + selling price (adds price / revenue per sale)
+
+   One sheet = one factory. Each sheet is a vertical run of MONTHLY blocks,
+   so everything is located by label, never by a fixed row number.
+   ===================================================================== */
+const PROD_EPS = 0.01;
+function prodR2(n) { return Math.round(((Number(n) || 0) + Number.EPSILON) * 100) / 100; }
+
+function prodNum(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number') return isFinite(v) ? v : null;
+  if (v instanceof Date) return null;
+  const n = supParseNum(v);
+  return (n === 0 && !/\d/.test(String(v))) ? null : n;
+}
+function prodN0(v) { const n = prodNum(v); return n === null ? 0 : n; }
+
+/* Header labels vary; match on text so a shifted column never breaks the map. */
+const PROD_HEADER_MAP = [
+  ['date',    ['التاريخ']],
+  ['prod',    ['الانتاج اليومي', 'الإنتاج اليومي']],
+  ['total',   ['الانتاج الاجمالي', 'الإنتاج الإجمالي']],
+  ['dead',    ['الوفيات']],
+  ['sold',    ['بيع البيض']],
+  ['notes',   ['ملاحظات']],
+  ['plaka',   ['شراء البلاكة']],
+  ['feed',    ['استهلاك العلف']],
+  ['feedIn',  ['دخول العلف']],
+  ['bone',    ['عظمة']],
+  ['price',   ['سعر البيع']],
+  ['amount',  ['المبلغ']],
+  ['invDate', ['تاريخ الفاتورة']],
+  ['invQty',  ['كمية الفاتورة']],
+  ['invStore',['المستودع']],
+  ['invFile', ['ملف الفاتورة']],
+  ['invMatch',['دقة المطابقة']],
+  ['gas',     ['الغاز']]
+];
+
+function prodBuildColumnMap(rows, headRows) {
+  const map = {};
+  const list = Array.isArray(headRows) ? headRows : [headRows];
+  list.forEach(headRow => {
+  const width = Math.max(40, (rows[headRow] || []).length);
+  for (let c = 0; c < width; c++) {
+    const raw = supStr(wpCell(rows, headRow, c));
+    if (!raw) continue;
+    const t = supNormAr(raw);
+    for (const [key, labels] of PROD_HEADER_MAP) {
+      if (map[key] !== undefined) continue;
+      if (labels.some(l => t === supNormAr(l) || t.indexOf(supNormAr(l)) >= 0)) { map[key] = c; break; }
+    }
+  }
+  });
+  // the second product table repeats "بيع البيض" further right; the first wins
+  return map;
+}
+
+function parseProductionSheet(rows, sheetName, fileName) {
+  const warnings = [];
+  const warn = (code, message, row) => warnings.push({ code, message, row: row == null ? null : row });
+
+  /* --- locate every monthly block by label --- */
+  const headRows = [], closeRows = [];
+  for (let r = 0; r < rows.length; r++) {
+    const a = supNormAr(wpCell(rows, r, 0));
+    if (a === supNormAr('التاريخ')) headRows.push(r);
+    else if (a === supNormAr('المجموع')) closeRows.push(r);
+  }
+  if (!headRows.length) {
+    return { ok: false, sheet: sheetName,
+      warnings: [{ code: 'no-blocks', message: `${sheetName}: لا يوجد صف رأس («التاريخ» في العمود A).`, row: null }] };
+  }
+
+  const colmap = prodBuildColumnMap(rows, headRows);
+  const priced = colmap.price !== undefined;
+  const isRearing = colmap.sold === undefined;
+  if (isRearing) {
+    warn('rearing-book',
+      `${sheetName}: لا يوجد عمود «بيع البيض» — هذا دفتر تربية (وفيات وعلف وغاز فقط).`, headRows[0]);
+  }
+
+  /* --- factory name: sheet name, unless it is the default Feuil1 --- */
+  let name = supStr(sheetName);
+  if (/^feuil\d*$/i.test(name) || !name) {
+    let found = '';
+    for (let r = 0; r < 3 && !found; r++) {
+      const v = supStr(wpCell(rows, r, 0));
+      if (v && !prodNum(v)) found = v;
+    }
+    name = found || String(fileName || '').replace(/\.(xlsx|xlsm|xls|csv)$/i, '').trim() || sheetName;
+    warn('sheet-name-default',
+      `اسم الورقة «${sheetName}» افتراضي — اعتُمد «${name}».`, 0);
+  }
+
+  /* --- flock info: the row under «الكمية الأولية (الدجاج)» --- */
+  let chickens = null, remaining = null, flockDate = null, keeper = '', breed = '';
+  for (let r = 0; r < rows.length && chickens === null; r++) {
+    for (let c = 0; c < 20; c++) {
+      const t = supNormAr(wpCell(rows, r, c));
+      if (t.indexOf(supNormAr('الكمية الأولية')) >= 0 && t.indexOf(supNormAr('الدجاج')) >= 0) {
+        const v = prodNum(wpCell(rows, r + 1, c));
+        if (v) {
+          chickens = v;
+          remaining = prodNum(wpCell(rows, r + 1, c + 1));
+          flockDate = supParseDate(wpCell(rows, r + 1, 5));
+          keeper = supStr(wpCell(rows, r + 1, 6));
+          breed = supStr(wpCell(rows, r + 1, 12));
+        }
+        break;
+      }
+    }
+  }
+
+  /* --- walk the monthly blocks --- */
+  const blocks = [];
+  headRows.forEach(h => {
+    const close = closeRows.find(x => x > h);
+    if (close === undefined) {
+      warn('no-total', `${name}: كتلة عند الصف ${h + 1} بلا صف «المجموع» — مُستبعَدة.`, h);
+      return;
+    }
+    const days = [];
+    let carry = null;
+    for (let r = h + 1; r < close; r++) {
+      const rawDate = wpCell(rows, r, colmap.date === undefined ? 0 : colmap.date);
+      const pick = k => colmap[k] === undefined ? 0 : prodN0(wpCell(rows, r, colmap[k]));
+      const rec = {
+        excelRow: r + 1,
+        date: supParseDate(rawDate),
+        prod: pick('prod'), dead: pick('dead'), sold: pick('sold'),
+        feed: pick('feed'), feedIn: pick('feedIn'), plaka: pick('plaka'), bone: pick('bone'),
+        gas: pick('gas'),
+        notes: colmap.notes === undefined ? '' : supStr(wpCell(rows, r, colmap.notes))
+      };
+
+      /* A dated-less row inside the daily range that carries running figures in
+         C/D is the previous month's balance, not a day. It belongs in the
+         monthly total (the file's formulas include it) but must NEVER be added
+         to the flock totals, or deaths and production double up. */
+      // A real day always carries a date. A dated-less row holding any figure
+      // is the previous month's balance. Keying on the cumulative C/D columns
+      // alone breaks on files saved without cached formula values, where those
+      // very cells read blank.
+      const cumC = prodN0(wpCell(rows, r, 2));
+      const cumD = prodN0(wpCell(rows, r, 3));
+      const anyFigure = cumC !== 0 || cumD !== 0 ||
+        rec.prod !== 0 || rec.dead !== 0 || rec.sold !== 0 ||
+        rec.feed !== 0 || rec.feedIn !== 0 || rec.plaka !== 0;
+      rec.carry = !rec.date && anyFigure;
+      if (rec.carry) {
+        carry = rec;
+        warn('carry-row',
+          `${name}: سطر ترحيل بلا تاريخ في الصف ${r + 1} — يدخل في مجموع الشهر ويُستبعد من إجمالي القطيع.`, r);
+      }
+
+      if (priced) {
+        rec.price = colmap.price === undefined ? null : prodNum(wpCell(rows, r, colmap.price));
+        // «المبلغ» is a formula that may carry no cached value — compute it
+        rec.amount = rec.price ? prodR2(rec.sold * rec.price) : 0;
+        rec.invDate = colmap.invDate === undefined ? null : supParseDate(wpCell(rows, r, colmap.invDate));
+        rec.invQty = colmap.invQty === undefined ? null : prodNum(wpCell(rows, r, colmap.invQty));
+        rec.invStore = colmap.invStore === undefined ? '' : supStr(wpCell(rows, r, colmap.invStore));
+        rec.invFile = colmap.invFile === undefined ? '' : supStr(wpCell(rows, r, colmap.invFile));
+        rec.invMatch = colmap.invMatch === undefined ? '' : supStr(wpCell(rows, r, colmap.invMatch));
+        if (rec.price && !rec.sold) {
+          warn('price-without-sale', `${name}: صف ${r + 1} فيه سعر بلا كمية بيع.`, r);
+        }
+        if (supNormAr(rec.invMatch) === supNormAr('متوسط')) {
+          warn('match-medium',
+            `${name}: صف ${r + 1} — دقة المطابقة «متوسط» (${fmt(rec.sold)} × ${fmt(rec.price)})، يُنصح بمراجعته.`, r);
+        }
+      }
+
+      const empty = !rec.date && !rec.carry &&
+        !rec.prod && !rec.dead && !rec.sold && !rec.feed && !rec.feedIn && !rec.plaka && !rec.gas;
+      if (empty) continue;
+      days.push(rec);
+    }
+
+    /* the written monthly total — only trustworthy when non-zero */
+    const written = {};
+    ['prod', 'dead', 'sold', 'feed', 'feedIn', 'plaka'].forEach(k => {
+      written[k] = colmap[k] === undefined ? 0 : prodN0(wpCell(rows, close, colmap[k]));
+    });
+    const calc = {};
+    ['prod', 'dead', 'sold', 'feed', 'feedIn', 'plaka'].forEach(k => {
+      calc[k] = prodR2(days.reduce((s, d) => s + (d[k] || 0), 0));
+    });
+
+    const anyWritten = Object.keys(written).some(k => written[k] !== 0);
+    const anyData = Object.keys(calc).some(k => calc[k] !== 0);
+    if (!anyWritten && anyData) {
+      warn('totals-not-saved',
+        `${name}: صف «المجموع» عند الصف ${close + 1} كله أصفار رغم وجود بيانات — الملف بلا قيم محفوظة، حُسبت الإجماليات.`, close);
+    } else if (anyWritten) {
+      Object.keys(written).forEach(k => {
+        if (written[k] !== 0 && Math.abs(written[k] - calc[k]) > PROD_EPS) {
+          warn('total-mismatch',
+            `${name}: كتلة الصف ${close + 1} — «${k}» المحسوب ${fmt(calc[k])} لا يطابق المكتوب ${fmt(written[k])}.`, close);
+        }
+      });
+    }
+    if (!anyWritten && !anyData) {
+      warn('empty-block', `${name}: كتلة شهرية فارغة تمامًا عند الصف ${h + 1} — استُوردت فارغة.`, h);
+    }
+
+    blocks.push({ headRow: h + 1, closeRow: close + 1, days, carry, written, calc });
+  });
+
+  /* --- flock totals: daily rows only, carry-over rows excluded --- */
+  const daily = [];
+  blocks.forEach(b => b.days.forEach(d => { if (!d.carry) daily.push(d); }));
+  const sum = k => prodR2(daily.reduce((s, d) => s + (d[k] || 0), 0));
+
+  const sales = daily.filter(d => d.sold > 0);
+  const pricedSales = priced ? sales.filter(d => d.price) : [];
+  const revenue = prodR2(pricedSales.reduce((s, d) => s + d.amount, 0));
+  const pricedQty = prodR2(pricedSales.reduce((s, d) => s + d.sold, 0));
+
+  return {
+    ok: true, sheet: sheetName, file: fileName, name,
+    type: priced ? 2 : 1, isRearing,
+    colmap, chickens, remaining, flockDate, keeper, breed,
+    blocks, days: daily, warnings,
+    totals: {
+      blocks: blocks.length,
+      prod: sum('prod'), dead: sum('dead'), sold: sum('sold'),
+      feed: sum('feed'), feedIn: sum('feedIn'), plaka: sum('plaka'),
+      saleRows: sales.length,
+      pricedRows: pricedSales.length,
+      pricedQty, revenue,
+      avgPrice: pricedQty ? prodR2(revenue / pricedQty) : 0
+    }
+  };
+}
+
+/* One workbook can hold several factories — one per sheet. */
+function parseProductionWorkbook(sheets, fileName) {
+  const factories = [], warnings = [];
+  sheets.forEach(sh => {
+    const res = parseProductionSheet(sh.rows || [], sh.name, fileName);
+    if (!res.ok) { warnings.push(res.warnings[0]); return; }
+    res.warnings.forEach(w => warnings.push(w));
+    factories.push(res);
+  });
+  const egg = factories.filter(f => !f.isRearing);
+  const type = factories.some(f => f.type === 2) ? 2 : 1;
+  const totals = egg.reduce((a, f) => {
+    ['blocks', 'prod', 'dead', 'sold', 'feed', 'saleRows', 'pricedRows', 'revenue'].forEach(k => a[k] += f.totals[k]);
+    a.chickens += f.chickens || 0;
+    return a;
+  }, { blocks: 0, prod: 0, dead: 0, sold: 0, feed: 0, saleRows: 0, pricedRows: 0, revenue: 0, chickens: 0 });
+  ['prod', 'dead', 'sold', 'feed', 'revenue'].forEach(k => totals[k] = prodR2(totals[k]));
+
+  return {
+    ok: factories.length > 0, type, fileName,
+    factories, warnings, totals,
+    rearing: factories.filter(f => f.isRearing).length
+  };
+}
+
+
+/* =====================================================================
+   PRODUCTION IMPORT — UI
+   The plain importer (handleFactoryImport) is untouched. This adds the
+   priced flavour: same production data, plus a selling price and revenue
+   on each matched sale, merged into days that were imported earlier.
+   ===================================================================== */
+
+async function handlePricedFactoryImport(file) {
+  if (!file) return;
+  if (!CURRENT_USER || !CURRENT_USER.uid) { showToast('يرجى تسجيل الدخول أولاً', 'error'); return; }
+  showToast('جاري تحليل ملف الإنتاج...', 'info');
+  try {
+    const sheets = await wpReadWorkbook(file);
+    const result = parseProductionWorkbook(sheets, file.name);
+    if (!result.ok) {
+      showToast(result.warnings[0] ? result.warnings[0].message : 'الملف غير صالح', 'error');
+      return;
+    }
+    _wpPreview = { mode: 'prod', result, fileName: file.name };
+    showWpPreview();
+  } catch (err) {
+    console.error('[handlePricedFactoryImport]', err);
+    showToast('خطأ أثناء قراءة الملف: ' + err.message, 'error');
+  }
+}
+
+function commitPricedFactoryImport() {
+  const p = _wpPreview;
+  if (!p || p.mode !== 'prod') return;
+  const r = p.result;
+  const uid = CURRENT_USER && CURRENT_USER.uid;
+  if (!uid) { showToast('يرجى تسجيل الدخول أولاً', 'error'); return; }
+  const replace = !!(document.getElementById('wp-import-replace') || {}).checked;
+
+  let factories = [];
+  try { factories = JSON.parse(localStorage.getItem('zohir_factories_' + uid)) || []; } catch (e) {}
+
+  const chosen = r.factories.filter(f => {
+    if (f.isRearing) return false;
+    const cb = document.getElementById('prod-pick-' + f.sheet.replace(/\W/g, '_'));
+    return !cb || cb.checked;
+  });
+  if (!chosen.length) { showToast('لم تختر أي مصنع', 'error'); return; }
+
+  let created = 0, updatedDays = 0, newDays = 0, pricedDays = 0;
+  const writes = [];
+
+  chosen.forEach(fac => {
+    let factory = factories.find(f => !f.isGroup && supNormAr(f.name) === supNormAr(fac.name));
+    if (!factory) {
+      const used = factories.map(f => f.color);
+      const palette = (typeof CARD_COLORS !== 'undefined' && CARD_COLORS.length)
+        ? CARD_COLORS : ['gold', 'blue', 'green', 'purple', 'red', 'teal', 'orange', 'pink'];
+      factory = {
+        id: 'f_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+        name: fac.name, icon: '🥚',
+        color: palette.find(c => used.indexOf(c) === -1) || palette[factories.length % palette.length],
+        type: 'layer', ownerUid: uid, createdAt: new Date().toISOString()
+      };
+      factories.push(factory);
+      created++;
+    }
+    if (fac.chickens) factory.initialChickens = fac.chickens;
+
+    const fid = factory.id;
+    let existing = [];
+    if (!replace) {
+      try { existing = JSON.parse(localStorage.getItem('zohir_' + fid + '_daily_logs')) || []; } catch (e) {}
+    }
+    const byDate = {};
+    existing.forEach(e => { if (e && e.date) byDate[e.date] = e; });
+
+    fac.days.forEach(d => {
+      if (!d.date) return;
+      const prev = byDate[d.date];
+      const price = d.price || 0;
+      const income = price ? prodR2((d.sold || 0) * price) : 0;
+      if (price) pricedDays++;
+
+      if (prev) {
+        // keep the day, refresh the figures, and ADD the price on top —
+        // this is the whole point of re-importing a priced file
+        prev.produced = d.prod;
+        prev.dead = d.dead;
+        prev.soldEggs = d.sold;
+        prev.soldTotal = d.sold;
+        prev.feedUsed = d.feed;
+        prev.feedIn = d.feedIn;
+        prev.mortality = d.dead;
+        prev.eggs = d.prod;
+        if (price) {
+          prev.price = price;
+          prev.income = income;
+          prev.priceSource = {
+            invoiceDate: d.invDate || null, invoiceQty: d.invQty || null,
+            store: d.invStore || '', file: d.invFile || '', accuracy: d.invMatch || ''
+          };
+        }
+        updatedDays++;
+      } else {
+        byDate[d.date] = {
+          id: Date.now() + Math.random(),
+          date: d.date,
+          produced: d.prod, broken: 0,
+          price, netEggs: d.prod,
+          soldGroups: 0, soldSingle: 0, income,
+          specialSold: 0, specialIncome: 0,
+          dead: d.dead, feedUsed: d.feed, feedCost: 0, waterCost: 0,
+          expenses: 0, baseProfit: 0, profit: 0, ownerAdvance: 0,
+          notes: d.notes || '',
+          eggs: d.prod, mortality: d.dead, isPaid: true,
+          feedIn: d.feedIn, totalProduction: 0,
+          soldEggs: d.sold, soldTotal: d.sold, brokenEggs: 0, specialEggs: 0,
+          priceSource: price ? {
+            invoiceDate: d.invDate || null, invoiceQty: d.invQty || null,
+            store: d.invStore || '', file: d.invFile || '', accuracy: d.invMatch || ''
+          } : null
+        };
+        newDays++;
+      }
+    });
+
+    const merged = Object.keys(byDate).map(k => byDate[k])
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    writes.push({ fid, merged });
+  });
+
+  // persist only after every sheet parsed cleanly
+  writes.forEach(w => {
+    localStorage.setItem('zohir_' + w.fid + '_daily_logs', JSON.stringify(w.merged));
+    try {
+      if (typeof fs !== 'undefined' && auth.currentUser) {
+        fs.collection('app_data').doc(w.fid + '_daily_logs').set({ data: w.merged }).catch(() => {});
+      }
+    } catch (e) {}
+  });
+  localStorage.setItem('zohir_factories_' + uid, JSON.stringify(factories));
+  try {
+    if (typeof fs !== 'undefined' && auth.currentUser) {
+      fs.collection('app_data').doc('factories_list_' + uid).set({ data: factories }).catch(() => {});
+    }
+  } catch (e) {}
+
+  _wpPreview = null;
+  document.getElementById('modal-wp-preview').classList.remove('open');
+  const inp = document.getElementById('priced-import-input');
+  if (inp) inp.value = '';
+  renderFactoryScreen();
+  showToast(`✅ ${chosen.length} مصنع — ${newDays} يوم جديد، ${updatedDays} محدَّث` +
+    (r.type === 2 ? `، ${pricedDays} سعر بيع` : '') + (created ? `، ${created} مصنع منشأ` : ''));
+}
+
+/* ---------------- selling prices inside the factory ---------------- */
+function renderEggPriceCard() {
+  const card = document.getElementById('egg-price-card');
+  const body = document.getElementById('egg-price-body');
+  if (!card || !body) return;
+
+  const logs = (DB.get('daily_logs') || []).filter(l => l && l.date);
+  const priced = logs.filter(l => Number(l.price) > 0 && Number(l.soldEggs || l.soldTotal) > 0)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+  if (!priced.length) {
+    card.hidden = true;
+    return;
+  }
+  card.hidden = false;
+
+  const qty = priced.reduce((s, l) => s + Number(l.soldEggs || l.soldTotal || 0), 0);
+  const revenue = priced.reduce((s, l) =>
+    s + (Number(l.income) || Number(l.price) * Number(l.soldEggs || l.soldTotal || 0)), 0);
+  const avg = qty ? Math.round(revenue / qty * 100) / 100 : 0;
+  const saleDays = logs.filter(l => Number(l.soldEggs || l.soldTotal) > 0).length;
+  const coverage = saleDays ? Math.round(priced.length / saleDays * 100) : 0;
+  const prices = [...new Set(priced.map(l => Number(l.price)))].sort((a, b) => a - b);
+
+  const chip = (l, v, c) => `<div style="flex:1;min-width:120px;background:rgba(0,0,0,0.22);border-radius:10px;padding:10px;text-align:center">
+      <div style="font-size:0.72rem;color:var(--text-secondary)">${l}</div>
+      <div style="font-weight:800;color:${c}">${v}</div></div>`;
+
+  const badge = acc => {
+    if (!acc) return '';
+    const t = supNormAr(acc);
+    const col = t === supNormAr('تام') ? 'var(--green)'
+      : t === supNormAr('متوسط') ? 'var(--red)' : 'var(--gold)';
+    return `<span style="font-size:0.65rem;padding:1px 6px;border-radius:20px;background:rgba(255,255,255,0.06);color:${col}">${escapeHtmlSup(acc)}</span>`;
+  };
+
+  body.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      ${chip('الكمية المسعّرة', fmt(qty) + ' طبق', 'var(--text-primary)')}
+      ${chip('الإيراد', fmt(Math.round(revenue), 'دج'), 'var(--green)')}
+      ${chip('متوسط السعر المرجّح', fmt(avg, 'دج'), 'var(--gold)')}
+      ${chip('التغطية', coverage + '%', coverage >= 50 ? 'var(--green)' : 'var(--gold)')}
+    </div>
+    <div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:10px">
+      نطاق السعر: ${fmt(prices[0])} → ${fmt(prices[prices.length - 1])} دج
+      • ${priced.length} عملية مسعّرة من ${saleDays} عملية بيع
+    </div>
+    <div style="max-height:340px;overflow-y:auto">
+      <table class="data-table" style="width:100%;font-size:0.8rem">
+        <thead><tr><th>التاريخ</th><th>الكمية</th><th>السعر</th><th>الإيراد</th><th>المصدر</th></tr></thead>
+        <tbody>${priced.map(l => {
+          const q = Number(l.soldEggs || l.soldTotal || 0);
+          const inc = Number(l.income) || Number(l.price) * q;
+          const src = l.priceSource || {};
+          return `<tr>
+            <td style="white-space:nowrap">${l.date}</td>
+            <td>${fmt(q)}</td>
+            <td style="color:var(--gold);font-weight:700">${fmt(l.price)}</td>
+            <td style="color:var(--green);font-weight:700">${fmt(Math.round(inc))}</td>
+            <td style="font-size:0.72rem;color:var(--text-secondary)">
+              ${escapeHtmlSup(src.store || '')}${src.file ? ' — ' + escapeHtmlSup(src.file) : ''} ${badge(src.accuracy)}
+            </td></tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('priced-import-input');
+  if (inp) inp.addEventListener('change', e => {
+    const f = e.target.files && e.target.files[0];
+    if (f) handlePricedFactoryImport(f);
+  });
 });
