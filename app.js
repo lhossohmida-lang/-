@@ -126,6 +126,9 @@ function hideAuthScreen() {
   // normally hides it never resolves (slow mobile data), the user is left
   // staring at a black screen. The factory screen is up, so take it down.
   hideGlobalLoader();
+  // Paint the locally cached factory list at once — the cloud refresh can
+  // repaint later, but the user must never face an empty screen.
+  if (typeof renderFactoryScreen === 'function') { try { renderFactoryScreen(); } catch (e) {} }
 }
 
 
@@ -1191,7 +1194,11 @@ function fetchDocResilient(ref) {
   return Promise.race([server.catch(() => null), timeout]).then(doc => {
     if (doc) return doc;
     console.warn('[sync] server fetch slow/failed for', ref.id, '— using cache');
-    return ref.get().catch(() => ({ exists: false, data: () => ({}) }));
+    const empty = { exists: false, data: () => ({}) };
+    return Promise.race([
+      ref.get().catch(() => empty),
+      new Promise(resolve => setTimeout(() => resolve(empty), FIRESTORE_FETCH_MS))
+    ]);
   });
 }
 

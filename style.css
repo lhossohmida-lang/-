@@ -4604,3 +4604,46 @@ body.role-owner #worker-accounts-card { display: block !important; }
   transform: scale(1.08);
 }
 .modal-box > .modal-title:first-of-type { padding-inline-start: 44px; }
+
+/* ======= PHONE: factory cards =======
+   The card shrinks to ~140px on a phone while the type badge and the delete
+   button stay pinned to its top corners, so both used to land on top of the
+   icon. Give the badges their own band and let the icon start below it. */
+@media (max-width: 520px) {
+  .factory-card {
+    /* the grid is a flex container, so size the card as a flex item */
+    width: calc(50% - 8px);
+    max-width: calc(50% - 8px);
+    padding-top: 40px;
+  }
+  .factory-type-badge {
+    top: 8px;
+    /* the base rule pins left:10px; leaving it set alongside the RTL start
+       inset stretches the pill across the whole card */
+    left: auto;
+    inset-inline-start: 8px;
+    width: max-content;
+    font-size: 0.62rem;
+    padding: 2px 7px;
+    max-width: calc(100% - 52px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .factory-card-delete {
+    top: 6px;
+    inset-inline-end: 8px;
+    right: auto;
+    width: 28px;
+    height: 28px;
+    font-size: 0.75rem;
+  }
+  .factory-card-icon {
+    width: 78px;
+    height: 78px;
+    font-size: 2rem;
+  }
+  .factory-cards-grid {
+    gap: 10px;
+  }
+}
