@@ -122,6 +122,10 @@ function showAuthScreen() {
 function hideAuthScreen() {
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('factory-screen').style.display = 'flex';
+  // The loader is opaque and sits above everything: if the cloud fetch that
+  // normally hides it never resolves (slow mobile data), the user is left
+  // staring at a black screen. The factory screen is up, so take it down.
+  hideGlobalLoader();
 }
 
 
@@ -1146,7 +1150,7 @@ function syncGlobalLedgers(ownerUids) {
       const ref = fs.collection('app_data').doc(docId);
 
       // pull whatever the account already has on the server
-      ref.get({ source: 'server' })
+      fetchDocResilient(ref)
         .then(doc => {
           if (doc.exists) {
             const cloud = doc.data().data || [];
@@ -1178,6 +1182,19 @@ function syncGlobalLedgers(ownerUids) {
   });
 }
 
+/* Server-first, but never blocking: after FIRESTORE_FETCH_MS fall back to
+   the local cache so a slow phone still gets a usable screen. */
+const FIRESTORE_FETCH_MS = 5000;
+function fetchDocResilient(ref) {
+  const server = ref.get({ source: 'server' });
+  const timeout = new Promise(resolve => setTimeout(() => resolve(null), FIRESTORE_FETCH_MS));
+  return Promise.race([server.catch(() => null), timeout]).then(doc => {
+    if (doc) return doc;
+    console.warn('[sync] server fetch slow/failed for', ref.id, '— using cache');
+    return ref.get().catch(() => ({ exists: false, data: () => ({}) }));
+  });
+}
+
 async function initGlobalSync() {
   if (!CURRENT_USER) return;
   stopGlobalSync();
@@ -1196,8 +1213,11 @@ async function initGlobalSync() {
   ownersToSync.forEach(uid => {
     const docId = `factories_list_${uid}`;
     
-    // STEP 1: Direct fetch for initial load
-    fs.collection('app_data').doc(docId).get({ source: 'server' })
+    // STEP 1: Direct fetch for initial load.
+    // {source:'server'} needs the network; on flaky mobile data it can hang
+    // long enough that the UI never appears. Race it, and fall back to the
+    // cached copy so the app still opens offline.
+    fetchDocResilient(fs.collection('app_data').doc(docId))
       .then(doc => {
         loadedCount++;
         if (doc.exists) {
@@ -1315,6 +1335,7 @@ async function initGlobalSync() {
 }
 
 function hideGlobalLoader() {
+  clearTimeout(_loaderWatchdog);
   const loader = document.getElementById('global-loader');
   if (loader) {
     loader.classList.add('hidden');
@@ -1326,6 +1347,9 @@ function hideGlobalLoader() {
   }
 }
 
+let _loaderWatchdog = null;
+const LOADER_MAX_MS = 8000;
+
 function showGlobalLoader(msg) {
   const loader = document.getElementById('global-loader');
   const status = document.getElementById('loader-status');
@@ -1333,6 +1357,29 @@ function showGlobalLoader(msg) {
     if (status && msg) status.textContent = msg;
     loader.style.display = 'flex';
     loader.classList.remove('hidden');
+  }
+  // Never let the overlay outlive its welcome — on a phone a hanging
+  // Firestore request used to leave it up permanently.
+  clearTimeout(_loaderWatchdog);
+  _loaderWatchdog = setTimeout(() => {
+    console.warn('[loader] watchdog fired after ' + LOADER_MAX_MS + 'ms — forcing the UI to show');
+    hideGlobalLoader();
+    revealBestScreen();
+  }, LOADER_MAX_MS);
+}
+
+/* Whatever went wrong, put SOMETHING usable on screen. */
+function revealBestScreen() {
+  const auth = document.getElementById('auth-screen');
+  const factory = document.getElementById('factory-screen');
+  const app = document.getElementById('app-wrapper');
+  const shown = el => el && getComputedStyle(el).display !== 'none';
+  if (shown(app) || shown(factory) || shown(auth)) return;
+  if (CURRENT_USER) {
+    if (factory) factory.style.display = 'flex';
+    if (typeof renderFactoryScreen === 'function') { try { renderFactoryScreen(); } catch (e) {} }
+  } else if (auth) {
+    auth.style.display = 'flex';
   }
 }
 
@@ -1410,8 +1457,12 @@ function defaultSettings() {
     feedAlertThreshold: 100,
     brokenAlertPct: 5,
     // حساب الفائدة في صفحة التقارير
-    eggSalePrice: 0,      // سعر بيع البلاكة الواحدة (دج)
-    barleyPricePerKg: 0,  // سعر شراء الشعير للكيلوغرام (دج/كغ)
+    eggSalePrice: 0,        // سعر بيع البلاكة الواحدة (دج)
+    barleyPricePerKg: 0,    // سعر شراء الشعير للكيلوغرام (دج/كغ)
+    chickenPrice: 0,        // سعر شراء الدجاجة الابتدائي (دج)
+    reformeActive: false,   // المصنع أُغلق وبيعت الدجاجات المتبقية
+    reformeChickenPrice: 0, // سعر بيع الدجاجة الواحدة في الروفورم (دج)
+    reformeDate: null,
     deletePassword: '1234',
     loyer: 0,
     electricity: 0,
@@ -5192,6 +5243,10 @@ function renderProfitCalculator(stats) {
   const wrap = document.getElementById('profit-summary');
   const priceInput = document.getElementById('inp-egg-sale-price');
   const feedInput = document.getElementById('inp-barley-price-kg');
+  const reformeInput = document.getElementById('inp-reforme-price');
+  const reformeField = document.getElementById('reforme-price-field');
+  const reformeBtn = document.getElementById('btn-reforme');
+  const reformeStatus = document.getElementById('reforme-status');
   if (!wrap || !priceInput || !feedInput) return;
 
   const settings = DB.get('settings') || defaultSettings();
@@ -5199,31 +5254,65 @@ function renderProfitCalculator(stats) {
   // Do not fight the user while they are typing in the field.
   if (document.activeElement !== priceInput) priceInput.value = Number(settings.eggSalePrice) > 0 ? settings.eggSalePrice : '';
   if (document.activeElement !== feedInput) feedInput.value = Number(settings.barleyPricePerKg) > 0 ? settings.barleyPricePerKg : '';
+  if (reformeInput && document.activeElement !== reformeInput) {
+    reformeInput.value = Number(settings.reformeChickenPrice) > 0 ? settings.reformeChickenPrice : '';
+  }
   priceInput.disabled = readOnly;
   feedInput.disabled = readOnly;
+  if (reformeInput) reformeInput.disabled = readOnly;
+  if (reformeBtn) reformeBtn.style.display = readOnly ? 'none' : '';
 
   const soldRegular = Number(stats.soldRegular) || 0;
   const soldSpecial = Number(stats.soldSpecial) || 0;
   const soldPlates = soldRegular + soldSpecial;
   const feedBoughtKg = Number(stats.feedBoughtKg) || 0;
+  const initialChickens = Number(stats.initialChickens) || 0;
+  const remainingChickens = Number(stats.remainingChickens) || 0;
+  const chickenBuyPrice = Number(settings.chickenPrice) || 0;
+  let reformeActive = !!settings.reformeActive;
+
+  const paintReformeUI = () => {
+    if (reformeField) reformeField.hidden = !reformeActive;
+    if (reformeBtn) {
+      reformeBtn.textContent = reformeActive
+        ? '↩️ إلغاء الروفورم — إعادة فتح المصنع'
+        : '🐔 الروفورم — إغلاق المصنع وبيع الدجاج';
+      reformeBtn.classList.toggle('reforme-on', reformeActive);
+    }
+    if (reformeStatus) {
+      reformeStatus.textContent = reformeActive
+        ? `🔒 المصنع مغلق — تم بيع ${fmt(remainingChickens)} دجاجة${settings.reformeDate ? ' بتاريخ ' + fmtDate(settings.reformeDate) : ''}`
+        : '';
+    }
+  };
 
   const paint = () => {
     const price = Number(priceInput.value) || 0;
     const feedPricePerKg = Number(feedInput.value) || 0;
-    const income = soldPlates * price;
+    const reformePrice = reformeInput ? (Number(reformeInput.value) || 0) : 0;
+
+    const eggIncome = soldPlates * price;
+    // الروفورم: الدجاجات المتبقية تُباع ويُضاف مدخولها إلى الفائدة
+    const reformeIncome = reformeActive ? remainingChickens * reformePrice : 0;
     // Barley is costed on what was bought (العلف الداخل), not on consumption.
     const barleyCost = feedBoughtKg * feedPricePerKg;
-    const profit = income - barleyCost;
+    const chickensCost = initialChickens * chickenBuyPrice;
+    const profit = eggIncome + reformeIncome - barleyCost - chickensCost;
     const profitColor = profit >= 0 ? 'var(--green)' : 'var(--red)';
+    const hasAnyPrice = price > 0 || feedPricePerKg > 0 || reformePrice > 0 || chickenBuyPrice > 0;
+
     wrap.innerHTML = `
       <div class="report-stat"><div class="rs-val">${fmt(soldRegular)}</div><div class="rs-lbl">البلاكات المباعة (عادي)</div></div>
       <div class="report-stat"><div class="rs-val" style="color:var(--gold)">${fmt(soldSpecial)}</div><div class="rs-lbl">البلاكات المباعة (خاص) ⭐</div></div>
       <div class="report-stat"><div class="rs-val">${fmt(soldPlates)}</div><div class="rs-lbl">إجمالي البلاكات المباعة</div></div>
-      <div class="report-stat"><div class="rs-val" style="color:var(--green)">${price > 0 ? fmt(income, 'دج') : '—'}</div><div class="rs-lbl">مدخول البيض</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--green)">${price > 0 ? fmt(eggIncome, 'دج') : '—'}</div><div class="rs-lbl">مدخول البيض</div></div>
+      <div class="report-stat" style="border-color:rgba(183,148,244,0.35)"><div class="rs-val" style="color:#b794f4">${fmt(remainingChickens)}</div><div class="rs-lbl">🐔 الدجاجات المتبقية</div></div>
+      ${reformeActive ? `<div class="report-stat" style="border-color:rgba(72,187,120,0.4)"><div class="rs-val" style="color:var(--green)">${reformePrice > 0 ? fmt(reformeIncome, 'دج') : '—'}</div><div class="rs-lbl">🐔 مدخول الروفورم</div></div>` : ''}
       <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(feedBoughtKg, 'كغ')}</div><div class="rs-lbl">الشعير الداخل (المشترى)</div></div>
       <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${feedPricePerKg > 0 ? fmt(barleyCost, 'دج') : '—'}</div><div class="rs-lbl">تكلفة شراء الشعير</div></div>
+      <div class="report-stat"><div class="rs-val" style="color:var(--red)">${chickenBuyPrice > 0 ? fmt(chickensCost, 'دج') : '—'}</div><div class="rs-lbl">تكلفة شراء الدجاج الابتدائي</div></div>
       <div class="report-stat" style="border-color:${profit >= 0 ? 'rgba(72,187,120,0.4)' : 'rgba(252,129,129,0.4)'}">
-        <div class="rs-val" style="color:${profitColor}">${(price > 0 || feedPricePerKg > 0) ? fmt(profit, 'دج') : '—'}</div>
+        <div class="rs-val" style="color:${profitColor}">${hasAnyPrice ? fmt(profit, 'دج') : '—'}</div>
         <div class="rs-lbl">💹 الفائدة الصافية</div></div>`;
   };
 
@@ -5232,6 +5321,11 @@ function renderProfitCalculator(stats) {
     const current = DB.get('settings') || defaultSettings();
     current.eggSalePrice = Number(priceInput.value) || 0;
     current.barleyPricePerKg = Number(feedInput.value) || 0;
+    if (reformeInput) current.reformeChickenPrice = Number(reformeInput.value) || 0;
+    current.reformeActive = reformeActive;
+    if (reformeActive && !current.reformeDate) current.reformeDate = todayStr();
+    if (!reformeActive) current.reformeDate = null;
+    settings.reformeDate = current.reformeDate;
     DB.set('settings', current);
   };
 
@@ -5240,6 +5334,33 @@ function renderProfitCalculator(stats) {
   feedInput.oninput = paint;
   priceInput.onchange = () => { paint(); persist(); };
   feedInput.onchange = () => { paint(); persist(); };
+  if (reformeInput) {
+    reformeInput.oninput = paint;
+    reformeInput.onchange = () => { paint(); persist(); };
+  }
+  if (reformeBtn) {
+    reformeBtn.onclick = () => {
+      if (readOnly) { showToast('🔒 وضع المشاهدة فقط', 'error'); return; }
+      if (!reformeActive) {
+        if (!confirm(`تأكيد الروفورم: سيُعتبر المصنع مغلقاً وأن الدجاجات المتبقية (${fmt(remainingChickens)}) قد بيعت. هل تريد المتابعة؟`)) return;
+        reformeActive = true;
+        paintReformeUI();
+        persist();
+        paint();
+        showToast('🐔 تم تفعيل الروفورم — أدخل سعر الدجاجة الواحدة', 'success');
+        if (reformeInput) reformeInput.focus();
+      } else {
+        if (!confirm('إلغاء الروفورم وإعادة فتح المصنع؟ سيُحذف مدخول بيع الدجاج من الفائدة.')) return;
+        reformeActive = false;
+        paintReformeUI();
+        persist();
+        paint();
+        showToast('↩️ تم إلغاء الروفورم', 'warning');
+      }
+    };
+  }
+
+  paintReformeUI();
   paint();
 }
 
@@ -5283,6 +5404,10 @@ function renderReportsPage() {
     const monthSummary = document.getElementById('monthly-summary');
     const specialRemaining = Math.max(0, totalSpecial - totalSpecialSold);
     const monthSpecialRemaining = Math.max(0, monthSpecial - monthSpecialSold);
+    // الدجاجات المتبقية = الابتدائي − مجموع النفوق
+    const reportSettings = DB.get('settings') || defaultSettings();
+    const initialChickens = Number(reportSettings.initialChickens) || 0;
+    const remainingChickens = Math.max(0, initialChickens - totalDead);
     if (totalSummary) totalSummary.innerHTML = `
       <div class="report-stat"><div class="rs-val">${fmt(reportLogs.length)}</div><div class="rs-lbl">إجمالي الأيام</div></div>
       <div class="report-stat"><div class="rs-val">${fmt(totalProduced)}</div><div class="rs-lbl">إجمالي المنتج (بلاكة)</div></div>
@@ -5296,7 +5421,8 @@ function renderReportsPage() {
       <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(totalFeedIn)}</div><div class="rs-lbl">العلف الداخل (كغ)</div></div>
       <div class="report-stat"><div class="rs-val" style="color:var(--orange)">${fmt(totalFeedUsed)}</div><div class="rs-lbl">العلف المستهلك (كغ)</div></div>
       <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(totalBroken)}</div><div class="rs-lbl">إجمالي المكسور</div></div>
-      <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(totalDead)}</div><div class="rs-lbl">إجمالي النفوق</div></div>`;
+      <div class="report-stat"><div class="rs-val" style="color:var(--red)">${fmt(totalDead)}</div><div class="rs-lbl">إجمالي النفوق</div></div>
+      <div class="report-stat" style="border-color:rgba(183,148,244,0.35)"><div class="rs-val" style="color:#b794f4">${fmt(remainingChickens)}</div><div class="rs-lbl">🐔 الدجاجات المتبقية</div></div>`;
     if (monthSummary) monthSummary.innerHTML = `
       <div class="report-stat"><div class="rs-val">${fmt(monthProduced)}</div><div class="rs-lbl">المنتج هذا الشهر</div></div>
       <div class="report-stat"><div class="rs-val">${fmt(monthKartons)}</div><div class="rs-lbl">الكرطونات هذا الشهر</div></div>
@@ -5320,7 +5446,9 @@ function renderReportsPage() {
     renderProfitCalculator({
       soldRegular: Math.max(0, totalSold - totalBroken),
       soldSpecial: totalSpecialSold,
-      feedBoughtKg: totalFeedIn
+      feedBoughtKg: totalFeedIn,
+      initialChickens,
+      remainingChickens
     });
     return;
   }
@@ -5769,6 +5897,8 @@ function loadSettingsForm() {
   document.getElementById('farm-name').value = s.farmName || '';
   document.getElementById('farm-owner').value = s.owner || '';
   document.getElementById('farm-chickens').value = s.initialChickens || '';
+  const chickenPriceEl = document.getElementById('farm-chicken-price');
+  if (chickenPriceEl) chickenPriceEl.value = s.chickenPrice || '';
   document.getElementById('farm-feed-init').value = s.initialFeed || '';
       document.getElementById('feed-alert-threshold').value = s.feedAlertThreshold || 100;
   document.getElementById('broken-alert-pct').value = s.brokenAlertPct || 5;
@@ -5842,9 +5972,16 @@ function saveSettings() {
     farmName: document.getElementById('farm-name').value || (CURRENT_FACTORY?.name || 'deku'),
     owner: document.getElementById('farm-owner').value || '',
     initialChickens: Number(document.getElementById('farm-chickens').value) || 0,
+    chickenPrice: Number(document.getElementById('farm-chicken-price')?.value) || 0,
     initialFeed: Number(document.getElementById('farm-feed-init').value) || 0,
-    
-    
+    // Prices and الروفورم state live in the reports page, not in this form —
+    // carry them over so saving settings never wipes them.
+    eggSalePrice: Number(existing.eggSalePrice) || 0,
+    barleyPricePerKg: Number(existing.barleyPricePerKg) || 0,
+    reformeActive: !!existing.reformeActive,
+    reformeChickenPrice: Number(existing.reformeChickenPrice) || 0,
+    reformeDate: existing.reformeDate || null,
+
     feedAlertThreshold: Number(document.getElementById('feed-alert-threshold').value) || 100,
     brokenAlertPct: Number(document.getElementById('broken-alert-pct').value) || 5,
     deletePassword: existing.deletePassword || '1234',

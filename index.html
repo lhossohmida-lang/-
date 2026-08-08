@@ -11,7 +11,7 @@
   <meta name="description" content="deku — إدارة مزارع الدواجن" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;600;700;900&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="style.css?v=111" />
+  <link rel="stylesheet" href="style.css?v=113" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/x-icon" href="favicon.ico" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
@@ -1089,9 +1089,19 @@
           <label for="inp-barley-price-kg">🌾 سعر شراء الشعير (دج / كغ)</label>
           <input type="number" id="inp-barley-price-kg" min="0" step="any" inputmode="decimal" placeholder="مثال: 65">
         </div>
+        <div class="profit-field" id="reforme-price-field" hidden>
+          <label for="inp-reforme-price">🐔 سعر الدجاجة الواحدة (دج)</label>
+          <input type="number" id="inp-reforme-price" min="0" step="any" inputmode="decimal" placeholder="مثال: 450">
+        </div>
       </div>
+
+      <div class="reforme-row">
+        <button type="button" class="btn btn-outline" id="btn-reforme">🐔 الروفورم — إغلاق المصنع وبيع الدجاج</button>
+        <span class="reforme-status" id="reforme-status"></span>
+      </div>
+
       <div class="report-grid" id="profit-summary"></div>
-      <div class="field-note">الفائدة = (البلاكات المباعة × سعر البلاكة) − (الشعير الداخل بالكيلوغرام × سعر الكيلوغرام). يتم حفظ السعرين تلقائياً لهذا المصنع.</div>
+      <div class="field-note">الفائدة = (البلاكات المباعة × سعر البلاكة) + (الروفورم: الدجاجات المتبقية × سعر الدجاجة) − (الشعير الداخل × سعر الكغ) − (الدجاج الابتدائي × سعر شرائه). تُحفظ الأسعار تلقائياً لهذا المصنع، وسعر شراء الدجاجة الابتدائي يُضبط من الإعدادات.</div>
     </div>
 
     <div class="section-card report-curves-card" id="report-curves-card" hidden>
@@ -1289,6 +1299,11 @@
           <div class="form-group">
             <label>عدد الدجاج الابتدائي</label>
             <input type="number" id="farm-chickens" placeholder="0" min="0" />
+          </div>
+          <div class="form-group">
+            <label>🐔 سعر شراء الدجاجة الابتدائي (دج)</label>
+            <input type="number" id="farm-chicken-price" placeholder="0" min="0" step="any" />
+            <div class="field-note">📌 يُضرب في عدد الدجاج الابتدائي ويُخصم من الفائدة في صفحة التقارير</div>
           </div>
           <div class="form-group">
             <label>رصيد الشعير الابتدائي (كغ)</label>
@@ -1612,7 +1627,7 @@
 <script>
   // MUST match CACHE_NAME in sw.js, otherwise the cache the worker just
   // created gets deleted on every load and caching silently thrashes.
-  var APP_VERSION = 'zohir-v69-raha';
+  var APP_VERSION = 'zohir-v72-mobile-fix';
   function initSW() {
     if (!('serviceWorker' in navigator)) return;
     Promise.resolve()
@@ -1629,7 +1644,7 @@
         });
       })
       .then(function() {
-        return navigator.serviceWorker.register('sw.js?v=111');
+        return navigator.serviceWorker.register('sw.js?v=113');
       })
       .catch(function(e){ console.warn('[SW]', e); });
   }
@@ -2187,6 +2202,6 @@
   </div>
 </div>
 
-    <script src="app.js?v=111" defer></script>
+    <script src="app.js?v=113" defer></script>
 </body>
 </html>

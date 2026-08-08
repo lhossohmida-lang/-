@@ -55,6 +55,7 @@ body {
   background: var(--bg-darkest);
   color: var(--text-primary);
   min-height: 100vh;
+  min-height: 100dvh;
   direction: rtl;
   overflow-x: hidden;
 }
@@ -671,6 +672,7 @@ body.daily-readonly #layer-daily-wrapper #btn-save-day.daily-save-visible {
 .app-wrapper {
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
   
 }
 @keyframes appFadeIn {
@@ -902,6 +904,7 @@ body.daily-readonly #layer-daily-wrapper #btn-save-day.daily-save-visible {
 .main-content {
   margin-right: var(--sidebar-w);
   min-height: 100vh;
+  min-height: 100dvh;
   padding: 32px 28px;
   flex: 1;
   display: flex;
@@ -1423,6 +1426,30 @@ textarea::placeholder { color: var(--text-muted); }
 }
 .profit-field input:disabled { opacity: 0.55; cursor: not-allowed; }
 .profit-field input::placeholder { color: var(--text-muted); }
+.profit-field[hidden] { display: none; }
+
+.reforme-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+#btn-reforme {
+  border-color: rgba(183,148,244,0.5);
+  color: #b794f4;
+  font-weight: 700;
+}
+#btn-reforme.reforme-on {
+  border-color: rgba(246,173,85,0.6);
+  color: var(--orange);
+  background: rgba(246,173,85,0.08);
+}
+.reforme-status {
+  font-size: 0.82rem;
+  color: var(--orange);
+  font-weight: 600;
+}
 
 
 
